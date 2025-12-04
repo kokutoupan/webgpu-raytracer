@@ -1,9 +1,33 @@
-// shader.wgsl
+// --- 0. Bindings & Uniforms ---
 
-// 出力先テクスチャ
+// Binding 0: 表示用テクスチャ (sRGB)
 @group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
 
-// --- 1. Rayの定義 ---
+// Binding 1: 蓄積用バッファ (Linear, Read-Write)
+@group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
+
+// Binding 2: フレーム情報 (毎フレーム更新)
+struct FrameInfo {
+    frame_count: u32,
+    // padding...
+}
+@group(0) @binding(2) var<uniform> frame: FrameInfo;
+
+// Binding 3: カメラ情報 (固定/操作時のみ更新)
+// vec3 は 16byte アライメントされるため、TypeScript側もそれに合わせる
+struct Camera {
+    origin: vec3<f32>,
+    lower_left_corner: vec3<f32>,
+    horizontal: vec3<f32>,
+    vertical: vec3<f32>,
+}
+@group(0) @binding(3) var<uniform> camera: Camera;
+
+
+// --- 1. Constants & Structs ---
+
+const PI = 3.141592653589793;
+
 struct Ray {
     origin: vec3<f32>,
     direction: vec3<f32>,
@@ -12,41 +36,43 @@ struct Ray {
 struct Sphere {
     center: vec3<f32>,
     radius: f32,
-    // マテリアルIDなどは後で追加
 }
 
 struct HitRecord {
     p: vec3<f32>,
     normal: vec3<f32>,
     t: f32,
-    front_face: bool
+    front_face: bool,
 }
 
-// ある地点 P(t) = A + tb を求める関数
-fn ray_at(r: Ray, t: f32) -> vec3<f32> {
-    return r.origin + t * r.direction;
-}
-
-
-// 入力: vec2<u32> (ピクセル座標など) -> 出力: f32 (0.0 ~ 1.0 の乱数)
-fn hash(p: vec2<u32>) -> f32 {
-    var p2 = vec2<f32>(p);
-    p2 = fract(p2 * vec2<f32>(123.34, 456.21));
-    p2 += dot(p2, p2 + 45.32);
-    return fract(p2.x * p2.y);
-}
-
-// 乱数のシード値を管理する構造体
 struct RandomGenerator {
     state: u32,
 }
 
+// --- 2. Random Functions ---
+
 fn rand_pcg(rng: ptr<function, RandomGenerator>) -> f32 {
-    let state = (*rng).state;
-    (*rng).state = state * 747796405u + 2891336453u;
-    let word = ((*rng).state >> ((state >> 28u) + 4u)) ^ state;
-    let result = (word * 277803737u) ^ 22u;
-    return f32(result) / 4294967295.0;
+    let old_state = (*rng).state;
+    (*rng).state = old_state * 747796405u + 2891336453u;
+    let word = ((*rng).state >> ((old_state >> 28u) + 4u)) ^ (*rng).state;
+    let result = word * 277803737u;
+    let final_hash = (result >> 22u) ^ result;
+    return f32(final_hash) / 4294967295.0;
+}
+
+fn random_unit_vector(rng: ptr<function, RandomGenerator>) -> vec3<f32> {
+    let z = rand_pcg(rng) * 2.0 - 1.0;
+    let a = rand_pcg(rng) * 2.0 * PI;
+    let r = sqrt(max(0.0, 1.0 - z * z));
+    let x = r * cos(a);
+    let y = r * sin(a);
+    return vec3<f32>(x, y, z);
+}
+
+// --- 3. Geometry Functions ---
+
+fn ray_at(r: Ray, t: f32) -> vec3<f32> {
+    return r.origin + t * r.direction;
 }
 
 fn hit_sphere(s: Sphere, r: Ray, t_min: f32, t_max: f32, rec: ptr<function, HitRecord>) -> bool {
@@ -56,124 +82,117 @@ fn hit_sphere(s: Sphere, r: Ray, t_min: f32, t_max: f32, rec: ptr<function, HitR
     let c = dot(oc, oc) - s.radius * s.radius;
     let discriminant = h * h - a * c;
 
-    if discriminant < 0.0 {
-        return false;
-    }
+    if (discriminant < 0.0) { return false; }
 
     let sqrtd = sqrt(discriminant);
-    
-    // 近くの交点 (-sqrt) を試す
     var root = (-h - sqrtd) / a;
-    if root <= t_min || t_max <= root {
-        // ダメなら遠くの交点 (+sqrt) を試す
+    if (root <= t_min || t_max <= root) {
         root = (-h + sqrtd) / a;
-        if root <= t_min || t_max <= root {
+        if (root <= t_min || t_max <= root) {
             return false;
         }
     }
 
-    // ヒット確定！ recを書き換える
     (*rec).t = root;
     (*rec).p = ray_at(r, root);
     let outward_normal = ((*rec).p - s.center) / s.radius;
-    
-    // set_face_normal のロジック (内側から当たったかの判定)
     (*rec).front_face = dot(r.direction, outward_normal) < 0.0;
     (*rec).normal = select(-outward_normal, outward_normal, (*rec).front_face);
 
     return true;
 }
 
-fn ray_color(r_in: Ray) -> vec3<f32> {
-    // --- 世界の定義 (ハードコード) ---
+// --- 4. Ray Tracing Logic ---
+
+fn ray_color(r_in: Ray, rng: ptr<function, RandomGenerator>) -> vec3<f32> {
     var spheres = array<Sphere, 2>(
-        Sphere(vec3<f32>(0.0, 0.0, -1.0), 0.5),    // 真ん中の球
-        Sphere(vec3<f32>(0.0, -100.5, -1.0), 100.0) // 地面（巨大な球）
+        Sphere(vec3<f32>(0.0, 0.0, -1.0), 0.5),
+        Sphere(vec3<f32>(0.0, -100.5, -1.0), 100.0)
     );
 
-    // --- ループ処理 ---
-    var rec: HitRecord;
-    var hit_anything = false;
-    var closest_so_far = 9999999.0; // 無限大の代わり
-    let t_min = 0.001;
+    var ray = r_in;
+    var color = vec3<f32>(0.0);
+    var throughput = vec3<f32>(1.0);
 
-    // 配列をループ (C++の hittable_list::hit と同じロジック)
-    for (var i = 0u; i < 2u; i++) {
-        let s = spheres[i];
-        // &rec でポインタを渡す
-        if hit_sphere(s, r_in, t_min, closest_so_far, &rec) {
-            hit_anything = true;
-            closest_so_far = rec.t;
+    for (var depth = 0u; depth < 10u; depth++) {
+        var rec: HitRecord;
+        var hit_anything = false;
+        var closest_so_far = 9999999.0;
+        let t_min = 0.001;
+
+        for (var i = 0u; i < 2u; i++) {
+            if (hit_sphere(spheres[i], ray, t_min, closest_so_far, &rec)) {
+                hit_anything = true;
+                closest_so_far = rec.t;
+            }
+        }
+
+        if (hit_anything) {
+            let new_dir = rec.normal + random_unit_vector(rng);
+            ray = Ray(rec.p, new_dir);
+            throughput *= 0.5;
+            if (length(throughput) < 0.001) { break; }
+        } else {
+            let unit_direction = normalize(ray.direction);
+            let t = 0.5 * (unit_direction.y + 1.0);
+            let sky_color = mix(vec3<f32>(1.0), vec3<f32>(0.5, 0.7, 1.0), t);
+            color += throughput * sky_color;
+            break;
         }
     }
-
-    // --- 色の決定 ---
-    if hit_anything {
-        // 法線を色にする (-1~1 -> 0~1)
-        return 0.5 * (rec.normal + vec3<f32>(1.0, 1.0, 1.0));
-    }
-
-    // 背景 (空)
-    let unit_direction = normalize(r_in.direction);
-    let t = 0.5 * (unit_direction.y + 1.0);
-    return mix(vec3<f32>(1.0), vec3<f32>(0.5, 0.7, 1.0), t);
+    return color;
 }
 
+// --- 5. Main Compute Shader ---
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(outputTex);
-    let x = id.x;
-    let y = id.y;
+    if (id.x >= dims.x || id.y >= dims.y) { return; }
 
-    if x >= dims.x || y >= dims.y {
-        return;
-    }
+    let pixel_idx = id.y * dims.x + id.x;
 
-    // 画像のアスペクト比を計算
-    let aspect_ratio = f32(dims.x) / f32(dims.y);
+    // 乱数初期化 (ピクセル位置 + フレーム数でシード変化)
+    var rng = RandomGenerator(pixel_idx * 719393u + frame.frame_count * 51234u);
 
-    // --- 2. シンプルなカメラのセットアップ ---
-    // 週末レイトレーシングの定義値
-    let viewport_height = 2.0;
-    let viewport_width = aspect_ratio * viewport_height;
-    let focal_length = 1.0;
-
-    let origin = vec3<f32>(0.0, 0.0, 0.0);
-
-    let horizontal = vec3<f32>(viewport_width, 0.0, 0.0);
-    let vertical = vec3<f32>(0.0, viewport_height, 0.0);
-
-    let spp = 100u;
-
-    // 左下隅の座標を計算
-    let lower_left_corner = origin - (horizontal / 2.0) - (vertical / 2.0) - vec3<f32>(0.0, 0.0, focal_length);
-
-    var pixel_color: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
-    var rng = RandomGenerator(x + y * dims.x);
-
-    for (var i = 0u; i < spp; i++) {
-    // --- UV座標の計算 ---
-    // u: 0 (左) -> 1 (右)
-        let offsetx = rand_pcg(&rng) - 0.5;
-        let u = (f32(x) + offsetx) / f32(dims.x - 1u);
+    // --- カメラレイの生成 (Uniform使用) ---
+    // CPUで計算したパラメータを使用するため、ここではUV計算とRay生成のみ
     
-    // v: 0 (下) -> 1 (上)
-    // WebGPUのテクスチャ座標(y)は「上が0」なので、
-    // C++のレイトレ座標系(左下が原点)に合わせるために反転させます
-        let offsety = rand_pcg(&rng) - 0.5;
-        let v = 1.0 - ((f32(y) + offsety) / f32(dims.y - 1u));
+    // アンチエイリアス用ジッタリング
+    let u_offset = rand_pcg(&rng);
+    let v_offset = rand_pcg(&rng);
+    let u = (f32(id.x) + u_offset) / f32(dims.x);
+    let v = 1.0 - ((f32(id.y) + v_offset) / f32(dims.y)); // 上下反転
 
-    // --- レイの生成 ---
-        let direction = lower_left_corner + (u * horizontal) + (v * vertical) - origin;
-        let r = Ray(origin, direction);
+    // Ray = Origin + u*Horizontal + v*Vertical - Origin (方向のみ)
+    // lower_left_cornerには既に (origin - horizontal/2 - vertical/2 - w) が入っている
+    let direction = camera.lower_left_corner 
+                  + (u * camera.horizontal) 
+                  + (v * camera.vertical) 
+                  - camera.origin;
 
-    // 色を計算
-        pixel_color += ray_color(r);
+    let r = Ray(camera.origin, direction);
+
+    // --- 色計算 ---
+    // 蓄積レンダリング時は spp=1 で十分
+    let pixel_color_linear = ray_color(r, &rng);
+
+    // --- 蓄積処理 (Linear Space) ---
+    var accumulated = vec4<f32>(0.0);
+    if (frame.frame_count > 1u) {
+        accumulated = accumulateBuffer[pixel_idx];
     }
+    
+    let new_accumulated = accumulated + vec4<f32>(pixel_color_linear, 1.0);
+    accumulateBuffer[pixel_idx] = new_accumulated;
 
-    pixel_color /= f32(spp);
-    let coords = vec2<u32>(x, y);
-    // 書き込み
-    textureStore(outputTex, vec2<i32>(coords), vec4<f32>(pixel_color, 1.0));
+    // --- 表示処理 (Gamma Correction) ---
+    let frame_f32 = f32(frame.frame_count);
+    var final_color = new_accumulated.rgb / frame_f32;
+
+    // Linear -> sRGB (簡易ガンマ 2.2近似 = sqrt)
+    final_color = sqrt(final_color);
+    final_color = clamp(final_color, vec3<f32>(0.0), vec3<f32>(1.0));
+
+    textureStore(outputTex, vec2<i32>(id.xy), vec4<f32>(final_color, 1.0));
 }
