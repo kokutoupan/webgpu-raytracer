@@ -37,7 +37,8 @@ jobs:
           # # 【変更】キャッシュの設定を pnpm に変更
           # cache: 'pnpm'
 
-      # 【変更】pnpm install を実行 (--frozen-lockfile は npm ci 相当)
+      - name: Remove broken lockfile
+        run: rm pnpm-lock.yaml      
       - name: Install dependencies
         run: pnpm install
       # 【変更】pnpm でビルド
