@@ -1,12 +1,8 @@
-# .github/workflows/deploy.yml
 name: Deploy static content to Pages
 
 on:
-  # mainブランチにプッシュされた時に実行
   push:
     branches: ["main"]
-
-  # Actionsタブから手動実行も可能にする設定
   workflow_dispatch:
 
 permissions:
@@ -28,17 +24,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 【追加】pnpm 本体をインストールするアクション
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9 # 使用しているpnpmのバージョンに合わせてください
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          # 【変更】キャッシュの設定を pnpm に変更
+          cache: 'pnpm'
 
+      # 【変更】pnpm install を実行 (--frozen-lockfile は npm ci 相当)
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
+      # 【変更】pnpm でビルド
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -46,7 +51,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # dist フォルダをアップロード（Viteのデフォルト出力先）
           path: './dist'
 
       - name: Deploy to GitHub Pages
