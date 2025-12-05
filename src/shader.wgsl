@@ -13,15 +13,20 @@ struct FrameInfo {
 }
 @group(0) @binding(2) var<uniform> frame: FrameInfo;
 
-// Binding 3: カメラ情報 (固定/操作時のみ更新)
-// vec3 は 16byte アライメントされるため、TypeScript側もそれに合わせる
+// カメラ構造体 (Defocus Blur対応版)
 struct Camera {
     origin: vec3<f32>,
+    lens_radius: f32,       // Originのw成分
     lower_left_corner: vec3<f32>,
     horizontal: vec3<f32>,
     vertical: vec3<f32>,
+    u: vec3<f32>,           // カメラの右方向 (ボケ用)
+    v: vec3<f32>,           // カメラの上方向 (ボケ用)
 }
 @group(0) @binding(3) var<uniform> camera: Camera;
+
+
+@group(0) @binding(4) var<storage, read> scene_spheres: array<Sphere>;
 
 
 // --- 1. Constants & Structs ---
@@ -36,6 +41,10 @@ struct Ray {
 struct Sphere {
     center: vec3<f32>,
     radius: f32,
+    color: vec3<f32>,   // マテリアルの色 (Albedo)
+    mat_type: f32,      // 0: Lambertian, 1: Metal
+    extra: f32,         // Fuzz など
+    // padding... (WGSLでは明示しなくてもアライメントが合っていればOK)
 }
 
 struct HitRecord {
@@ -69,7 +78,26 @@ fn random_unit_vector(rng: ptr<function, RandomGenerator>) -> vec3<f32> {
     return vec3<f32>(x, y, z);
 }
 
+// 単位円盤内のランダムな点 (Defocus Blur用)
+fn random_in_unit_disk(rng: ptr<function, RandomGenerator>) -> vec3<f32> {
+    // 棄却法
+    for (var i = 0; i < 10; i++) {
+        let p = vec3<f32>(rand_pcg(rng) * 2.0 - 1.0, rand_pcg(rng) * 2.0 - 1.0, 0.0);
+        if dot(p, p) < 1.0 {
+            return p;
+        }
+    }
+    return vec3<f32>(0.0);
+}
+
 // --- 3. Geometry Functions ---
+
+// フレネル反射率の計算 (Schlick's approximation)
+fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
+    var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
+    return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
+}
 
 fn ray_at(r: Ray, t: f32) -> vec3<f32> {
     return r.origin + t * r.direction;
@@ -82,13 +110,13 @@ fn hit_sphere(s: Sphere, r: Ray, t_min: f32, t_max: f32, rec: ptr<function, HitR
     let c = dot(oc, oc) - s.radius * s.radius;
     let discriminant = h * h - a * c;
 
-    if (discriminant < 0.0) { return false; }
+    if discriminant < 0.0 { return false; }
 
     let sqrtd = sqrt(discriminant);
     var root = (-h - sqrtd) / a;
-    if (root <= t_min || t_max <= root) {
+    if root <= t_min || t_max <= root {
         root = (-h + sqrtd) / a;
-        if (root <= t_min || t_max <= root) {
+        if root <= t_min || t_max <= root {
             return false;
         }
     }
@@ -105,10 +133,8 @@ fn hit_sphere(s: Sphere, r: Ray, t_min: f32, t_max: f32, rec: ptr<function, HitR
 // --- 4. Ray Tracing Logic ---
 
 fn ray_color(r_in: Ray, rng: ptr<function, RandomGenerator>) -> vec3<f32> {
-    var spheres = array<Sphere, 2>(
-        Sphere(vec3<f32>(0.0, 0.0, -1.0), 0.5),
-        Sphere(vec3<f32>(0.0, -100.5, -1.0), 100.0)
-    );
+    let sphere_count = arrayLength(&scene_spheres);
+
 
     var ray = r_in;
     var color = vec3<f32>(0.0);
@@ -119,20 +145,63 @@ fn ray_color(r_in: Ray, rng: ptr<function, RandomGenerator>) -> vec3<f32> {
         var hit_anything = false;
         var closest_so_far = 9999999.0;
         let t_min = 0.001;
+        var hit_index = -1; // どの球に当たったか
 
-        for (var i = 0u; i < 2u; i++) {
-            if (hit_sphere(spheres[i], ray, t_min, closest_so_far, &rec)) {
+
+        for (var i = 0u; i < sphere_count; i++) {
+            if hit_sphere(scene_spheres[i], ray, t_min, closest_so_far, &rec) {
                 hit_anything = true;
                 closest_so_far = rec.t;
+                hit_index = i32(i);
             }
         }
 
-        if (hit_anything) {
-            let new_dir = rec.normal + random_unit_vector(rng);
-            ray = Ray(rec.p, new_dir);
-            throughput *= 0.5;
-            if (length(throughput) < 0.001) { break; }
+        if hit_anything {
+            // ヒットした球の情報を取得
+            let s = scene_spheres[hit_index];
+            var scattered_direction = vec3<f32>(0.0);
+
+            if s.mat_type < 0.5 { // diffusion
+                scattered_direction = rec.normal + random_unit_vector(rng);
+            } else if s.mat_type < 1.5 { // metal
+                scattered_direction = reflect(ray.direction, rec.normal) + s.extra * random_unit_vector(rng);
+            } else {  // === 2: Dielectric (ガラス/水) ===
+                // s.extra を 屈折率 (IR) として使う (例: 1.5)
+                
+                // 1. 屈折率の比率 (eta) を決定
+                // 表から入る場合: 1.0 / 1.5, 裏から出る場合: 1.5 / 1.0
+                let refraction_ratio = select(s.extra, 1.0 / s.extra, rec.front_face);
+
+                let unit_direction = normalize(ray.direction);
+                
+                // 2. 全反射 (Total Internal Reflection) の判定用パラメータ
+                // cos_theta: 入射角のコサイン (0.0 ~ 1.0)
+                // dot(-unit, normal) と 1.0 の小さい方をとる
+                let cos_theta = min(dot(-unit_direction, rec.normal), 1.0);
+                let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+
+                // 全反射するかどうか (スネルの法則が成立しない場合)
+                let cannot_refract = refraction_ratio * sin_theta > 1.0;
+                
+                // 3. 反射するか屈折するかの決定
+                // (全反射条件) OR (フレネル反射確率 > 乱数)
+                let do_reflect = cannot_refract || (reflectance(cos_theta, refraction_ratio) > rand_pcg(rng));
+
+                if do_reflect {
+                    // 反射 (組み込み関数)
+                    scattered_direction = reflect(unit_direction, rec.normal);
+                } else {
+                    // 屈折 (組み込み関数)
+                    // WGSLのrefractは (入射ベクトル, 法線, eta) を取る
+                    scattered_direction = refract(unit_direction, rec.normal, refraction_ratio);
+                }
+            }
+
+            ray = Ray(rec.p, scattered_direction);
+            throughput *= s.color;
+            if length(throughput) < 0.001 { break; }
         } else {
+            // ヒットなし(空)
             let unit_direction = normalize(ray.direction);
             let t = 0.5 * (unit_direction.y + 1.0);
             let sky_color = mix(vec3<f32>(1.0), vec3<f32>(0.5, 0.7, 1.0), t);
@@ -148,28 +217,36 @@ fn ray_color(r_in: Ray, rng: ptr<function, RandomGenerator>) -> vec3<f32> {
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(outputTex);
-    if (id.x >= dims.x || id.y >= dims.y) { return; }
+    if id.x >= dims.x || id.y >= dims.y { return; }
 
     let pixel_idx = id.y * dims.x + id.x;
 
     // 乱数初期化 (ピクセル位置 + フレーム数でシード変化)
     var rng = RandomGenerator(pixel_idx * 719393u + frame.frame_count * 51234u);
 
-    // --- カメラレイの生成 (Uniform使用) ---
-    // CPUで計算したパラメータを使用するため、ここではUV計算とRay生成のみ
+    // --- カメラレイ生成 (Defocus Blur対応) ---
     
-    // アンチエイリアス用ジッタリング
+    // UV + Jitter
     let u_offset = rand_pcg(&rng);
     let v_offset = rand_pcg(&rng);
-    let u = (f32(id.x) + u_offset) / f32(dims.x);
-    let v = 1.0 - ((f32(id.y) + v_offset) / f32(dims.y)); // 上下反転
+    let s = (f32(id.x) + u_offset) / f32(dims.x);
+    let t = 1.0 - ((f32(id.y) + v_offset) / f32(dims.y));
 
-    // Ray = Origin + u*Horizontal + v*Vertical - Origin (方向のみ)
-    // lower_left_cornerには既に (origin - horizontal/2 - vertical/2 - w) が入っている
+    // レンズ上のオフセット (ボケ)
+    var ray_origin = camera.origin;
+    var ray_offset = vec3<f32>(0.0);
+
+    if (camera.lens_radius > 0.0) {
+        let rd = camera.lens_radius * random_in_unit_disk(&rng);
+        ray_offset = camera.u * rd.x + camera.v * rd.y;
+        ray_origin += ray_offset;
+    }
+
     let direction = camera.lower_left_corner 
-                  + (u * camera.horizontal) 
-                  + (v * camera.vertical) 
-                  - camera.origin;
+                  + (s * camera.horizontal) 
+                  + (t * camera.vertical) 
+                  - camera.origin
+                  - ray_offset;
 
     let r = Ray(camera.origin, direction);
 
@@ -179,10 +256,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // --- 蓄積処理 (Linear Space) ---
     var accumulated = vec4<f32>(0.0);
-    if (frame.frame_count > 1u) {
+    if frame.frame_count > 1u {
         accumulated = accumulateBuffer[pixel_idx];
     }
-    
+
     let new_accumulated = accumulated + vec4<f32>(pixel_color_linear, 1.0);
     accumulateBuffer[pixel_idx] = new_accumulated;
 
