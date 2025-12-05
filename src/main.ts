@@ -4,6 +4,22 @@ import shaderCode from './shader.wgsl?raw';
 const canvas = document.getElementById('gpu-canvas') as HTMLCanvasElement;
 const btn = document.getElementById('render-btn') as HTMLButtonElement;
 
+// --- FPSカウンター用のUI作成 ---
+const statsDiv = document.createElement("div");
+Object.assign(statsDiv.style, {
+  position: "fixed",
+  top: "10px",
+  left: "10px",
+  color: "#0f0", // 緑色
+  background: "rgba(0, 0, 0, 0.7)",
+  padding: "8px",
+  fontFamily: "monospace",
+  fontSize: "14px",
+  pointerEvents: "none",
+  zIndex: "9999"
+});
+document.body.appendChild(statsDiv);
+
 
 // --- ベクトル演算用の簡易ヘルパー ---
 const vec3 = {
@@ -115,8 +131,8 @@ function makeSpheres() {
   ));
 
   // 2. ランダムな小球 (-11 to 11 の範囲)
-  for (let a = -11; a < 11; a++) {
-    for (let b = -11; b < 11; b++) {
+  for (let a = -5; a < 5; a++) {
+    for (let b = -5; b < 5; b++) {
       const chooseMat = rnd();
       const center = {
         x: a + 0.9 * rnd(),
@@ -215,11 +231,20 @@ async function initAndRender() {
   if (!context) { throw new Error("WebGPU context not found"); }
 
   // const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+  // 
   context.configure({
     device,
     format: 'rgba8unorm',
-    usage: GPUTextureUsage.STORAGE_BINDING
+    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
   });
+
+  const renderTarget = device.createTexture({
+    size: [canvas.width, canvas.height],
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC
+  });
+
+  const renderTargetView = renderTarget.createView();
 
   // --- 2. リソース作成 (Buffer & Texture) ---
 
@@ -298,37 +323,46 @@ async function initAndRender() {
   const bindGroupLayout = pipeline.getBindGroupLayout(0);
   const frameData = new Uint32Array(1); // データ転送用の配列を使い回す
 
+  // BindGroup作成
+  // ※ 出力先テクスチャ(textureView)が毎フレーム変わるため、BindGroupの再生成は必須
+  // (さらに最適化するにはシェーダーでBindGroupを分けて、変化しないリソースを再利用する方法がある)
+  const bindGroup = device.createBindGroup({
+    layout: bindGroupLayout, // ★キャッシュを使用
+    entries: [
+      { binding: 0, resource: renderTargetView },                    // Output Texture
+      { binding: 1, resource: { buffer: accumulateBuffer } },   // Accumulation Buffer
+      { binding: 2, resource: { buffer: frameUniformBuffer } }, // Frame Info
+      { binding: 3, resource: { buffer: cameraUniformBuffer } },// Camera Info (Fixed)
+      { binding: 4, resource: { buffer: sphereBuffer } }, // 球データ
+    ],
+  });
+
+
+  // --- 計測用変数の準備 ---
+  let lastTime = performance.now();
+  let frameCountTimer = 0;
+
   // --- 5. レンダリングループ ---
   let frameCount = 0;
   let isRendering = false;
 
   const renderFrame = () => {
     if (!isRendering) return;
+    // 計測開始
+    const now = performance.now();
+
 
     frameCount++;
+    frameCountTimer++;
 
     // フレーム番号のみ更新 (配列再利用)
     frameData[0] = frameCount;
     device.queue.writeBuffer(frameUniformBuffer, 0, frameData);
 
-    const texture = context.getCurrentTexture();
-    const textureView = texture.createView();
-
-    // BindGroup作成
-    // ※ 出力先テクスチャ(textureView)が毎フレーム変わるため、BindGroupの再生成は必須
-    // (さらに最適化するにはシェーダーでBindGroupを分けて、変化しないリソースを再利用する方法がある)
-    const bindGroup = device.createBindGroup({
-      layout: bindGroupLayout, // ★キャッシュを使用
-      entries: [
-        { binding: 0, resource: textureView },                    // Output Texture
-        { binding: 1, resource: { buffer: accumulateBuffer } },   // Accumulation Buffer
-        { binding: 2, resource: { buffer: frameUniformBuffer } }, // Frame Info
-        { binding: 3, resource: { buffer: cameraUniformBuffer } },// Camera Info (Fixed)
-        { binding: 4, resource: { buffer: sphereBuffer } }, // 球データ
-      ],
-    });
+    const canvasTexture = context.getCurrentTexture();
 
     const commandEncoder = device.createCommandEncoder();
+
     const passEncoder = commandEncoder.beginComputePass();
     passEncoder.setPipeline(pipeline);
     passEncoder.setBindGroup(0, bindGroup);
@@ -340,7 +374,25 @@ async function initAndRender() {
     );
     passEncoder.end();
 
+    commandEncoder.copyTextureToTexture(
+      { texture: renderTarget },
+      { texture: canvasTexture },
+      [canvas.width, canvas.height, 1]
+    );
+
     device.queue.submit([commandEncoder.finish()]);
+
+    // 1秒ごとにFPSを更新表示
+    if (now - lastTime >= 1000) {
+      const fps = frameCountTimer;             // 過去1秒のフレーム数
+      const ms = (1000 / fps).toFixed(2);      // 1フレームあたりの平均時間 (ms)
+
+      statsDiv.textContent = `FPS: ${fps} | Frame Time: ${ms}ms`;
+
+      // カウンタをリセット
+      frameCountTimer = 0;
+      lastTime = now;
+    }
 
     requestAnimationFrame(renderFrame);
   };
