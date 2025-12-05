@@ -1,99 +1,110 @@
-// --- 0. Bindings & Uniforms ---
+// =========================================================
+//   WebGPU Ray Tracer (Refactored)
+// =========================================================
 
-// Binding 0: 表示用テクスチャ (sRGB)
+// --- Constants ---
+const PI = 3.141592653589793;
+const T_MIN = 0.001;
+const T_MAX = 1e30;
+const MAX_DEPTH = 5u;
+const SPHERES_BINDING_STRIDE = 3u; // 1球あたり vec4 が 3つ
+
+// --- Bindings ---
 @group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
-
-// Binding 1: 蓄積用バッファ (Linear, Read-Write)
 @group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
+@group(0) @binding(2) var<uniform> frame: FrameInfo;
+@group(0) @binding(3) var<uniform> camera: Camera;
+// vec4配列として読み込むことでアライメント問題を回避
+@group(0) @binding(4) var<storage, read> scene_spheres_packed: array<vec4<f32>>;
 
-// Binding 2: フレーム情報 (毎フレーム更新)
+// --- Structs ---
 struct FrameInfo {
     frame_count: u32,
-    // padding...
 }
-@group(0) @binding(2) var<uniform> frame: FrameInfo;
 
-// カメラ構造体 (Defocus Blur対応版)
 struct Camera {
     origin: vec3<f32>,
-    lens_radius: f32,       // Originのw成分
+    lens_radius: f32,
     lower_left_corner: vec3<f32>,
     horizontal: vec3<f32>,
     vertical: vec3<f32>,
-    u: vec3<f32>,           // カメラの右方向 (ボケ用)
-    v: vec3<f32>,           // カメラの上方向 (ボケ用)
+    u: vec3<f32>,
+    v: vec3<f32>,
 }
-@group(0) @binding(3) var<uniform> camera: Camera;
-
-
-@group(0) @binding(4) var<storage, read> scene_spheres: array<Sphere>;
-
-
-// --- 1. Constants & Structs ---
-
-const PI = 3.141592653589793;
 
 struct Ray {
     origin: vec3<f32>,
     direction: vec3<f32>,
 }
 
+// 論理的な球データ構造 (GPUメモリ上では packed 配列)
 struct Sphere {
     center: vec3<f32>,
     radius: f32,
-    color: vec3<f32>,   // マテリアルの色 (Albedo)
-    mat_type: f32,      // 0: Lambertian, 1: Metal
-    extra: f32,         // Fuzz など
-    // padding... (WGSLでは明示しなくてもアライメントが合っていればOK)
+    color: vec3<f32>,
+    mat_type: f32, // 0:Lambertian, 1:Metal, 2:Dielectric
+    extra: f32,    // Fuzz or IOR
 }
 
-struct HitRecord {
-    p: vec3<f32>,
-    normal: vec3<f32>,
-    t: f32,
-    front_face: bool,
+// --- Helper Functions: Data Access ---
+
+// パッキングされたバッファから球データを復元
+// 
+fn get_sphere(index: u32) -> Sphere {
+    let i = index * SPHERES_BINDING_STRIDE;
+    let d1 = scene_spheres_packed[i];      // center(xyz), radius(w)
+    let d2 = scene_spheres_packed[i + 1u]; // color(xyz), mat_type(w)
+    let d3 = scene_spheres_packed[i + 2u]; // extra(x), padding...
+    return Sphere(d1.xyz, d1.w, d2.xyz, d2.w, d3.x);
 }
 
+// --- Helper Functions: RNG (PCG Hash) ---
 
-// --- 2. Random Functions ---
-
-fn rand_pcg(rng: ptr<function, u32>) -> f32 {
-    let old_state = (*rng);
-    (*rng) = old_state * 747796405u + 2891336453u;
-    let word = ((*rng) >> ((old_state >> 28u) + 4u)) ^ (*rng);
-    let result = word * 277803737u;
-    let final_hash = (result >> 22u) ^ result;
-    return f32(final_hash) / 4294967295.0;
+// ピクセル座標とフレーム数からユニークなシードを生成
+fn init_rng(pixel_idx: u32, frame: u32) -> u32 {
+    var seed = pixel_idx + frame * 719393u;
+    seed = seed ^ 2747636419u;
+    seed = seed * 2654435769u;
+    seed = seed ^ (seed >> 16u);
+    seed = seed * 2654435769u;
+    seed = seed ^ (seed >> 16u);
+    seed = seed * 2654435769u;
+    return seed;
 }
 
+// 0.0 ~ 1.0 の乱数を生成
+fn rand_pcg(state: ptr<function, u32>) -> f32 {
+    let old = *state;
+    *state = old * 747796405u + 2891336453u;
+    let word = ((*state) >> ((old >> 28u) + 4u)) ^ (*state);
+    return f32((word >> 22u) ^ word) / 4294967295.0;
+}
+
+// 球面上のランダムな点 (Lambertian/Metal用)
 fn random_unit_vector(rng: ptr<function, u32>) -> vec3<f32> {
     let z = rand_pcg(rng) * 2.0 - 1.0;
     let a = rand_pcg(rng) * 2.0 * PI;
     let r = sqrt(max(0.0, 1.0 - z * z));
-    let x = r * cos(a);
-    let y = r * sin(a);
-    return vec3<f32>(x, y, z);
+    return vec3<f32>(r * cos(a), r * sin(a), z);
 }
 
-// 単位円盤内のランダムな点 (Defocus Blur用)
+// 単位円盤内のランダムな点 (被写界深度用)
 fn random_in_unit_disk(rng: ptr<function, u32>) -> vec3<f32> {
-    let r = sqrt(rand_pcg(rng));       // 半径 (一様分布にするためsqrt)
-    let theta = 2.0 * PI * rand_pcg(rng); // 角度
+    let r = sqrt(rand_pcg(rng));
+    let theta = 2.0 * PI * rand_pcg(rng);
     return vec3<f32>(r * cos(theta), r * sin(theta), 0.0);
 }
-// --- 3. Geometry Functions ---
 
-// フレネル反射率の計算 (Schlick's approximation)
+// --- Helper Functions: Physics ---
+
+// Schlickの近似式 (フレネル反射率)
 fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
     var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
     r0 = r0 * r0;
     return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
 }
 
-fn ray_at(r: Ray, t: f32) -> vec3<f32> {
-    return r.origin + t * r.direction;
-}
-
+// 球とレイの交差判定 (距離tを返す。ヒットしなければ -1.0)
 fn hit_sphere_t(s: Sphere, r: Ray, t_min: f32, t_max: f32) -> f32 {
     let oc = r.origin - s.center;
     let a = dot(r.direction, r.direction);
@@ -101,168 +112,160 @@ fn hit_sphere_t(s: Sphere, r: Ray, t_min: f32, t_max: f32) -> f32 {
     let c = dot(oc, oc) - s.radius * s.radius;
     let discriminant = h * h - a * c;
 
-    if discriminant < 0.0 { return -1.; }
+    if (discriminant < 0.0) { return -1.0; }
 
     let sqrtd = sqrt(discriminant);
     var root = (-h - sqrtd) / a;
-    if root <= t_min || t_max <= root {
+    if (root <= t_min || t_max <= root) {
         root = (-h + sqrtd) / a;
-        if root <= t_min || t_max <= root {
-            return -1.;
-        }
+        if (root <= t_min || t_max <= root) { return -1.0; }
     }
-
-
     return root;
 }
 
-fn hit_sphere_record(s: Sphere, r: Ray, t: f32) -> HitRecord {
-
-    let p = ray_at(r, t);
-    let outward_normal = (p - s.center) / s.radius;
-    let front_face = dot(r.direction, outward_normal) < 0.0;
-    let normal = select(-outward_normal, outward_normal, front_face);
-
-    return HitRecord(p, normal, t, front_face);
-}
-
-// --- 4. Ray Tracing Logic ---
+// --- Main Ray Tracing Logic ---
 
 fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
-    let sphere_count = arrayLength(&scene_spheres);
-
-
     var ray = r_in;
-    var color = vec3<f32>(0.0);
     var throughput = vec3<f32>(1.0);
+    let sphere_count = arrayLength(&scene_spheres_packed) / SPHERES_BINDING_STRIDE;
 
-    for (var depth = 0u; depth < 10u; depth++) {
+    for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         var hit_anything = false;
-        var closest_so_far = 9999999.0;
-        let t_min = 0.001;
-        var hit_index = -1; // どの球に当たったか
+        var closest_t = T_MAX;
+        var hit_idx = 0u;
 
-
+        // 全球探索 (単純ループ)
         for (var i = 0u; i < sphere_count; i++) {
-            let hit_time = hit_sphere_t(scene_spheres[i], ray, t_min, closest_so_far);
-            if hit_time > 0.0 {
+            let s = get_sphere(i);
+            let t = hit_sphere_t(s, ray, T_MIN, closest_t);
+            if (t > 0.0) {
                 hit_anything = true;
-                closest_so_far = hit_time;
-                hit_index = i32(i);
+                closest_t = t;
+                hit_idx = i;
             }
         }
 
-        if hit_anything {
-            // ヒットした球の情報を取得
-            let s = scene_spheres[hit_index];
-            let rec = hit_sphere_record(s, ray, closest_so_far);
-            var scattered_direction = vec3<f32>(0.0);
+        if (hit_anything) {
+            let s = get_sphere(hit_idx);
+            let p = ray.origin + closest_t * ray.direction;
+            let outward_normal = (p - s.center) / s.radius;
+            let front_face = dot(ray.direction, outward_normal) < 0.0;
+            let normal = select(-outward_normal, outward_normal, front_face);
 
-            if s.mat_type < 0.5 { // diffusion
-                scattered_direction = rec.normal + random_unit_vector(rng);
-            } else if s.mat_type < 1.5 { // metal
-                scattered_direction = reflect(ray.direction, rec.normal) + s.extra * random_unit_vector(rng);
-            } else {  // === 2: Dielectric (ガラス/水) ===
-                // s.extra を 屈折率 (IR) として使う (例: 1.5)
-                
-                // 1. 屈折率の比率 (eta) を決定
-                // 表から入る場合: 1.0 / 1.5, 裏から出る場合: 1.5 / 1.0
-                let refraction_ratio = select(s.extra, 1.0 / s.extra, rec.front_face);
+            var scattered_dir = vec3<f32>(0.0);
 
-                let unit_direction = normalize(ray.direction);
+            // Material Handling
+            if (s.mat_type < 0.5) { 
+                // --- Lambertian (Diffuse) ---
+                scattered_dir = normal + random_unit_vector(rng);
+                // 縮退（ゼロベクトル）対策
+                if (length(scattered_dir) < 1e-6) { scattered_dir = normal; }
+            
+            } else if (s.mat_type < 1.5) { 
+                // --- Metal ---
+                let reflected = reflect(ray.direction, normal);
+                scattered_dir = reflected + s.extra * random_unit_vector(rng);
+            
+            } else { 
+                // --- Dielectric (Glass) ---
+                let ref_ratio = select(s.extra, 1.0 / s.extra, front_face);
+                let unit_dir = normalize(ray.direction);
                 
-                // 2. 全反射 (Total Internal Reflection) の判定用パラメータ
-                // cos_theta: 入射角のコサイン (0.0 ~ 1.0)
-                // dot(-unit, normal) と 1.0 の小さい方をとる
-                let cos_theta = min(dot(-unit_direction, rec.normal), 1.0);
+                let cos_theta = min(dot(-unit_dir, normal), 1.0);
                 let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
-
-                // 全反射するかどうか (スネルの法則が成立しない場合)
-                let cannot_refract = refraction_ratio * sin_theta > 1.0;
                 
-                // 3. 反射するか屈折するかの決定
-                // (全反射条件) OR (フレネル反射確率 > 乱数)
-                let do_reflect = cannot_refract || (reflectance(cos_theta, refraction_ratio) > rand_pcg(rng));
+                // 全反射条件 または フレネル反射
+                let cannot_refract = ref_ratio * sin_theta > 1.0;
+                let do_reflect = cannot_refract || (reflectance(cos_theta, ref_ratio) > rand_pcg(rng));
 
-                if do_reflect {
-                    // 反射 (組み込み関数)
-                    scattered_direction = reflect(unit_direction, rec.normal);
+                if (do_reflect) {
+                    scattered_dir = reflect(unit_dir, normal);
                 } else {
-                    // 屈折 (組み込み関数)
-                    // WGSLのrefractは (入射ベクトル, 法線, eta) を取る
-                    scattered_direction = refract(unit_direction, rec.normal, refraction_ratio);
+                    // Refract (Snell's Law)
+                    let r_out_perp = ref_ratio * (unit_dir + cos_theta * normal);
+                    let r_out_parallel = -sqrt(abs(1.0 - dot(r_out_perp, r_out_perp))) * normal;
+                    scattered_dir = r_out_perp + r_out_parallel;
                 }
             }
 
-            ray = Ray(rec.p, scattered_direction);
+            ray = Ray(p, scattered_dir);
             throughput *= s.color;
-            if length(throughput) < 0.001 { break; }
+
+            // --- Russian Roulette (Path Termination) ---
+            // 寄与率が低いパスを確率的に打ち切って高速化
+            let p_rr = max(throughput.r, max(throughput.g, throughput.b));
+            // 常に少しは確率を残すため、例えば0.001以下でも完全には切らない工夫も可能だが
+            // ここでは単純なスループットベースで行う
+            if (rand_pcg(rng) > p_rr) { break; }
+            throughput /= p_rr; // 生き残ったレイのエネルギーを補正
+
         } else {
-            // ヒットなし(空)
-            let unit_direction = normalize(ray.direction);
-            let t = 0.5 * (unit_direction.y + 1.0);
-            let sky_color = mix(vec3<f32>(1.0), vec3<f32>(0.5, 0.7, 1.0), t);
-            color += throughput * sky_color;
-            break;
+            // --- Sky Color (Miss) ---
+            let unit_dir = normalize(ray.direction);
+            let t = 0.5 * (unit_dir.y + 1.0);
+            let sky = mix(vec3<f32>(1.0), vec3<f32>(0.5, 0.7, 1.0), t);
+            return throughput * sky;
         }
     }
-    return color;
+    
+    // 最大深度を超えた、またはロシアンルーレットで吸収された場合
+    return vec3<f32>(0.0);
 }
 
-// --- 5. Main Compute Shader ---
+// --- Compute Shader Entry Point ---
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(outputTex);
-    if id.x >= dims.x || id.y >= dims.y { return; }
+    
+    // Bounds Check: 画面外スレッドは即時終了
+    if (id.x >= dims.x || id.y >= dims.y) { return; }
 
     let pixel_idx = id.y * dims.x + id.x;
-
-    // 乱数初期化 (ピクセル位置 + フレーム数でシード変化)
-    var rng = (pixel_idx * 719393u + frame.frame_count * 51234u);
-
-    // --- カメラレイ生成 (Defocus Blur対応) ---
     
-    // UV + Jitter
-    let u_offset = rand_pcg(&rng);
-    let v_offset = rand_pcg(&rng);
-    let s = (f32(id.x) + u_offset) / f32(dims.x);
-    let t = 1.0 - ((f32(id.y) + v_offset) / f32(dims.y));
+    // RNG Initialization
+    var rng = init_rng(pixel_idx, frame.frame_count);
 
-    // レンズ上のオフセット (ボケ)
-    var ray_origin = camera.origin;
-    var ray_offset = vec3<f32>(0.0);
-
-    if camera.lens_radius > 0.0 {
+    // Camera Setup & Ray Generation (with Defocus Blur & Jitter)
+    var ray_orig = camera.origin;
+    var ray_off = vec3<f32>(0.0);
+    
+    if (camera.lens_radius > 0.0) {
         let rd = camera.lens_radius * random_in_unit_disk(&rng);
-        ray_offset = camera.u * rd.x + camera.v * rd.y;
-        ray_origin += ray_offset;
+        ray_off = camera.u * rd.x + camera.v * rd.y;
+        ray_orig += ray_off;
     }
 
-    let direction = camera.lower_left_corner + (s * camera.horizontal) + (t * camera.vertical) - camera.origin - ray_offset;
+    let u_jitter = rand_pcg(&rng);
+    let v_jitter = rand_pcg(&rng);
+    let s = (f32(id.x) + u_jitter) / f32(dims.x);
+    let t = 1.0 - ((f32(id.y) + v_jitter) / f32(dims.y));
 
-    let r = Ray(camera.origin, direction);
+    let direction = camera.lower_left_corner 
+                  + s * camera.horizontal 
+                  + t * camera.vertical 
+                  - camera.origin 
+                  - ray_off;
 
-    // --- 色計算 ---
-    // 蓄積レンダリング時は spp=1 で十分
-    let pixel_color_linear = ray_color(r, &rng);
+    let r = Ray(ray_orig, direction);
 
-    // --- 蓄積処理 (Linear Space) ---
-    var accumulated = vec4<f32>(0.0);
-    if frame.frame_count > 1u {
-        accumulated = accumulateBuffer[pixel_idx];
+    // Ray Tracing
+    let pixel_color = ray_color(r, &rng);
+
+    // Accumulation
+    var acc_color = vec4<f32>(0.0);
+    if (frame.frame_count > 1u) { 
+        acc_color = accumulateBuffer[pixel_idx]; 
     }
+    
+    let new_acc_color = acc_color + vec4<f32>(pixel_color, 1.0);
+    accumulateBuffer[pixel_idx] = new_acc_color;
 
-    let new_accumulated = accumulated + vec4<f32>(pixel_color_linear, 1.0);
-    accumulateBuffer[pixel_idx] = new_accumulated;
-
-    // --- 表示処理 (Gamma Correction) ---
-    let frame_f32 = f32(frame.frame_count);
-    var final_color = new_accumulated.rgb / frame_f32;
-
-    // Linear -> sRGB (簡易ガンマ 2.2近似 = sqrt)
-    final_color = sqrt(final_color);
-    final_color = clamp(final_color, vec3<f32>(0.0), vec3<f32>(1.0));
+    // Output Processing (Average & Gamma Correction)
+    var final_color = new_acc_color.rgb / f32(frame.frame_count);
+    // Linear to sRGB approximation (Gamma 2.0/2.2)
+    final_color = sqrt(clamp(final_color, vec3<f32>(0.0), vec3<f32>(1.0)));
 
     textureStore(outputTex, vec2<i32>(id.xy), vec4<f32>(final_color, 1.0));
 }
