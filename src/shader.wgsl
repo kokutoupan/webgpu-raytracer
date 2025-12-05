@@ -54,22 +54,19 @@ struct HitRecord {
     front_face: bool,
 }
 
-struct RandomGenerator {
-    state: u32,
-}
 
 // --- 2. Random Functions ---
 
-fn rand_pcg(rng: ptr<function, RandomGenerator>) -> f32 {
-    let old_state = (*rng).state;
-    (*rng).state = old_state * 747796405u + 2891336453u;
-    let word = ((*rng).state >> ((old_state >> 28u) + 4u)) ^ (*rng).state;
+fn rand_pcg(rng: ptr<function, u32>) -> f32 {
+    let old_state = (*rng);
+    (*rng) = old_state * 747796405u + 2891336453u;
+    let word = ((*rng) >> ((old_state >> 28u) + 4u)) ^ (*rng);
     let result = word * 277803737u;
     let final_hash = (result >> 22u) ^ result;
     return f32(final_hash) / 4294967295.0;
 }
 
-fn random_unit_vector(rng: ptr<function, RandomGenerator>) -> vec3<f32> {
+fn random_unit_vector(rng: ptr<function, u32>) -> vec3<f32> {
     let z = rand_pcg(rng) * 2.0 - 1.0;
     let a = rand_pcg(rng) * 2.0 * PI;
     let r = sqrt(max(0.0, 1.0 - z * z));
@@ -79,17 +76,11 @@ fn random_unit_vector(rng: ptr<function, RandomGenerator>) -> vec3<f32> {
 }
 
 // 単位円盤内のランダムな点 (Defocus Blur用)
-fn random_in_unit_disk(rng: ptr<function, RandomGenerator>) -> vec3<f32> {
-    // 棄却法
-    for (var i = 0; i < 10; i++) {
-        let p = vec3<f32>(rand_pcg(rng) * 2.0 - 1.0, rand_pcg(rng) * 2.0 - 1.0, 0.0);
-        if dot(p, p) < 1.0 {
-            return p;
-        }
-    }
-    return vec3<f32>(0.0);
+fn random_in_unit_disk(rng: ptr<function, u32>) -> vec3<f32> {
+    let r = sqrt(rand_pcg(rng));       // 半径 (一様分布にするためsqrt)
+    let theta = 2.0 * PI * rand_pcg(rng); // 角度
+    return vec3<f32>(r * cos(theta), r * sin(theta), 0.0);
 }
-
 // --- 3. Geometry Functions ---
 
 // フレネル反射率の計算 (Schlick's approximation)
@@ -103,36 +94,41 @@ fn ray_at(r: Ray, t: f32) -> vec3<f32> {
     return r.origin + t * r.direction;
 }
 
-fn hit_sphere(s: Sphere, r: Ray, t_min: f32, t_max: f32, rec: ptr<function, HitRecord>) -> bool {
+fn hit_sphere_t(s: Sphere, r: Ray, t_min: f32, t_max: f32) -> f32 {
     let oc = r.origin - s.center;
     let a = dot(r.direction, r.direction);
     let h = dot(r.direction, oc);
     let c = dot(oc, oc) - s.radius * s.radius;
     let discriminant = h * h - a * c;
 
-    if discriminant < 0.0 { return false; }
+    if discriminant < 0.0 { return -1.; }
 
     let sqrtd = sqrt(discriminant);
     var root = (-h - sqrtd) / a;
     if root <= t_min || t_max <= root {
         root = (-h + sqrtd) / a;
         if root <= t_min || t_max <= root {
-            return false;
+            return -1.;
         }
     }
 
-    (*rec).t = root;
-    (*rec).p = ray_at(r, root);
-    let outward_normal = ((*rec).p - s.center) / s.radius;
-    (*rec).front_face = dot(r.direction, outward_normal) < 0.0;
-    (*rec).normal = select(-outward_normal, outward_normal, (*rec).front_face);
 
-    return true;
+    return root;
+}
+
+fn hit_sphere_record(s: Sphere, r: Ray, t: f32) -> HitRecord {
+
+    let p = ray_at(r, t);
+    let outward_normal = (p - s.center) / s.radius;
+    let front_face = dot(r.direction, outward_normal) < 0.0;
+    let normal = select(-outward_normal, outward_normal, front_face);
+
+    return HitRecord(p, normal, t, front_face);
 }
 
 // --- 4. Ray Tracing Logic ---
 
-fn ray_color(r_in: Ray, rng: ptr<function, RandomGenerator>) -> vec3<f32> {
+fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     let sphere_count = arrayLength(&scene_spheres);
 
 
@@ -141,7 +137,6 @@ fn ray_color(r_in: Ray, rng: ptr<function, RandomGenerator>) -> vec3<f32> {
     var throughput = vec3<f32>(1.0);
 
     for (var depth = 0u; depth < 10u; depth++) {
-        var rec: HitRecord;
         var hit_anything = false;
         var closest_so_far = 9999999.0;
         let t_min = 0.001;
@@ -149,9 +144,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, RandomGenerator>) -> vec3<f32> {
 
 
         for (var i = 0u; i < sphere_count; i++) {
-            if hit_sphere(scene_spheres[i], ray, t_min, closest_so_far, &rec) {
+            let hit_time = hit_sphere_t(scene_spheres[i], ray, t_min, closest_so_far);
+            if hit_time > 0.0 {
                 hit_anything = true;
-                closest_so_far = rec.t;
+                closest_so_far = hit_time;
                 hit_index = i32(i);
             }
         }
@@ -159,6 +155,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, RandomGenerator>) -> vec3<f32> {
         if hit_anything {
             // ヒットした球の情報を取得
             let s = scene_spheres[hit_index];
+            let rec = hit_sphere_record(s, ray, closest_so_far);
             var scattered_direction = vec3<f32>(0.0);
 
             if s.mat_type < 0.5 { // diffusion
@@ -222,7 +219,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixel_idx = id.y * dims.x + id.x;
 
     // 乱数初期化 (ピクセル位置 + フレーム数でシード変化)
-    var rng = RandomGenerator(pixel_idx * 719393u + frame.frame_count * 51234u);
+    var rng = (pixel_idx * 719393u + frame.frame_count * 51234u);
 
     // --- カメラレイ生成 (Defocus Blur対応) ---
     
@@ -236,17 +233,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var ray_origin = camera.origin;
     var ray_offset = vec3<f32>(0.0);
 
-    if (camera.lens_radius > 0.0) {
+    if camera.lens_radius > 0.0 {
         let rd = camera.lens_radius * random_in_unit_disk(&rng);
         ray_offset = camera.u * rd.x + camera.v * rd.y;
         ray_origin += ray_offset;
     }
 
-    let direction = camera.lower_left_corner 
-                  + (s * camera.horizontal) 
-                  + (t * camera.vertical) 
-                  - camera.origin
-                  - ray_offset;
+    let direction = camera.lower_left_corner + (s * camera.horizontal) + (t * camera.vertical) - camera.origin - ray_offset;
 
     let r = Ray(camera.origin, direction);
 

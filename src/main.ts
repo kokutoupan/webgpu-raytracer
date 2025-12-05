@@ -104,8 +104,8 @@ function createSphere(
   ];
 }
 
-function makeSpheres(){
-    // --- 球データの作成 ---
+function makeSpheres() {
+  // --- 球データの作成 ---
   const spheresList: number[][] = [];
 
   // 1. 地面 (巨大な球)
@@ -186,6 +186,26 @@ function makeSpheres(){
 
 // WebGPUの初期化とレンダリング
 async function initAndRender() {
+  // ブラウザが認識しているピクセル比率
+  const dpr = window.devicePixelRatio || 1;
+
+  // キャンバスの表示サイズ（CSSピクセル）
+  const cssWidth = canvas.clientWidth;
+  const cssHeight = canvas.clientHeight;
+
+  // 実際に描画されるピクセル数
+  const actualWidth = canvas.width;
+  const actualHeight = canvas.height;
+
+  console.log(`--- DPI Check ---`);
+  console.log(`Device Pixel Ratio: ${dpr}`);
+  console.log(`CSS Size: ${cssWidth} x ${cssHeight}`);
+  console.log(`Render Buffer Size: ${actualWidth} x ${actualHeight}`);
+
+  if (dpr > 1.0 && actualWidth > cssWidth) {
+    console.warn("⚠️ Retinaディスプレイ等のため、ピクセル数が多くなっています。重い原因の可能性があります。");
+  }
+
   // --- 1. WebGPU初期化 ---
   if (!navigator.gpu) { alert("WebGPU not supported."); return; }
   const adapter = await navigator.gpu.requestAdapter();
@@ -251,39 +271,6 @@ async function initAndRender() {
   // --- 球データの作成 (ヘルパー使用) ---
   // 配列の配列を作って、最後に flat() で1次元にします
   const spheresList = makeSpheres();
-  // const spheresList: number[][] = [];
-  //
-  // // 1. 地面 (巨大な緑の球)
-  // spheresList.push(createSphere(
-  //   { x: 0.0, y: -100.5, z: -1.0 }, 100.0,
-  //   { r: 0.8, g: 0.8, b: 0.0 }, MatType.Lambertian
-  // ));
-  //
-  // // 2. 中央 (青い拡散球)
-  // spheresList.push(createSphere(
-  //   { x: 0.0, y: 0.0, z: -1.0 }, 0.5,
-  //   { r: 0.1, g: 0.2, b: 0.5 }, MatType.Lambertian
-  // ));
-  //
-  // // 3. 左 (ガラス球)
-  // spheresList.push(createSphere(
-  //   { x: -1.0, y: 0.0, z: -1.0 }, 0.5,
-  //   { r: 1.0, g: 1.0, b: 1.0 }, MatType.Dielectric,
-  //   1.5 // 屈折率
-  // ));
-  // // 3. 左 (ガラス球)
-  // spheresList.push(createSphere(
-  //   { x: -1.0, y: 0.0, z: -1.0 }, 0.4,
-  //   { r: 1.0, g: 1.0, b: 1.0 }, MatType.Dielectric,
-  //   1.0/1.5 // 屈折率
-  // ));
-  //
-  // // 4. 右 (金色の金属球)
-  // spheresList.push(createSphere(
-  //   { x: 1.0, y: 0.0, z: -1.0 }, 0.5,
-  //   { r: 0.8, g: 0.6, b: 0.2 }, MatType.Metal,
-  //   0.0 // Fuzz
-  // ));
 
   // --- GPU送信用データへの変換 ---
   // [ [sphere1...], [sphere2...] ] -> [sphere1..., sphere2...]
