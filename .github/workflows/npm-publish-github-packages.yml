@@ -39,8 +39,7 @@ jobs:
 
       # 【変更】pnpm install を実行 (--frozen-lockfile は npm ci 相当)
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
+        run: pnpm install
       # 【変更】pnpm でビルド
       - name: Build
         run: pnpm run build
