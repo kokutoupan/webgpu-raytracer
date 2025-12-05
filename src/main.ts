@@ -23,6 +23,10 @@ const vec3 = {
   len: (v: any) => Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z),
 };
 
+// --- ランダム・カラー生成ヘルパー ---
+const rnd = () => Math.random();
+const rndRange = (min: number, max: number) => min + (max - min) * Math.random();
+
 // --- カメラデータ生成関数 ---
 // "One Weekend" シリーズと同じパラメータを受け取ります
 function createCameraData(
@@ -100,6 +104,85 @@ function createSphere(
   ];
 }
 
+function makeSpheres(){
+    // --- 球データの作成 ---
+  const spheresList: number[][] = [];
+
+  // 1. 地面 (巨大な球)
+  spheresList.push(createSphere(
+    { x: 0.0, y: -1000.0, z: 0.0 }, 1000.0,
+    { r: 0.5, g: 0.5, b: 0.5 }, MatType.Lambertian
+  ));
+
+  // 2. ランダムな小球 (-11 to 11 の範囲)
+  for (let a = -11; a < 11; a++) {
+    for (let b = -11; b < 11; b++) {
+      const chooseMat = rnd();
+      const center = {
+        x: a + 0.9 * rnd(),
+        y: 0.2,
+        z: b + 0.9 * rnd()
+      };
+
+      // point3(4, 0.2, 0) との距離チェック
+      const dist = vec3.len(vec3.sub(center, { x: 4.0, y: 0.2, z: 0.0 }));
+
+      if (dist > 0.9) {
+        if (chooseMat < 0.8) {
+          // diffuse: color * color (成分ごとの積)
+          const r = rnd() * rnd();
+          const g = rnd() * rnd();
+          const b = rnd() * rnd();
+          spheresList.push(createSphere(
+            center, 0.2,
+            { r, g, b }, MatType.Lambertian
+          ));
+        } else if (chooseMat < 0.95) {
+          // metal: albedo random(0.5, 1), fuzz random(0, 0.5)
+          const r = rndRange(0.5, 1.0);
+          const g = rndRange(0.5, 1.0);
+          const b = rndRange(0.5, 1.0);
+          const fuzz = rndRange(0.0, 0.5);
+          spheresList.push(createSphere(
+            center, 0.2,
+            { r, g, b }, MatType.Metal,
+            fuzz
+          ));
+        } else {
+          // glass
+          spheresList.push(createSphere(
+            center, 0.2,
+            { r: 1.0, g: 1.0, b: 1.0 }, MatType.Dielectric,
+            1.5
+          ));
+        }
+      }
+    }
+  }
+
+  // 3. 大きな球 (Glass)
+  spheresList.push(createSphere(
+    { x: 0.0, y: 1.0, z: 0.0 }, 1.0,
+    { r: 1.0, g: 1.0, b: 1.0 }, MatType.Dielectric,
+    1.5
+  ));
+
+  // 4. 大きな球 (Lambertian)
+  spheresList.push(createSphere(
+    { x: -4.0, y: 1.0, z: 0.0 }, 1.0,
+    { r: 0.4, g: 0.2, b: 0.1 }, MatType.Lambertian
+  ));
+
+  // 5. 大きな球 (Metal)
+  spheresList.push(createSphere(
+    { x: 4.0, y: 1.0, z: 0.0 }, 1.0,
+    { r: 0.7, g: 0.6, b: 0.5 }, MatType.Metal,
+    0.0
+  ));
+
+  return spheresList;
+}
+
 
 // WebGPUの初期化とレンダリング
 async function initAndRender() {
@@ -147,13 +230,13 @@ async function initAndRender() {
   {
     // ★ ここで自由にカメラを設定できます
     const cam = {
-      lookfrom: { x: -2., y: 2.0, z: 1.0 },
-      lookat: { x: 0.0, y: 0.0, z: -1.0 },
+      lookfrom: { x: 13., y: 2.0, z: 3.0 },
+      lookat: { x: 0.0, y: 0.0, z: 0.0 },
       vup: { x: 0.0, y: 1.0, z: 0.0 },
       vfov: 20.0,
       aspectRatio: canvas.width / canvas.height,
-      defocusAngle: 0.6, // 0.0 にするとボケなし
-      focusDist: 3.4,
+      defocusAngle: 0.2, // 0.0 にするとボケなし
+      focusDist: 10,
     };
 
     const cameraData = createCameraData(
@@ -167,40 +250,40 @@ async function initAndRender() {
 
   // --- 球データの作成 (ヘルパー使用) ---
   // 配列の配列を作って、最後に flat() で1次元にします
-  const spheresList: number[][] = [];
-
-  // 1. 地面 (巨大な緑の球)
-  spheresList.push(createSphere(
-    { x: 0.0, y: -100.5, z: -1.0 }, 100.0,
-    { r: 0.8, g: 0.8, b: 0.0 }, MatType.Lambertian
-  ));
-
-  // 2. 中央 (青い拡散球)
-  spheresList.push(createSphere(
-    { x: 0.0, y: 0.0, z: -1.0 }, 0.5,
-    { r: 0.1, g: 0.2, b: 0.5 }, MatType.Lambertian
-  ));
-
-  // 3. 左 (ガラス球)
-  spheresList.push(createSphere(
-    { x: -1.0, y: 0.0, z: -1.0 }, 0.5,
-    { r: 1.0, g: 1.0, b: 1.0 }, MatType.Dielectric,
-    1.5 // 屈折率
-  ));
-  // 3. 左 (ガラス球)
-  spheresList.push(createSphere(
-    { x: -1.0, y: 0.0, z: -1.0 }, 0.4,
-    { r: 1.0, g: 1.0, b: 1.0 }, MatType.Dielectric,
-    1.0/1.5 // 屈折率
-  ));
-
-
-  // 4. 右 (金色の金属球)
-  spheresList.push(createSphere(
-    { x: 1.0, y: 0.0, z: -1.0 }, 0.5,
-    { r: 0.8, g: 0.6, b: 0.2 }, MatType.Metal,
-    0.0 // Fuzz
-  ));
+  const spheresList = makeSpheres();
+  // const spheresList: number[][] = [];
+  //
+  // // 1. 地面 (巨大な緑の球)
+  // spheresList.push(createSphere(
+  //   { x: 0.0, y: -100.5, z: -1.0 }, 100.0,
+  //   { r: 0.8, g: 0.8, b: 0.0 }, MatType.Lambertian
+  // ));
+  //
+  // // 2. 中央 (青い拡散球)
+  // spheresList.push(createSphere(
+  //   { x: 0.0, y: 0.0, z: -1.0 }, 0.5,
+  //   { r: 0.1, g: 0.2, b: 0.5 }, MatType.Lambertian
+  // ));
+  //
+  // // 3. 左 (ガラス球)
+  // spheresList.push(createSphere(
+  //   { x: -1.0, y: 0.0, z: -1.0 }, 0.5,
+  //   { r: 1.0, g: 1.0, b: 1.0 }, MatType.Dielectric,
+  //   1.5 // 屈折率
+  // ));
+  // // 3. 左 (ガラス球)
+  // spheresList.push(createSphere(
+  //   { x: -1.0, y: 0.0, z: -1.0 }, 0.4,
+  //   { r: 1.0, g: 1.0, b: 1.0 }, MatType.Dielectric,
+  //   1.0/1.5 // 屈折率
+  // ));
+  //
+  // // 4. 右 (金色の金属球)
+  // spheresList.push(createSphere(
+  //   { x: 1.0, y: 0.0, z: -1.0 }, 0.5,
+  //   { r: 0.8, g: 0.6, b: 0.2 }, MatType.Metal,
+  //   0.0 // Fuzz
+  // ));
 
   // --- GPU送信用データへの変換 ---
   // [ [sphere1...], [sphere2...] ] -> [sphere1..., sphere2...]
