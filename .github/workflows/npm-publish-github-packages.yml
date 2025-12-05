@@ -34,8 +34,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # 【変更】キャッシュの設定を pnpm に変更
-          cache: 'pnpm'
+          # # 【変更】キャッシュの設定を pnpm に変更
+          # cache: 'pnpm'
 
       # 【変更】pnpm install を実行 (--frozen-lockfile は npm ci 相当)
       - name: Install dependencies
