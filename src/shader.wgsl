@@ -8,6 +8,7 @@ const T_MIN = 0.001;
 const T_MAX = 1e30;
 const MAX_DEPTH = 5u;
 const SPHERES_BINDING_STRIDE = 3u; // 1球あたり vec4 が 3つ
+const TRIANGLES_BINDING_STRIDE = 4u;
 
 // --- Bindings ---
 @group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
@@ -16,6 +17,15 @@ const SPHERES_BINDING_STRIDE = 3u; // 1球あたり vec4 が 3つ
 @group(0) @binding(3) var<uniform> camera: Camera;
 // vec4配列として読み込むことでアライメント問題を回避
 @group(0) @binding(4) var<storage, read> scene_spheres_packed: array<vec4<f32>>;
+
+// --- Binding 5: Packed Triangles ---
+// vec4 x 4 = 64 bytes stride
+// 0: v0(xyz) + extra(w)  <-- ★ここにextraを入れる
+// 1: v1(xyz) + pad
+// 2: v2(xyz) + pad
+// 3: color(rgb) + mat_type(w)
+@group(0) @binding(5) var<storage, read> scene_triangles_packed: array<vec4<f32>>;
+
 
 // --- Structs ---
 struct FrameInfo {
@@ -46,6 +56,17 @@ struct Sphere {
     extra: f32,    // Fuzz or IOR
 }
 
+
+struct Triangle {
+    v0: vec3<f32>,
+    v1: vec3<f32>,
+    v2: vec3<f32>,
+    color: vec3<f32>,
+    mat_type: f32,
+    extra: f32, // Fuzz or IOR
+}
+
+
 // --- Helper Functions: Data Access ---
 
 // パッキングされたバッファから球データを復元
@@ -58,6 +79,22 @@ fn get_sphere(index: u32) -> Sphere {
     return Sphere(d1.xyz, d1.w, d2.xyz, d2.w, d3.x);
 }
 
+fn get_triangle(index: u32) -> Triangle {
+    let i = index * 4u; // 1つの三角形につき vec4 が 4つ
+    let d0 = scene_triangles_packed[i];
+    let d1 = scene_triangles_packed[i + 1u];
+    let d2 = scene_triangles_packed[i + 2u];
+    let d3 = scene_triangles_packed[i + 3u];
+
+    return Triangle(
+        d0.xyz, // v0
+        d1.xyz, // v1
+        d2.xyz, // v2
+        d3.xyz, // color
+        d3.w,   // mat_type
+        d0.w    // extra (v0の隙間に格納されていたものを取り出す)
+    );
+}
 // --- Helper Functions: RNG (PCG Hash) ---
 
 // ピクセル座標とフレーム数からユニークなシードを生成
@@ -123,17 +160,48 @@ fn hit_sphere_t(s: Sphere, r: Ray, t_min: f32, t_max: f32) -> f32 {
     return root;
 }
 
+// --- 三角形の交差判定 (Möller–Trumbore algorithm) ---
+fn hit_triangle_t(tri: Triangle, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let edge1 = tri.v1 - tri.v0;
+    let edge2 = tri.v2 - tri.v0;
+    let h = cross(r.direction, edge2);
+    let a = dot(edge1, h);
+
+    // レイが三角形と平行に近い場合
+    if abs(a) < 0.0001 { return -1.0; }
+
+    let f = 1.0 / a;
+    let s = r.origin - tri.v0;
+    let u = f * dot(s, h);
+
+    if u < 0.0 || u > 1.0 { return -1.0; }
+
+    let q = cross(s, edge1);
+    let v = f * dot(r.direction, q);
+
+    if v < 0.0 || u + v > 1.0 { return -1.0; }
+
+    let t = f * dot(edge2, q);
+
+    if t > t_min && t < t_max {
+        return t;
+    }
+    return -1.0;
+}
+
 // --- Main Ray Tracing Logic ---
 
 fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3<f32>(1.0);
     let sphere_count = arrayLength(&scene_spheres_packed) / SPHERES_BINDING_STRIDE;
+    let triangle_count = arrayLength(&scene_triangles_packed) / TRIANGLES_BINDING_STRIDE;
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         var hit_anything = false;
         var closest_t = T_MAX;
         var hit_idx = 0u;
+        var hit_type = 0u; // 0:None, 1:Sphere, 2:Triangle
 
         // 全球探索 (単純ループ)
         for (var i = 0u; i < sphere_count; i++) {
@@ -143,31 +211,70 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
                 hit_anything = true;
                 closest_t = t;
                 hit_idx = i;
+                hit_type = 1u;
+            }
+        }
+
+        // 三角形
+        for (var i = 0u; i < triangle_count; i++) {
+            let tri = get_triangle(i);
+            let t = hit_triangle_t(tri, ray, T_MIN, closest_t);
+            if t > 0.0 {
+                hit_anything = true;
+                closest_t = t;
+                hit_idx = i;
+                hit_type = 2u;
             }
         }
 
         if hit_anything {
-            let s = get_sphere(hit_idx);
-            let p = ray.origin + closest_t * ray.direction;
-            let outward_normal = (p - s.center) / s.radius;
-            let front_face = dot(ray.direction, outward_normal) < 0.0;
-            let normal = select(-outward_normal, outward_normal, front_face);
+            var p = vec3<f32>(0.0);
+            var normal = vec3<f32>(0.0);
+            var mat_type = 0.0;
+            var color = vec3<f32>(0.0);
+            var extra = 0.0;
+            var front_face = true;
 
-            var scattered_dir = vec3<f32>(0.0);
+            if hit_type == 1u {
+                // Sphere
+                let s = get_sphere(hit_idx);
+                p = ray.origin + closest_t * ray.direction;
+                let outward_normal = (p - s.center) / s.radius;
+                front_face = dot(ray.direction, outward_normal) < 0.0;
+                normal = select(-outward_normal, outward_normal, front_face);
+                mat_type = s.mat_type;
+                color = s.color;
+                extra = s.extra;
+            } else {
+                // Triangle
+                let tri = get_triangle(hit_idx);
+                p = ray.origin + closest_t * ray.direction;
+                // 法線はエッジの外積（簡易計算）
+                let e1 = tri.v1 - tri.v0;
+                let e2 = tri.v2 - tri.v0;
+                let outward_normal = normalize(cross(e1, e2));
+                front_face = dot(ray.direction, outward_normal) < 0.0;
+                normal = select(-outward_normal, outward_normal, front_face);
+                mat_type = tri.mat_type;
+                color = tri.color;
+                extra = tri.extra; // 三角形にextraパラメータを持たせるならstructに追加が必要
+            }
+
+            var scattered_dir = vec3<f32>(0.0); 
 
             // Material Handling
-            if s.mat_type < 0.5 { 
+            if mat_type < 0.5 { 
                 // --- Lambertian (Diffuse) ---
                 scattered_dir = normal + random_unit_vector(rng);
                 // 縮退（ゼロベクトル）対策
                 if length(scattered_dir) < 1e-6 { scattered_dir = normal; }
-            } else if s.mat_type < 1.5 { 
+            } else if mat_type < 1.5 { 
                 // --- Metal ---
                 let reflected = reflect(ray.direction, normal);
-                scattered_dir = reflected + s.extra * random_unit_vector(rng);
+                scattered_dir = reflected + extra * random_unit_vector(rng);
             } else { 
                 // --- Dielectric (Glass) ---
-                let ref_ratio = select(s.extra, 1.0 / s.extra, front_face);
+                let ref_ratio = select(extra, 1.0 / extra, front_face);
                 let unit_dir = normalize(ray.direction);
 
                 let cos_theta = min(dot(-unit_dir, normal), 1.0);
@@ -188,7 +295,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             }
 
             ray = Ray(p, scattered_dir);
-            throughput *= s.color;
+            throughput *= color;
 
             // --- Russian Roulette (Path Termination) ---
             // 寄与率が低いパスを確率的に打ち切って高速化

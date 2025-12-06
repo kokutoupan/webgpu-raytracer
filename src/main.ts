@@ -1,6 +1,6 @@
 // main.ts
 import shaderCode from './shader.wgsl?raw';
-import { createCameraData, makeSpheres } from './scene';
+import { createCameraData, makeCornellBox, makeSpheres } from './scene';
 
 // --- 設定値 ---
 const IS_RETINA = false; // DPRを下げるなという指示に従う
@@ -72,25 +72,40 @@ async function initAndRender() {
   });
   {
     const camData = createCameraData(
-      { x: 13, y: 2, z: 3 }, // lookfrom
-      { x: 0, y: 0, z: 0 },  // lookat
-      { x: 0, y: 1, z: 0 },  // vup
-      20.0,                  // vfov
-      canvas.width / canvas.height, // aspect
-      0.2,                   // defocusAngle
-      10                     // focusDist
+      { x: 0, y: 1.0, z: -2.4 }, // 手前から奥を見る
+      { x: 0, y: 1.0, z: 0 },    // 中心の少し上を見る
+      { x: 0, y: 1, z: 0 },
+      60.0,                  // FOV広め
+      canvas.width / canvas.height,
+      0.0,                   // ピンホール (ボケなし)
+      2.4                    // 焦点距離
     );
     device.queue.writeBuffer(cameraUniformBuffer, 0, camData);
   }
 
   // 球データ送信
-  const spheresArray = makeSpheres();
+  // const spheresArray = makeSpheres();
+  // 空の配列ではなく、ダミーデータを1つ入れる
+  // (サイズ0のバッファを作るとWebGPUがエラーを吐くため)
+  const spheresArray: number[][] = [
+    // Center(0,-9999,0), Radius(0), Color(0,0,0), Mat(0), Extra(0) ...
+    // カメラから絶対に見えない位置に、半径0の球を置く
+    [0, -9999, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  ];
   const sphereF32Array = new Float32Array(spheresArray.flat());
   const sphereBuffer = device.createBuffer({
     size: sphereF32Array.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
   device.queue.writeBuffer(sphereBuffer, 0, sphereF32Array);
+
+
+  const triangleF32Array = makeCornellBox();
+  const triangleBuffer = device.createBuffer({
+    size: triangleF32Array.byteLength, // 空でもエラーにならないよう注意
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(triangleBuffer, 0, triangleF32Array);
 
   // 5. パイプライン作成
   const shaderModule = device.createShaderModule({ label: "RayTracing", code: shaderCode });
@@ -109,6 +124,7 @@ async function initAndRender() {
       { binding: 2, resource: { buffer: frameUniformBuffer } },
       { binding: 3, resource: { buffer: cameraUniformBuffer } },
       { binding: 4, resource: { buffer: sphereBuffer } },
+      { binding: 5, resource: { buffer: triangleBuffer } },
     ],
   });
 
