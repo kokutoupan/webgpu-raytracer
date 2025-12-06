@@ -70,13 +70,12 @@ async function initAndRender() {
   const loadScene = (sceneName: string, autoStart: boolean = true) => {
     console.log(`Loading Scene: ${sceneName}...`);
 
-    // データ準備中は一時停止
-    const wasRendering = isRendering;
     isRendering = false;
 
     // 1. Get Data
     const scene = getSceneData(sceneName);
     currentSceneData = scene;
+    console.log(currentSceneData);
 
     // 2. Build BVH
     const bvhBuilder = new BVHBuilder();
