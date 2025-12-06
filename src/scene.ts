@@ -97,3 +97,56 @@ export function makeSpheres(): number[][] {
 
   return spheresList;
 }
+
+
+// 三角形データ生成 (Packed)
+// extra のデフォルト値を 0.0 に設定
+function createTriangle(v0: Vec3, v1: Vec3, v2: Vec3, col: Vec3, mat: number, extra: number = 0.0): number[] {
+  return [
+    v0.x, v0.y, v0.z, extra, // ★v0のw成分に extra を詰める
+    v1.x, v1.y, v1.z, 0,     // pad
+    v2.x, v2.y, v2.z, 0,     // pad
+    col.x, col.y, col.z, mat // mat_type
+  ];
+}
+
+// addQuad も extra を受け取れるように拡張
+function addQuad(list: number[], v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3, col: Vec3, mat: number, extra: number = 0.0) {
+  list.push(...createTriangle(v0, v1, v2, col, mat, extra));
+  list.push(...createTriangle(v0, v2, v3, col, mat, extra));
+}
+
+// コーネルボックス生成
+export function makeCornellBox(): Float32Array<ArrayBuffer> {
+  const triangles: number[] = [];
+
+  // 色定義
+  const white = { x: 0.73, y: 0.73, z: 0.73 };
+  const red = { x: 0.65, y: 0.05, z: 0.05 };
+  const green = { x: 0.12, y: 0.45, z: 0.15 };
+  const light = { x: 15.0, y: 15.0, z: 15.0 }; // 強烈な光
+
+  const S = 555;
+  const v = (x: number, y: number, z: number) => ({ x: (x / S) * 2 - 1, y: (y / S) * 2, z: (z / S) * 2 - 1 });
+
+  // 壁 (Lambertian なので extra=0)
+  addQuad(triangles, v(0, 0, 0), v(555, 0, 0), v(555, 0, 555), v(0, 0, 555), white, MatType.Lambertian);         // 床
+  addQuad(triangles, v(0, 555, 0), v(0, 555, 555), v(555, 555, 555), v(555, 555, 0), white, MatType.Lambertian); // 天井
+  addQuad(triangles, v(0, 0, 555), v(555, 0, 555), v(555, 555, 555), v(0, 555, 555), white, MatType.Lambertian); // 奥壁
+  addQuad(triangles, v(0, 0, 0), v(0, 555, 0), v(0, 555, 555), v(0, 0, 555), green, MatType.Lambertian);         // 右壁
+  addQuad(triangles, v(555, 0, 0), v(555, 0, 555), v(555, 555, 555), v(555, 555, 0), red, MatType.Lambertian);   // 左壁
+
+  // ライト (extra不要)
+  const l0 = v(213, 554, 227), l1 = v(343, 554, 227), l2 = v(343, 554, 332), l3 = v(213, 554, 332);
+  addQuad(triangles, l0, l3, l2, l1, light, 3); // MatType=3 (Light)
+
+  // ★箱1 (背の高い箱): アルミっぽい金属 (Metal, fuzz=0.1)
+  // 座標変換が少し面倒なので、簡易的に回転なしの箱として配置例
+  // (実際は回転させるために頂点計算が必要ですが、まずは配置)
+  // const box1_col = { x: 0.8, y: 0.85, z: 0.88 };
+  // addCube 的な関数を作るか、Quadを6回呼ぶ
+  // ここでは例として「鏡の壁」を奥に置いてみる
+  // addQuad(triangles, v(100,0,400), v(455,0,400), v(455,300,400), v(100,300,400), box1_col, MatType.Metal, 0.0);
+
+  return new Float32Array(triangles);
+}
