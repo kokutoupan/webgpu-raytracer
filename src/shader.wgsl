@@ -257,10 +257,14 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
                 normal = select(-outward_normal, outward_normal, front_face);
                 mat_type = tri.mat_type;
                 color = tri.color;
-                extra = tri.extra; // 三角形にextraパラメータを持たせるならstructに追加が必要
+                extra = tri.extra;
             }
 
-            var scattered_dir = vec3<f32>(0.0); 
+            var scattered_dir = vec3<f32>(0.0);
+
+            if mat_type > 2.5 {
+                return throughput * color; // 強烈に光らせる
+            }
 
             // Material Handling
             if mat_type < 0.5 { 
@@ -305,11 +309,12 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             if rand_pcg(rng) > p_rr { break; }
             throughput /= p_rr; // 生き残ったレイのエネルギーを補正
         } else {
-            // --- Sky Color (Miss) ---
-            let unit_dir = normalize(ray.direction);
-            let t = 0.5 * (unit_dir.y + 1.0);
-            let sky = mix(vec3<f32>(1.0), vec3<f32>(0.5, 0.7, 1.0), t);
-            return throughput * sky;
+            // // --- Sky Color (Miss) ---
+            // let unit_dir = normalize(ray.direction);
+            // let t = 0.5 * (unit_dir.y + 1.0);
+            // let sky = mix(vec3<f32>(1.0), vec3<f32>(0.5, 0.7, 1.0), t);
+            // return throughput * sky;
+            return vec3<f32>(.0);
         }
     }
     
