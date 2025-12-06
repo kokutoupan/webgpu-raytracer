@@ -1,6 +1,6 @@
 // main.ts
 import shaderCode from './shader.wgsl?raw';
-import { createCameraData, makeCornellBox, makeSpheres } from './scene';
+import { createCameraData, makeCornellBox } from './scene';
 import { BVHBuilder } from "./bvh";
 
 // --- Configuration ---
