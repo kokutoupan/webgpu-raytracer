@@ -116,6 +116,60 @@ function addQuad(list: number[], v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3, col: Ve
   list.push(...createTriangle(v0, v2, v3, col, mat, extra));
 }
 
+// --- 回転付きの箱を追加するヘルパー ---
+function addRotatedBox(
+  list: number[],
+  center: Vec3,
+  size: Vec3,
+  angleY: number, // 度数法
+  col: Vec3,
+  mat: number,
+  extra: number = 0.0
+) {
+  const rad = (angleY * Math.PI) / 180.0;
+  const cosA = Math.cos(rad);
+  const sinA = Math.sin(rad);
+
+  // Y軸回転関数
+  const rotate = (p: Vec3): Vec3 => ({
+    x: p.x * cosA + p.z * sinA,
+    y: p.y,
+    z: -p.x * sinA + p.z * cosA
+  });
+
+  // 箱の8頂点を計算（原点中心で作ってから回転・移動）
+  const hx = size.x / 2;
+  const hy = size.y / 2;
+  const hz = size.z / 2;
+
+  // 頂点ローカル座標
+  const p0 = { x: -hx, y: -hy, z: hz }; // 前・左・下
+  const p1 = { x: hx, y: -hy, z: hz }; // 前・右・下
+  const p2 = { x: hx, y: hy, z: hz }; // 前・右・上
+  const p3 = { x: -hx, y: hy, z: hz }; // 前・左・上
+  const p4 = { x: -hx, y: -hy, z: -hz }; // 奥・左・下
+  const p5 = { x: hx, y: -hy, z: -hz }; // 奥・右・下
+  const p6 = { x: hx, y: hy, z: -hz }; // 奥・右・上
+  const p7 = { x: -hx, y: hy, z: -hz }; // 奥・左・上
+
+  // 回転 -> 移動
+  const transform = (p: Vec3) => {
+    const rot = rotate(p);
+    return { x: rot.x + center.x, y: rot.y + center.y, z: rot.z + center.z };
+  };
+
+  const v0 = transform(p0), v1 = transform(p1), v2 = transform(p2), v3 = transform(p3);
+  const v4 = transform(p4), v5 = transform(p5), v6 = transform(p6), v7 = transform(p7);
+
+  // 6面を追加 (Quad = 2 Triangles)
+  addQuad(list, v0, v1, v2, v3, col, mat, extra); // 前
+  addQuad(list, v5, v4, v7, v6, col, mat, extra); // 奥
+  addQuad(list, v4, v0, v3, v7, col, mat, extra); // 左
+  addQuad(list, v1, v5, v6, v2, col, mat, extra); // 右
+  addQuad(list, v3, v2, v6, v7, col, mat, extra); // 上
+  addQuad(list, v0, v4, v5, v1, col, mat, extra); // 下
+}
+
 // コーネルボックス生成
 export function makeCornellBox(): Float32Array<ArrayBuffer> {
   const triangles: number[] = [];
@@ -125,9 +179,11 @@ export function makeCornellBox(): Float32Array<ArrayBuffer> {
   const red = { x: 0.65, y: 0.05, z: 0.05 };
   const green = { x: 0.12, y: 0.45, z: 0.15 };
   const light = { x: 15.0, y: 15.0, z: 15.0 }; // 強烈な光
+  const toumei = { x: 1.0, y: 1.0, z: 1.0 };
 
   const S = 555;
   const v = (x: number, y: number, z: number) => ({ x: (x / S) * 2 - 1, y: (y / S) * 2, z: (z / S) * 2 - 1 });
+  const s = (x: number, y: number, z: number) => ({ x: (x / S) * 2, y: (y / S) * 2, z: (z / S) * 2 });
 
   // 壁 (Lambertian なので extra=0)
   addQuad(triangles, v(0, 0, 0), v(555, 0, 0), v(555, 0, 555), v(0, 0, 555), white, MatType.Lambertian);         // 床
@@ -140,13 +196,28 @@ export function makeCornellBox(): Float32Array<ArrayBuffer> {
   const l0 = v(213, 554, 227), l1 = v(343, 554, 227), l2 = v(343, 554, 332), l3 = v(213, 554, 332);
   addQuad(triangles, l0, l3, l2, l1, light, 3); // MatType=3 (Light)
 
-  // ★箱1 (背の高い箱): アルミっぽい金属 (Metal, fuzz=0.1)
-  // 座標変換が少し面倒なので、簡易的に回転なしの箱として配置例
-  // (実際は回転させるために頂点計算が必要ですが、まずは配置)
-  // const box1_col = { x: 0.8, y: 0.85, z: 0.88 };
-  // addCube 的な関数を作るか、Quadを6回呼ぶ
-  // ここでは例として「鏡の壁」を奥に置いてみる
-  // addQuad(triangles, v(100,0,400), v(455,0,400), v(455,300,400), v(100,300,400), box1_col, MatType.Metal, 0.0);
+  // ★箱1 (Tall Box)
+  // 位置: (265, 165, 296), サイズ: (165, 330, 165), 回転: -15度
+  addRotatedBox(
+    triangles,
+    v(265 + 165 / 2 - 50, 165, 296 + 165 / 2), // 中心座標 (適当に調整)
+    s(165, 330, 165), // サイズ
+    -15, // 回転
+    white,
+    MatType.Metal
+  );
+
+  // ★箱2 (Short Box)
+  // 位置: (130, 82.5, 65), サイズ: (165, 165, 165), 回転: 18度
+  addRotatedBox(
+    triangles,
+    v(130 + 165 / 2 + 20, 82.5, 65 + 165 / 2),
+    s(165, 165, 165),
+    18,
+    toumei,
+    MatType.Dielectric, // 試しに Metal とかにしても面白いです
+    1.5
+  );
 
   return new Float32Array(triangles);
 }
