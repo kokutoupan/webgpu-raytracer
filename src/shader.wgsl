@@ -112,13 +112,13 @@ fn hit_sphere_t(s: Sphere, r: Ray, t_min: f32, t_max: f32) -> f32 {
     let c = dot(oc, oc) - s.radius * s.radius;
     let discriminant = h * h - a * c;
 
-    if (discriminant < 0.0) { return -1.0; }
+    if discriminant < 0.0 { return -1.0; }
 
     let sqrtd = sqrt(discriminant);
     var root = (-h - sqrtd) / a;
-    if (root <= t_min || t_max <= root) {
+    if root <= t_min || t_max <= root {
         root = (-h + sqrtd) / a;
-        if (root <= t_min || t_max <= root) { return -1.0; }
+        if root <= t_min || t_max <= root { return -1.0; }
     }
     return root;
 }
@@ -139,14 +139,14 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         for (var i = 0u; i < sphere_count; i++) {
             let s = get_sphere(i);
             let t = hit_sphere_t(s, ray, T_MIN, closest_t);
-            if (t > 0.0) {
+            if t > 0.0 {
                 hit_anything = true;
                 closest_t = t;
                 hit_idx = i;
             }
         }
 
-        if (hit_anything) {
+        if hit_anything {
             let s = get_sphere(hit_idx);
             let p = ray.origin + closest_t * ray.direction;
             let outward_normal = (p - s.center) / s.radius;
@@ -156,22 +156,20 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             var scattered_dir = vec3<f32>(0.0);
 
             // Material Handling
-            if (s.mat_type < 0.5) { 
+            if s.mat_type < 0.5 { 
                 // --- Lambertian (Diffuse) ---
                 scattered_dir = normal + random_unit_vector(rng);
                 // 縮退（ゼロベクトル）対策
-                if (length(scattered_dir) < 1e-6) { scattered_dir = normal; }
-            
-            } else if (s.mat_type < 1.5) { 
+                if length(scattered_dir) < 1e-6 { scattered_dir = normal; }
+            } else if s.mat_type < 1.5 { 
                 // --- Metal ---
                 let reflected = reflect(ray.direction, normal);
                 scattered_dir = reflected + s.extra * random_unit_vector(rng);
-            
             } else { 
                 // --- Dielectric (Glass) ---
                 let ref_ratio = select(s.extra, 1.0 / s.extra, front_face);
                 let unit_dir = normalize(ray.direction);
-                
+
                 let cos_theta = min(dot(-unit_dir, normal), 1.0);
                 let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
                 
@@ -179,7 +177,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
                 let cannot_refract = ref_ratio * sin_theta > 1.0;
                 let do_reflect = cannot_refract || (reflectance(cos_theta, ref_ratio) > rand_pcg(rng));
 
-                if (do_reflect) {
+                if do_reflect {
                     scattered_dir = reflect(unit_dir, normal);
                 } else {
                     // Refract (Snell's Law)
@@ -197,9 +195,8 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             let p_rr = max(throughput.r, max(throughput.g, throughput.b));
             // 常に少しは確率を残すため、例えば0.001以下でも完全には切らない工夫も可能だが
             // ここでは単純なスループットベースで行う
-            if (rand_pcg(rng) > p_rr) { break; }
+            if rand_pcg(rng) > p_rr { break; }
             throughput /= p_rr; // 生き残ったレイのエネルギーを補正
-
         } else {
             // --- Sky Color (Miss) ---
             let unit_dir = normalize(ray.direction);
@@ -220,7 +217,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(outputTex);
     
     // Bounds Check: 画面外スレッドは即時終了
-    if (id.x >= dims.x || id.y >= dims.y) { return; }
+    if id.x >= dims.x || id.y >= dims.y { return; }
 
     let pixel_idx = id.y * dims.x + id.x;
     
@@ -230,8 +227,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // Camera Setup & Ray Generation (with Defocus Blur & Jitter)
     var ray_orig = camera.origin;
     var ray_off = vec3<f32>(0.0);
-    
-    if (camera.lens_radius > 0.0) {
+
+    if camera.lens_radius > 0.0 {
         let rd = camera.lens_radius * random_in_unit_disk(&rng);
         ray_off = camera.u * rd.x + camera.v * rd.y;
         ray_orig += ray_off;
@@ -242,11 +239,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let s = (f32(id.x) + u_jitter) / f32(dims.x);
     let t = 1.0 - ((f32(id.y) + v_jitter) / f32(dims.y));
 
-    let direction = camera.lower_left_corner 
-                  + s * camera.horizontal 
-                  + t * camera.vertical 
-                  - camera.origin 
-                  - ray_off;
+    let direction = camera.lower_left_corner + s * camera.horizontal + t * camera.vertical - camera.origin - ray_off;
 
     let r = Ray(ray_orig, direction);
 
@@ -255,10 +248,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Accumulation
     var acc_color = vec4<f32>(0.0);
-    if (frame.frame_count > 1u) { 
-        acc_color = accumulateBuffer[pixel_idx]; 
+    if frame.frame_count > 1u {
+        acc_color = accumulateBuffer[pixel_idx];
     }
-    
+
     let new_acc_color = acc_color + vec4<f32>(pixel_color, 1.0);
     accumulateBuffer[pixel_idx] = new_acc_color;
 
