@@ -23,6 +23,10 @@ const TRIANGLES_BINDING_STRIDE = 4u; // 1 triangle = 4 vec4s
 @group(0) @binding(5) var<storage, read> scene_triangles_packed: array<vec4<f32>>;
 @group(0) @binding(6) var<storage, read> bvh_nodes: array<BVHNode>;
 
+// Binding 7: Primitive References (新規追加)
+// vec2<u32> = { type, index }
+@group(0) @binding(7) var<storage, read> primitive_refs: array<vec2<u32>>;
+
 // --- Structs ---
 
 struct FrameInfo {
@@ -192,9 +196,10 @@ fn hit_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, inv_d: vec3<f32>, t_min:
 }
 
 // BVH Traversal
-fn hit_bvh(r: Ray, t_min: f32, t_current_closest: f32) -> vec2<f32> {
+fn hit_bvh(r: Ray, t_min: f32, t_current_closest: f32) -> vec4<f32> {
     var closest_t = t_current_closest;
     var hit_idx = -1.0;
+    var hit_type = 0.0;
 
     // ★最適化: inv_d はレイごとに不変なので、ループの外で一度だけ計算する
     let inv_d = vec3<f32>(
@@ -222,12 +227,28 @@ fn hit_bvh(r: Ray, t_min: f32, t_current_closest: f32) -> vec2<f32> {
             if count > 0u {
                 // --- Leaf Node ---
                 for (var i = 0u; i < count; i++) {
-                    let tri_idx = first + i;
-                    let tri = get_triangle(tri_idx);
-                    let t = hit_triangle_t(tri, r, t_min, closest_t);
+                    let ref_idx = first + i;
+                    let refp = primitive_refs[ref_idx];
+
+                    let type_id = refp.x;
+                    let obj_idx = refp.y;
+
+                    var t = -1.0;
+
+                    if type_id == 0u {
+                        // Sphere
+                        let s = get_sphere(obj_idx);
+                        t = hit_sphere_t(s, r, t_min, closest_t);
+                    } else {
+                        // Triangle
+                        let tri = get_triangle(obj_idx);
+                        t = hit_triangle_t(tri, r, t_min, closest_t);
+                    }
+
                     if t > 0.0 {
                         closest_t = t;
-                        hit_idx = f32(tri_idx);
+                        hit_idx = f32(obj_idx);
+                        hit_type = f32(type_id + 1u); // 0:Noneなので +1 して区別
                     }
                 }
             } else {
@@ -241,7 +262,7 @@ fn hit_bvh(r: Ray, t_min: f32, t_current_closest: f32) -> vec2<f32> {
         }
     }
 
-    return vec2<f32>(closest_t, hit_idx);
+    return vec4<f32>(closest_t, hit_idx, hit_type, 0.);
 }
 
 // --- Main Ray Tracing Loop ---
@@ -257,30 +278,18 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         var hit_idx = 0u;
         var hit_type = 0u; // 0:None, 1:Sphere, 2:Triangle
 
-        // 1. Sphere Intersection
-        for (var i = 0u; i < sphere_count; i++) {
-            let s = get_sphere(i);
-            let t = hit_sphere_t(s, ray, T_MIN, closest_t);
-            if t > 0.0 {
-                hit_anything = true;
-                closest_t = t;
-                hit_idx = i;
-                hit_type = 1u;
-            }
-        }
 
-        // 2. Triangle Intersection (BVH)
+        // 1. BVH
         let bvh_result = hit_bvh(ray, T_MIN, closest_t);
-        let t_tri = bvh_result.x;
-        let idx_tri = bvh_result.y;
+        let t_hit = bvh_result.x;
+        let idx_hit = u32(bvh_result.y);
+        let type_hit = u32(bvh_result.z); // 1:Sphere, 2:Triangle
 
-        if idx_tri >= 0.0 {
-            if t_tri < closest_t {
-                hit_anything = true;
-                closest_t = t_tri;
-                hit_idx = u32(idx_tri);
-                hit_type = 2u;
-            }
+        if type_hit > 0u {
+            hit_anything = true;
+            closest_t = t_hit;
+            hit_idx = idx_hit;
+            hit_type = type_hit;
         }
 
         // Shading

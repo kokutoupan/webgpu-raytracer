@@ -105,20 +105,27 @@ async function initAndRender() {
   const triangleF32Array = makeCornellBox();
   console.log(triangleF32Array);
   let bvhBuilder = new BVHBuilder();
-  const { bvhNodes, reorderedTriangles } = bvhBuilder.buildAndReorder(triangleF32Array);
-  console.log(bvhNodes);
+  const bvhResult = bvhBuilder.build(sphereF32Array, triangleF32Array);
+  console.log(bvhResult);
 
   const triangleBuffer = device.createBuffer({
-    size: reorderedTriangles.byteLength, // 空でもエラーにならないよう注意
+    size: triangleF32Array.byteLength, // 空でもエラーにならないよう注意
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(triangleBuffer, 0, reorderedTriangles);
+  device.queue.writeBuffer(triangleBuffer, 0, triangleF32Array);
 
   const bvhBuffer = device.createBuffer({
-    size: bvhNodes.byteLength,
+    size: bvhResult.bvhNodes.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(bvhBuffer, 0, bvhNodes);
+  device.queue.writeBuffer(bvhBuffer, 0, bvhResult.bvhNodes);
+
+  // プリミティブ参照リスト (Uint32Array)
+  const refsBuffer = device.createBuffer({
+    size: bvhResult.primitiveRefs.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+  });
+  device.queue.writeBuffer(refsBuffer, 0, bvhResult.primitiveRefs);
 
   // 5. パイプライン作成
   const shaderModule = device.createShaderModule({ label: "RayTracing", code: shaderCode });
@@ -139,6 +146,7 @@ async function initAndRender() {
       { binding: 4, resource: { buffer: sphereBuffer } },
       { binding: 5, resource: { buffer: triangleBuffer } },
       { binding: 6, resource: { buffer: bvhBuffer } },
+      { binding: 7, resource: { buffer: refsBuffer } },
     ],
   });
 
