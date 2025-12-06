@@ -143,7 +143,7 @@ export function makeCornellBox(): Float32Array<ArrayBuffer> {
   // ★箱1 (背の高い箱): アルミっぽい金属 (Metal, fuzz=0.1)
   // 座標変換が少し面倒なので、簡易的に回転なしの箱として配置例
   // (実際は回転させるために頂点計算が必要ですが、まずは配置)
-  const box1_col = { x: 0.8, y: 0.85, z: 0.88 };
+  // const box1_col = { x: 0.8, y: 0.85, z: 0.88 };
   // addCube 的な関数を作るか、Quadを6回呼ぶ
   // ここでは例として「鏡の壁」を奥に置いてみる
   // addQuad(triangles, v(100,0,400), v(455,0,400), v(455,300,400), v(100,300,400), box1_col, MatType.Metal, 0.0);

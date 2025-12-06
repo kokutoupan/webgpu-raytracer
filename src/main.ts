@@ -1,6 +1,6 @@
 // main.ts
 import shaderCode from './shader.wgsl?raw';
-import { createCameraData, makeCornellBox, makeSpheres } from './scene';
+import { createCameraData, makeCornellBox } from './scene';
 
 // --- 設定値 ---
 const IS_RETINA = false; // DPRを下げるなという指示に従う
