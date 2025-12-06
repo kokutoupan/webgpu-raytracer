@@ -1,6 +1,7 @@
 // main.ts
 import shaderCode from './shader.wgsl?raw';
 import { createCameraData, makeCornellBox } from './scene';
+import { BVHBuilder } from "./bvh";
 
 // --- 設定値 ---
 const IS_RETINA = false; // DPRを下げるなという指示に従う
@@ -99,13 +100,25 @@ async function initAndRender() {
   });
   device.queue.writeBuffer(sphereBuffer, 0, sphereF32Array);
 
+  // 三角形
 
   const triangleF32Array = makeCornellBox();
+  console.log(triangleF32Array);
+  let bvhBuilder = new BVHBuilder();
+  const { bvhNodes, reorderedTriangles } = bvhBuilder.buildAndReorder(triangleF32Array);
+  console.log(bvhNodes);
+
   const triangleBuffer = device.createBuffer({
-    size: triangleF32Array.byteLength, // 空でもエラーにならないよう注意
+    size: reorderedTriangles.byteLength, // 空でもエラーにならないよう注意
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(triangleBuffer, 0, triangleF32Array);
+  device.queue.writeBuffer(triangleBuffer, 0, reorderedTriangles);
+
+  const bvhBuffer = device.createBuffer({
+    size: bvhNodes.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(bvhBuffer, 0, bvhNodes);
 
   // 5. パイプライン作成
   const shaderModule = device.createShaderModule({ label: "RayTracing", code: shaderCode });
@@ -125,6 +138,7 @@ async function initAndRender() {
       { binding: 3, resource: { buffer: cameraUniformBuffer } },
       { binding: 4, resource: { buffer: sphereBuffer } },
       { binding: 5, resource: { buffer: triangleBuffer } },
+      { binding: 6, resource: { buffer: bvhBuffer } },
     ],
   });
 
