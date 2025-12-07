@@ -123,61 +123,91 @@ fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: 
     return -1.0;
 }
 
-fn hit_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> bool {
+fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
     let t0s = (min_b - r.origin) * inv_d;
     let t1s = (max_b - r.origin) * inv_d;
     let t_small = min(t0s, t1s);
     let t_big = max(t0s, t1s);
     let tmin = max(t_min, max(t_small.x, max(t_small.y, t_small.z)));
     let tmax = min(t_max, min(t_big.x, min(t_big.y, t_big.z)));
-    return tmin <= tmax;
+    return select(1e30, tmin, tmin <= tmax);
 }
 
 // --- BVH Traversal ---
 fn hit_bvh(r: Ray, t_min: f32, t_max: f32) -> vec4<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
-    var hit_type = 0.0; // 0:None, 1:Sphere, 2:Triangle
+    var hit_type = 0.0;
 
     let inv_d = 1.0 / r.direction;
 
     var stack: array<u32, 32>;
     var stackptr = 0u;
-    stack[stackptr] = 0u; stackptr++;
+
+
+    // ルートノード(0)の判定
+    let root_dist = intersect_aabb(bvh_nodes[0].min_b, bvh_nodes[0].max_b, r, inv_d, t_min, closest_t);
+
+    // ヒットした時だけ積む
+    if root_dist < 1e30 {
+        stack[stackptr] = 0u;
+        stackptr++;
+    }
 
     while stackptr > 0u {
         stackptr--;
         let node_idx = stack[stackptr];
         let node = bvh_nodes[node_idx];
 
-        if hit_aabb(node.min_b, node.max_b, r, inv_d, t_min, closest_t) {
-            let count = u32(node.tri_count);
-            let first = u32(node.left_first);
+        let count = u32(node.tri_count);
+        let first = u32(node.left_first);
 
-            if count > 0u {
-                // Leaf: Check primitives
-                for (var i = 0u; i < count; i++) {
-                    let idx = first + i;
-                    let prim = scene_primitives[idx];
-                    let obj_type = prim.data2.w;
-                    var t = -1.0;
+        if count > 0u {
+            // Leaf Node
+            for (var i = 0u; i < count; i++) {
+                let idx = first + i;
+                let prim = scene_primitives[idx];
+                let obj_type = prim.data2.w;
+                var t = -1.0;
 
-                    if obj_type == 1.0 { // Sphere
-                        t = hit_sphere_raw(prim.data0.xyz, prim.data0.w, r, t_min, closest_t);
-                    } else { // Triangle
-                        t = hit_triangle_raw(prim.data0.xyz, prim.data1.xyz, prim.data2.xyz, r, t_min, closest_t);
-                    }
-
-                    if t > 0.0 {
-                        closest_t = t;
-                        hit_idx = f32(idx);
-                        hit_type = obj_type;
-                    }
+                if obj_type < 1.5 { // Sphere
+                    t = hit_sphere_raw(prim.data0.xyz, prim.data0.w, r, t_min, closest_t);
+                } else { // Triangle
+                    t = hit_triangle_raw(prim.data0.xyz, prim.data1.xyz, prim.data2.xyz, r, t_min, closest_t);
                 }
-            } else {
-                // Internal: Push children
-                stack[stackptr] = first; stackptr++;
-                stack[stackptr] = first + 1u; stackptr++;
+
+                if t > 0.0 {
+                    closest_t = t;
+                    hit_idx = f32(idx);
+                    hit_type = obj_type;
+                }
+            }
+        } else {
+            // Internal Node (Front-to-Back)
+            let left_idx = u32(node.left_first);
+            let right_idx = left_idx + 1u;
+
+            let node_l = bvh_nodes[left_idx];
+            let node_r = bvh_nodes[right_idx];
+
+            let dist_l = intersect_aabb(node_l.min_b, node_l.max_b, r, inv_d, t_min, closest_t);
+            let dist_r = intersect_aabb(node_r.min_b, node_r.max_b, r, inv_d, t_min, closest_t);
+
+            let hit_l = dist_l < 1e30;
+            let hit_r = dist_r < 1e30;
+
+            if hit_l && hit_r {
+                if dist_l < dist_r {
+                    stack[stackptr] = right_idx; stackptr++;
+                    stack[stackptr] = left_idx;  stackptr++;
+                } else {
+                    stack[stackptr] = left_idx;  stackptr++;
+                    stack[stackptr] = right_idx; stackptr++;
+                }
+            } else if hit_l {
+                stack[stackptr] = left_idx; stackptr++;
+            } else if hit_r {
+                stack[stackptr] = right_idx; stackptr++;
             }
         }
     }

@@ -15,6 +15,21 @@ export interface IHittable {
   getAABB(): AABB;
   // 引数のバッファの offset 位置にデータを書き込む
   pack(buffer: Float32Array, offset: number): void;
+
+  clone(): IHittable;
+  translate(offset: Vec3): void;
+  rotateY(angle: number): void;
+}
+
+
+// --- ヘルパー: ベクトル演算 (math.tsを使ってもいいが、ここで簡易定義して高速化) ---
+function add(v: Vec3, d: Vec3): Vec3 { return { x: v.x + d.x, y: v.y + d.y, z: v.z + d.z }; }
+function rotY(v: Vec3, cos: number, sin: number): Vec3 {
+  return {
+    x: v.x * cos + v.z * sin,
+    y: v.y,
+    z: -v.x * sin + v.z * cos
+  };
 }
 
 // ==========================================
@@ -34,9 +49,9 @@ export class Sphere implements IHittable {
     matType: number,
     extra: number = 0.0
   ) {
-    this.center = center;
+    this.center = { ...center }; // コピーして持つ
     this.radius = radius;
-    this.color = color;
+    this.color = { ...color };
     this.matType = matType;
     this.extra = extra;
   }
@@ -50,7 +65,6 @@ export class Sphere implements IHittable {
       center: this.center
     };
   }
-
   pack(buffer: Float32Array, offset: number): void {
     const i = offset;
     const { x, y, z } = this.center;
@@ -68,13 +82,31 @@ export class Sphere implements IHittable {
     // Data3: Color(xyz), Extra(w)
     buffer[i + 12] = r; buffer[i + 13] = g; buffer[i + 14] = b; buffer[i + 15] = this.extra;
   }
+
+  // ★追加: 複製
+  clone(): Sphere {
+    return new Sphere(this.center, this.radius, this.color, this.matType, this.extra);
+  }
+
+  // ★追加: 移動
+  translate(offset: Vec3): void {
+    this.center = add(this.center, offset);
+  }
+
+  // ★追加: Y軸回転 (原点中心)
+  rotateY(angle: number): void {
+    const rad = (angle * Math.PI) / 180.0;
+    const c = Math.cos(rad);
+    const s = Math.sin(rad);
+    this.center = rotY(this.center, c, s);
+  }
+
 }
 
 // ==========================================
 //   Triangle Class
 // ==========================================
 export class Triangle implements IHittable {
-  // ★修正: プロパティを明示的に宣言
   v0: Vec3;
   v1: Vec3;
   v2: Vec3;
@@ -90,10 +122,10 @@ export class Triangle implements IHittable {
     matType: number,
     extra: number = 0.0
   ) {
-    this.v0 = v0;
-    this.v1 = v1;
-    this.v2 = v2;
-    this.color = color;
+    this.v0 = { ...v0 };
+    this.v1 = { ...v1 };
+    this.v2 = { ...v2 };
+    this.color = { ...color };
     this.matType = matType;
     this.extra = extra;
   }
@@ -137,5 +169,27 @@ export class Triangle implements IHittable {
     buffer[i + 8] = this.v2.x; buffer[i + 9] = this.v2.y; buffer[i + 10] = this.v2.z; buffer[i + 11] = 2.0;
     // Data3: Color(xyz), Extra(w)
     buffer[i + 12] = x; buffer[i + 13] = y; buffer[i + 14] = z; buffer[i + 15] = this.extra;
+  }
+
+  // ★追加: 複製
+  clone(): Triangle {
+    return new Triangle(this.v0, this.v1, this.v2, this.color, this.matType, this.extra);
+  }
+
+  // ★追加: 移動
+  translate(offset: Vec3): void {
+    this.v0 = add(this.v0, offset);
+    this.v1 = add(this.v1, offset);
+    this.v2 = add(this.v2, offset);
+  }
+
+  // ★追加: Y軸回転 (原点中心)
+  rotateY(angle: number): void {
+    const rad = (angle * Math.PI) / 180.0;
+    const c = Math.cos(rad);
+    const s = Math.sin(rad);
+    this.v0 = rotY(this.v0, c, s);
+    this.v1 = rotY(this.v1, c, s);
+    this.v2 = rotY(this.v2, c, s);
   }
 }
