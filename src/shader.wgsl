@@ -19,12 +19,20 @@ const TRIANGLES_STRIDE = 4u;
 @group(0) @binding(3) var<uniform> camera: Camera;
 
 // Scene Data
-@group(0) @binding(4) var<storage, read> scene_spheres_packed: array<vec4<f32>>;
-@group(0) @binding(5) var<storage, read> scene_triangles_packed: array<vec4<f32>>;
-@group(0) @binding(6) var<storage, read> bvh_nodes: array<BVHNode>;
-@group(0) @binding(7) var<storage, read> primitive_refs: array<vec2<u32>>;
+// 統合プリミティブバッファ (Binding 4)
+// vec4 x 4 = 64 bytes stride
+@group(0) @binding(4) var<storage, read> scene_primitives: array<UnifiedPrimitive>;
+
+// Binding 5: BVH Nodes
+@group(0) @binding(5) var<storage, read> bvh_nodes: array<BVHNode>;
 
 // --- Structs ---
+struct UnifiedPrimitive {
+    data0: vec4<f32>, // [Tri:V0+Extra] [Sph:Center+Radius]
+    data1: vec4<f32>, // [Tri:V1+Mat]   [Sph:Unused+Mat]
+    data2: vec4<f32>, // [Tri:V2+ObjType] [Sph:Unused+ObjType]
+    data3: vec4<f32>, // [Tri:Col+Unused] [Sph:Col+Extra]
+}
 struct FrameInfo {
     frame_count: u32
 }
@@ -41,44 +49,11 @@ struct Ray {
     origin: vec3<f32>,
     direction: vec3<f32>
 }
-struct Sphere {
-    center: vec3<f32>,
-    radius: f32,
-    color: vec3<f32>,
-    mat_type: f32,
-    extra: f32
-}
-struct Triangle {
-    v0: vec3<f32>,
-    v1: vec3<f32>,
-    v2: vec3<f32>,
-    color: vec3<f32>,
-    mat_type: f32,
-    extra: f32
-}
 struct BVHNode {
     min_b: vec3<f32>,
     left_first: f32,
     max_b: vec3<f32>,
     tri_count: f32
-}
-
-// --- Data Access Helpers ---
-fn get_sphere(index: u32) -> Sphere {
-    let i = index * SPHERES_STRIDE;
-    let d1 = scene_spheres_packed[i];
-    let d2 = scene_spheres_packed[i + 1u];
-    let d3 = scene_spheres_packed[i + 2u];
-    return Sphere(d1.xyz, d1.w, d2.xyz, d2.w, d3.x);
-}
-
-fn get_triangle(index: u32) -> Triangle {
-    let i = index * TRIANGLES_STRIDE;
-    let d0 = scene_triangles_packed[i];
-    let d1 = scene_triangles_packed[i + 1u];
-    let d2 = scene_triangles_packed[i + 2u];
-    let d3 = scene_triangles_packed[i + 3u];
-    return Triangle(d0.xyz, d1.xyz, d2.xyz, d3.xyz, d3.w, d0.w);
 }
 
 // --- RNG Helpers ---
@@ -114,11 +89,11 @@ fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
 }
 
 // --- Intersection Logic ---
-fn hit_sphere_t(s: Sphere, r: Ray, t_min: f32, t_max: f32) -> f32 {
-    let oc = r.origin - s.center;
+fn hit_sphere_raw(center: vec3<f32>, radius: f32, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let oc = r.origin - center;
     let a = dot(r.direction, r.direction);
     let h = dot(r.direction, oc);
-    let c = dot(oc, oc) - s.radius * s.radius;
+    let c = dot(oc, oc) - radius * radius;
     let disc = h * h - a * c;
     if disc < 0.0 { return -1.0; }
     let sqrtd = sqrt(disc);
@@ -130,14 +105,14 @@ fn hit_sphere_t(s: Sphere, r: Ray, t_min: f32, t_max: f32) -> f32 {
     return root;
 }
 
-fn hit_triangle_t(tri: Triangle, r: Ray, t_min: f32, t_max: f32) -> f32 {
-    let e1 = tri.v1 - tri.v0;
-    let e2 = tri.v2 - tri.v0;
+fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let e1 = v1 - v0;
+    let e2 = v2 - v0;
     let h = cross(r.direction, e2);
     let a = dot(e1, h);
     if abs(a) < 1e-4 { return -1.0; }
     let f = 1.0 / a;
-    let s = r.origin - tri.v0;
+    let s = r.origin - v0;
     let u = f * dot(s, h);
     if u < 0.0 || u > 1.0 { return -1.0; }
     let q = cross(s, e1);
@@ -148,66 +123,91 @@ fn hit_triangle_t(tri: Triangle, r: Ray, t_min: f32, t_max: f32) -> f32 {
     return -1.0;
 }
 
-fn hit_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> bool {
+fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
     let t0s = (min_b - r.origin) * inv_d;
     let t1s = (max_b - r.origin) * inv_d;
     let t_small = min(t0s, t1s);
     let t_big = max(t0s, t1s);
     let tmin = max(t_min, max(t_small.x, max(t_small.y, t_small.z)));
     let tmax = min(t_max, min(t_big.x, min(t_big.y, t_big.z)));
-    return tmin <= tmax;
+    return select(1e30, tmin, tmin <= tmax);
 }
 
 // --- BVH Traversal ---
 fn hit_bvh(r: Ray, t_min: f32, t_max: f32) -> vec4<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
-    var hit_type = 0.0; // 0:None, 1:Sphere, 2:Triangle
+    var hit_type = 0.0;
 
-    // Precompute inverse direction (Safe for zero components)
-    let inv_d = vec3<f32>(
-        select(1.0 / r.direction.x, 1e30, abs(r.direction.x) < 1e-20),
-        select(1.0 / r.direction.y, 1e30, abs(r.direction.y) < 1e-20),
-        select(1.0 / r.direction.z, 1e30, abs(r.direction.z) < 1e-20)
-    );
+    let inv_d = 1.0 / r.direction;
 
     var stack: array<u32, 32>;
     var stackptr = 0u;
-    stack[stackptr] = 0u; stackptr++;
+
+
+    // ルートノード(0)の判定
+    let root_dist = intersect_aabb(bvh_nodes[0].min_b, bvh_nodes[0].max_b, r, inv_d, t_min, closest_t);
+
+    // ヒットした時だけ積む
+    if root_dist < 1e30 {
+        stack[stackptr] = 0u;
+        stackptr++;
+    }
 
     while stackptr > 0u {
         stackptr--;
         let node_idx = stack[stackptr];
         let node = bvh_nodes[node_idx];
 
-        if hit_aabb(node.min_b, node.max_b, r, inv_d, t_min, closest_t) {
-            let count = u32(node.tri_count);
-            let first = u32(node.left_first);
+        let count = u32(node.tri_count);
+        let first = u32(node.left_first);
 
-            if count > 0u {
-                // Leaf: Check primitives
-                for (var i = 0u; i < count; i++) {
-                    let pref = primitive_refs[first + i];
-                    let type_id = pref.x;
-                    let obj_idx = pref.y;
-                    var t = -1.0;
+        if count > 0u {
+            // Leaf Node
+            for (var i = 0u; i < count; i++) {
+                let idx = first + i;
+                let prim = scene_primitives[idx];
+                let obj_type = prim.data2.w;
+                var t = -1.0;
 
-                    if type_id == 0u { // Sphere
-                        t = hit_sphere_t(get_sphere(obj_idx), r, t_min, closest_t);
-                    } else { // Triangle
-                        t = hit_triangle_t(get_triangle(obj_idx), r, t_min, closest_t);
-                    }
-
-                    if t > 0.0 {
-                        closest_t = t;
-                        hit_idx = f32(obj_idx);
-                        hit_type = f32(type_id + 1u);
-                    }
+                if obj_type < 1.5 { // Sphere
+                    t = hit_sphere_raw(prim.data0.xyz, prim.data0.w, r, t_min, closest_t);
+                } else { // Triangle
+                    t = hit_triangle_raw(prim.data0.xyz, prim.data1.xyz, prim.data2.xyz, r, t_min, closest_t);
                 }
-            } else {
-                // Internal: Push children
-                stack[stackptr] = first; stackptr++;
-                stack[stackptr] = first + 1u; stackptr++;
+
+                if t > 0.0 {
+                    closest_t = t;
+                    hit_idx = f32(idx);
+                    hit_type = obj_type;
+                }
+            }
+        } else {
+            // Internal Node (Front-to-Back)
+            let left_idx = u32(node.left_first);
+            let right_idx = left_idx + 1u;
+
+            let node_l = bvh_nodes[left_idx];
+            let node_r = bvh_nodes[right_idx];
+
+            let dist_l = intersect_aabb(node_l.min_b, node_l.max_b, r, inv_d, t_min, closest_t);
+            let dist_r = intersect_aabb(node_r.min_b, node_r.max_b, r, inv_d, t_min, closest_t);
+
+            let hit_l = dist_l < 1e30;
+            let hit_r = dist_r < 1e30;
+
+            if hit_l && hit_r {
+                if dist_l < dist_r {
+                    stack[stackptr] = right_idx; stackptr++;
+                    stack[stackptr] = left_idx;  stackptr++;
+                } else {
+                    stack[stackptr] = left_idx;  stackptr++;
+                    stack[stackptr] = right_idx; stackptr++;
+                }
+            } else if hit_l {
+                stack[stackptr] = left_idx; stackptr++;
+            } else if hit_r {
+                stack[stackptr] = right_idx; stackptr++;
             }
         }
     }
@@ -228,10 +228,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
         if type_id == 0u {
             // Miss: Black Background
-            return vec3<f32>(0.0);
+            return vec3<f32>(0.);
         }
 
-        // Shading Variables
+        // Hit Data Unpacking
+        let prim = scene_primitives[idx];
         var p = ray.origin + t * ray.direction;
         var normal = vec3<f32>(0.0);
         var mat = 0.0;
@@ -240,19 +241,28 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         var front_face = true;
 
         if type_id == 1u { // Sphere
-            let s = get_sphere(idx);
-            let out_n = (p - s.center) / s.radius;
-            front_face = dot(ray.direction, out_n) < 0.0;
-            normal = select(-out_n, out_n, front_face);
-            mat = s.mat_type; col = s.color; ext = s.extra;
+            let center = prim.data0.xyz;
+            let radius = prim.data0.w;
+            let outward_n = (p - center) / radius;
+            front_face = dot(ray.direction, outward_n) < 0.0;
+            normal = select(-outward_n, outward_n, front_face);
+
+            mat = prim.data1.w; // Data1.w
+            col = prim.data3.xyz; // Data3.xyz
+            ext = prim.data3.w;   // Data3.w
         } else { // Triangle
-            let tri = get_triangle(idx);
-            let e1 = tri.v1 - tri.v0;
-            let e2 = tri.v2 - tri.v0;
-            let out_n = normalize(cross(e1, e2));
-            front_face = dot(ray.direction, out_n) < 0.0;
-            normal = select(-out_n, out_n, front_face);
-            mat = tri.mat_type; col = tri.color; ext = tri.extra;
+            let v0 = prim.data0.xyz;
+            let v1 = prim.data1.xyz;
+            let v2 = prim.data2.xyz;
+            let e1 = v1 - v0;
+            let e2 = v2 - v0;
+            let outward_n = normalize(cross(e1, e2));
+            front_face = dot(ray.direction, outward_n) < 0.0;
+            normal = select(-outward_n, outward_n, front_face);
+
+            mat = prim.data1.w;   // Data1.w
+            col = prim.data3.xyz; // Data3.xyz
+            ext = prim.data3.w;   // Data0.w (Triangle extra is stored here)
         }
 
         // Emission
@@ -298,7 +308,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             throughput /= p_rr;
         }
     }
-    return vec3<f32>(0.0);
+    return vec3<f32>(0.);
 }
 
 // --- Entry Point ---

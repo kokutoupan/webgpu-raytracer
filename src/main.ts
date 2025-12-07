@@ -79,20 +79,22 @@ async function initAndRender() {
 
     // 2. Build BVH
     const bvhBuilder = new BVHBuilder();
-    const bvhResult = bvhBuilder.build(scene.spheres, scene.triangles);
+    const bvhResult = bvhBuilder.build(scene.primitives);
 
-    // 3. Create Buffers
-    const sphereBuffer = device.createBuffer({ size: scene.spheres.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(sphereBuffer, 0, scene.spheres);
+    // バッファ作成
+    // ★統合プリミティブバッファ (Binding 4)
+    const primBuffer = device.createBuffer({
+      size: bvhResult.unifiedPrimitives.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    });
+    device.queue.writeBuffer(primBuffer, 0, bvhResult.unifiedPrimitives);
 
-    const triangleBuffer = device.createBuffer({ size: scene.triangles.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(triangleBuffer, 0, scene.triangles);
-
-    const bvhBuffer = device.createBuffer({ size: bvhResult.bvhNodes.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    // BVHノード (Binding 5)
+    const bvhBuffer = device.createBuffer({
+      size: bvhResult.bvhNodes.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    });
     device.queue.writeBuffer(bvhBuffer, 0, bvhResult.bvhNodes);
-
-    const refsBuffer = device.createBuffer({ size: bvhResult.primitiveRefs.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(refsBuffer, 0, bvhResult.primitiveRefs);
 
     if (!cameraUniformBuffer) {
       cameraUniformBuffer = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -108,10 +110,9 @@ async function initAndRender() {
         { binding: 1, resource: { buffer: accumulateBuffer } },
         { binding: 2, resource: { buffer: frameUniformBuffer } },
         { binding: 3, resource: { buffer: cameraUniformBuffer } },
-        { binding: 4, resource: { buffer: sphereBuffer } },
-        { binding: 5, resource: { buffer: triangleBuffer } },
-        { binding: 6, resource: { buffer: bvhBuffer } },
-        { binding: 7, resource: { buffer: refsBuffer } },
+        // ★修正: 統合されたのでこれだけ
+        { binding: 4, resource: { buffer: primBuffer } },
+        { binding: 5, resource: { buffer: bvhBuffer } },
       ],
     });
 
