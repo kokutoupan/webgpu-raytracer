@@ -1,4 +1,5 @@
 import { vec3, rnd, rndRange, type Vec3 } from './math';
+import { Sphere, Triangle, type IHittable } from './primitives';
 
 export const MatType = {
   Lambertian: 0.0,
@@ -19,11 +20,9 @@ export interface CameraConfig {
   focusDist: number;
 }
 
-// シーンデータ全体
 export interface SceneData {
-  camera: CameraConfig;
-  spheres: Float32Array<ArrayBuffer>;
-  triangles: Float32Array<ArrayBuffer>;
+  camera: CameraConfig; // (定義は省略)
+  primitives: IHittable[]; // ★ここがシンプルになる
 }
 
 // --- カメラデータ生成 (Buffer用) ---
@@ -59,29 +58,14 @@ export function createCameraData(
 }
 
 // --- ヘルパー ---
-function createTriangle(v0: Vec3, v1: Vec3, v2: Vec3, col: Vec3, mat: number, extra: number = 0.0): number[] {
-  return [v0.x, v0.y, v0.z, extra, v1.x, v1.y, v1.z, 0, v2.x, v2.y, v2.z, 0, col.x, col.y, col.z, mat];
-}
-function addQuad(list: number[], v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3, col: Vec3, mat: number, extra: number = 0.0) {
-  list.push(...createTriangle(v0, v1, v2, col, mat, extra));
-  list.push(...createTriangle(v0, v2, v3, col, mat, extra));
-}
-function createSphere(c: Vec3, r: number, col: Vec3, mat: number, ext: number): number[] {
-  return [c.x, c.y, c.z, r, col.x, col.y, col.z, mat, ext, 0, 0, 0];
-}
-
-// ダミー球 (球がない場合用)
-function emptySpheres(): Float32Array<ArrayBuffer> {
-  return new Float32Array([0, -9999, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-}
-// ダミー三角形 (三角形がない場合用)
-function emptyTriangles(): Float32Array<ArrayBuffer> {
-  return new Float32Array([0, -9999, 0, 0, 0, -9998, 0, 0, 0, -9997, 0, 0, 0, 0, 0, 0]);
+function addQuad(list: IHittable[], v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3, col: Vec3, mat: number, extra: number = 0.0) {
+  list.push(new Triangle(v0, v1, v2, col, mat, extra));
+  list.push(new Triangle(v0, v2, v3, col, mat, extra));
 }
 
 // --- ★追加: 箱生成ヘルパー (Exportして再利用可能に) ---
 export function addBox(
-  list: number[],
+  list: IHittable[],
   center: Vec3,
   size: Vec3,
   angleY: number,
@@ -136,7 +120,7 @@ export function addBox(
 
 // 1. コーネルボックス
 function getCornellBoxScene(): SceneData {
-  const triangles: number[] = [];
+  const triangles: IHittable[] = [];
   const white = { x: 0.73, y: 0.73, z: 0.73 };
   const red = { x: 0.65, y: 0.05, z: 0.05 };
   const green = { x: 0.12, y: 0.45, z: 0.15 };
@@ -170,20 +154,19 @@ function getCornellBoxScene(): SceneData {
       defocusAngle: 0.0,
       focusDist: 2.4
     },
-    spheres: emptySpheres(),
-    triangles: new Float32Array(triangles)
+    primitives: triangles
   };
 }
 
 // 2. ランダムな球 (One Weekend Final Scene風)
 function getRandomSpheresScene(): SceneData {
-  const spheres: number[] = [];
+  const spheres: IHittable[] = [];
 
   // Ground
-  spheres.push(...createSphere({ x: 0, y: -1000, z: 0 }, 1000, { x: 0.5, y: 0.5, z: 0.5 } as any, MatType.Lambertian, 0));
+  spheres.push(new Sphere({ x: 0, y: -1000, z: 0 }, 1000, { x: 0.5, y: 0.5, z: 0.5 }, MatType.Lambertian, 0));
 
   // sun
-  spheres.push(...createSphere({ x: -50, y: 50, z: -50 }, 30, { x: 10, y: 10, z: 10 } as any, MatType.Light, 0));
+  spheres.push(new Sphere({ x: -50, y: 50, z: -50 }, 30, { x: 10, y: 10, z: 10 }, MatType.Light, 0));
 
   // Random Spheres
   for (let a = -11; a < 11; a++) {
@@ -195,21 +178,21 @@ function getRandomSpheresScene(): SceneData {
       if (dist > 0.9) {
         if (chooseMat < 0.8) {
           const col = { x: rnd() * rnd(), y: rnd() * rnd(), z: rnd() * rnd() };
-          spheres.push(...createSphere(center, 0.2, col as any, MatType.Lambertian, 0));
+          spheres.push(new Sphere(center, 0.2, col, MatType.Lambertian, 0));
         } else if (chooseMat < 0.95) {
           const col = { x: rndRange(0.5, 1), y: rndRange(0.5, 1), z: rndRange(0.5, 1) };
-          spheres.push(...createSphere(center, 0.2, col as any, MatType.Metal, rndRange(0, 0.5)));
+          spheres.push(new Sphere(center, 0.2, col, MatType.Metal, rndRange(0, 0.5)));
         } else {
-          spheres.push(...createSphere(center, 0.2, { x: 1, y: 1, z: 1 } as any, MatType.Dielectric, 1.5));
+          spheres.push(new Sphere(center, 0.2, { x: 1, y: 1, z: 1 } as any, MatType.Dielectric, 1.5));
         }
       }
     }
   }
 
   // Big Spheres
-  spheres.push(...createSphere({ x: 0, y: 1, z: 0 }, 1.0, { x: 1, y: 1, z: 1 } as any, MatType.Dielectric, 1.5));
-  spheres.push(...createSphere({ x: -4, y: 1, z: 0 }, 1.0, { x: 0.4, y: 0.2, z: 0.1 } as any, MatType.Lambertian, 0));
-  spheres.push(...createSphere({ x: 4, y: 1, z: 0 }, 1.0, { x: 0.7, y: 0.6, z: 0.5 } as any, MatType.Metal, 0.0));
+  spheres.push(new Sphere({ x: 0, y: 1, z: 0 }, 1.0, { x: 1, y: 1, z: 1 }, MatType.Dielectric, 1.5));
+  spheres.push(new Sphere({ x: -4, y: 1, z: 0 }, 1.0, { x: 0.4, y: 0.2, z: 0.1 }, MatType.Lambertian, 0));
+  spheres.push(new Sphere({ x: 4, y: 1, z: 0 }, 1.0, { x: 0.7, y: 0.6, z: 0.5 }, MatType.Metal, 0.0));
 
   return {
     camera: {
@@ -220,8 +203,7 @@ function getRandomSpheresScene(): SceneData {
       defocusAngle: 0.6,
       focusDist: 10.0
     },
-    spheres: new Float32Array(spheres),
-    triangles: emptyTriangles() // 三角形はなし（ダミー）
+    primitives: spheres
   };
 }
 
@@ -229,14 +211,13 @@ function getRandomSpheresScene(): SceneData {
 //   3. ミックス (アーティスティックなシーン)
 // ==========================================
 function getMixedScene(): SceneData {
-  const triangles: number[] = [];
-  const spheres: number[] = [];
+  const objects: IHittable[] = [];
 
   // --- 1. 床 (Dark Mirror Floor) ---
   // 少しだけザラつき(fuzz 0.05)のある、暗い鏡の床
   // 反射が綺麗に伸びます
   const floorCol = { x: 0.1, y: 0.1, z: 0.1 };
-  addBox(triangles, { x: 0, y: -1.0, z: 0 }, { x: 40, y: 2, z: 40 }, 0, floorCol, MatType.Metal, 0.05);
+  addBox(objects, { x: 0, y: -1.0, z: 0 }, { x: 40, y: 2, z: 40 }, 0, floorCol, MatType.Metal, 0.05);
 
   // --- 2. ライティング (Cinematic 2-Point Lighting) ---
 
@@ -244,7 +225,7 @@ function getMixedScene(): SceneData {
   // 影を落とすメインの光
   const warmLight = { x: 40.0, y: 30.0, z: 10.0 }; // 明るいオレンジ
   const lA_pos = { x: -4, y: 8, z: 4 };
-  addQuad(triangles,
+  addQuad(objects,
     { x: lA_pos.x, y: lA_pos.y, z: lA_pos.z },
     { x: lA_pos.x + 2, y: lA_pos.y, z: lA_pos.z },
     { x: lA_pos.x + 2, y: lA_pos.y, z: lA_pos.z + 2 },
@@ -256,7 +237,7 @@ function getMixedScene(): SceneData {
   // 輪郭を際立たせる青い光
   const coolLight = { x: 5.0, y: 10.0, z: 20.0 }; // 青
   const lB_pos = { x: 4, y: 6, z: -4 };
-  addQuad(triangles,
+  addQuad(objects,
     { x: lB_pos.x, y: lB_pos.y, z: lB_pos.z },
     { x: lB_pos.x + 3, y: lB_pos.y, z: lB_pos.z },
     { x: lB_pos.x + 3, y: lB_pos.y - 3, z: lB_pos.z }, // 垂直に立ててみる
@@ -268,19 +249,19 @@ function getMixedScene(): SceneData {
 
   // 土台: 金のブロック
   const gold = { x: 0.8, y: 0.6, z: 0.2 };
-  addBox(triangles, { x: 0, y: 0.5, z: 0 }, { x: 2, y: 1, z: 2 }, 45, gold, MatType.Metal, 0.1);
+  addBox(objects, { x: 0, y: 0.5, z: 0 }, { x: 2, y: 1, z: 2 }, 45, gold, MatType.Metal, 0.1);
 
   // 中段: ガラスの球
   // 屈折率 1.5 (ガラス)
-  spheres.push(...createSphere({ x: 0, y: 1.8, z: 0 }, 0.8, { x: 1, y: 1, z: 1 } as any, MatType.Dielectric, 1.5));
+  objects.push(new Sphere({ x: 0, y: 1.8, z: 0 }, 0.8, { x: 1, y: 1, z: 1 }, MatType.Dielectric, 1.5));
   // 中に気泡を入れる (屈折率 1.0/1.5 の空気を中に入れると泡に見える)
-  spheres.push(...createSphere({ x: 0, y: 1.8, z: 0 }, -0.7, { x: 1, y: 1, z: 1 } as any, MatType.Dielectric, 1.0));
+  objects.push(new Sphere({ x: 0, y: 1.8, z: 0 }, -0.7, { x: 1, y: 1, z: 1 }, MatType.Dielectric, 1.0));
 
   // 上段: 浮遊する赤いガラスキューブ
   const ruby = { x: 0.9, y: 0.1, z: 0.1 };
   // addBox(triangles, {x:0, y:3.2, z:0}, {x:1, y:1, z:1}, 30, ruby, MatType.Dielectric, 1.5);
   // キューブだと透過が計算しにくいので、ここはメタルにする
-  addBox(triangles, { x: 0, y: 3.0, z: 0 }, { x: 0.8, y: 0.8, z: 0.8 }, 15, ruby, MatType.Metal, 0.2);
+  addBox(objects, { x: 0, y: 3.0, z: 0 }, { x: 0.8, y: 0.8, z: 0.8 }, 15, ruby, MatType.Metal, 0.2);
 
 
   // --- 4. 周囲の浮遊リング (Procedural Ring) ---
@@ -298,20 +279,20 @@ function getMixedScene(): SceneData {
     if (i % 2 === 0) {
       // 鏡の球
       const col = { x: 0.8, y: 0.8, z: 0.8 };
-      spheres.push(...createSphere({ x, y, z }, 0.4, col as any, MatType.Metal, 0.0));
+      objects.push(new Sphere({ x, y, z }, 0.4, col as any, MatType.Metal, 0.0));
     } else {
       // カラフルな箱 (Diffuse)
       const r = 0.5 + 0.5 * Math.cos(i);
       const g = 0.5 + 0.5 * Math.sin(i);
       const b = 0.8;
-      addBox(triangles, { x, y, z }, { x: 0.6, y: 0.6, z: 0.6 }, i * 20, { x: r, y: g, z: b }, MatType.Lambertian);
+      addBox(objects, { x, y, z }, { x: 0.6, y: 0.6, z: 0.6 }, i * 20, { x: r, y: g, z: b }, MatType.Lambertian);
     }
   }
 
   // --- 5. 背景の柱 (Depth Reference) ---
   // 奥に巨大なモノリスを置いて、反射とシルエットを作る
-  addBox(triangles, { x: -4, y: 3, z: -6 }, { x: 1, y: 6, z: 1 }, 10, { x: 0.2, y: 0.2, z: 0.3 }, MatType.Lambertian);
-  addBox(triangles, { x: 4, y: 2, z: -5 }, { x: 1, y: 4, z: 1 }, -20, { x: 0.2, y: 0.2, z: 0.3 }, MatType.Lambertian);
+  addBox(objects, { x: -4, y: 3, z: -6 }, { x: 1, y: 6, z: 1 }, 10, { x: 0.2, y: 0.2, z: 0.3 }, MatType.Lambertian);
+  addBox(objects, { x: 4, y: 2, z: -5 }, { x: 1, y: 4, z: 1 }, -20, { x: 0.2, y: 0.2, z: 0.3 }, MatType.Lambertian);
 
 
   return {
@@ -323,8 +304,7 @@ function getMixedScene(): SceneData {
       defocusAngle: 0.3, // ほんのりボケさせる (ミニチュア効果)
       focusDist: 9.0     // 中心にピントを合わせる
     },
-    spheres: new Float32Array(spheres),
-    triangles: new Float32Array(triangles)
+    primitives: objects
   };
 }
 
