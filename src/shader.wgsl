@@ -267,7 +267,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         }
 
         // Emission
-        if mat > 2.5 { return throughput * col; }
+        if mat > 2.5 { return select(vec3<f32>(0.0), throughput * col, front_face || ext > 0.5); }
 
         var scat = vec3<f32>(0.0);
 

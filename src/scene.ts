@@ -120,7 +120,7 @@ function getCornellBoxScene(): SceneData {
   const white = { x: 0.73, y: 0.73, z: 0.73 };
   const red = { x: 0.65, y: 0.05, z: 0.05 };
   const green = { x: 0.12, y: 0.45, z: 0.15 };
-  const light = { x: 50.0, y: 50.0, z: 50.0 };
+  const light = { x: 20.0, y: 20.0, z: 20.0 };
 
   const S = 555;
   const v = (x: number, y: number, z: number) => ({ x: (x / S) * 2 - 1, y: (y / S) * 2, z: (z / S) * 2 - 1 });
@@ -135,7 +135,7 @@ function getCornellBoxScene(): SceneData {
 
   // Light
   const l0 = v(213, 554, 227), l1 = v(343, 554, 227), l2 = v(343, 554, 332), l3 = v(213, 554, 332);
-  addQuad(triangles, l0, l3, l2, l1, light, MatType.Light);
+  addQuad(triangles, l0, l1, l2, l3, light, MatType.Light,0.0);
 
   // Boxes (★addBoxを使用)
   // 1. 背の高い箱 (Tall Box)
@@ -336,7 +336,7 @@ function getCornellBoxSpecialScene(): SceneData {
   const green = { x: 0.12, y: 0.45, z: 0.15 };
   const light = { x: 20.0, y: 20.0, z: 20.0 };
 
-  const blueLight = { x: 0.3, y: 0.3, z: 1.1 }; // 青を少し強調したほうが綺麗に見えます
+  const blueLight = { x: 0.1, y: 0.1, z: 10. }; // 青を少し強調したほうが綺麗に見えます
   const glassColor = { x: 0.95, y: 0.95, z: 0.95 };
 
   const S = 555;
@@ -345,14 +345,14 @@ function getCornellBoxSpecialScene(): SceneData {
 
   // --- 壁・床・天井 (オリジナルと同じ) ---
   // 床を Metal (粗さ0.3) にして反射を楽しむ設定は維持
-  addQuad(objects, v(0, 0, 0), v(555, 0, 0), v(555, 0, 555), v(0, 0, 555), white, MatType.Metal, 0.4);
+  addQuad(objects, v(0, 0, 0), v(555, 0, 0), v(555, 0, 555), v(0, 0, 555), white, MatType.Metal, 0.1);
   addQuad(objects, v(0, 555, 0), v(0, 555, 555), v(555, 555, 555), v(555, 555, 0), white, MatType.Lambertian);
   addQuad(objects, v(0, 0, 555), v(555, 0, 555), v(555, 555, 555), v(0, 555, 555), white, MatType.Lambertian);
   addQuad(objects, v(0, 0, 0), v(0, 555, 0), v(0, 555, 555), v(0, 0, 555), green, MatType.Lambertian);
   addQuad(objects, v(555, 0, 0), v(555, 0, 555), v(555, 555, 555), v(555, 555, 0), red, MatType.Lambertian);
 
   const l0 = v(213, 554, 227), l1 = v(343, 554, 227), l2 = v(343, 554, 332), l3 = v(213, 554, 332);
-  addQuad(objects, l0, l3, l2, l1, light, MatType.Light);
+  addQuad(objects, l0, l1, l2, l3, light, MatType.Light);
 
   // --- 箱の配置 (再計算済み) ---
 
@@ -365,7 +365,7 @@ function getCornellBoxSpecialScene(): SceneData {
   // 2. 背の低い箱 (白メタル)
   const shortBoxCenter = v(183, 82.5, 209);
 
-  const shortBoxGeo = createBox(s(165, 165, 165), { x: 0.73, y: 0.73, z: 0.73 }, MatType.Metal, 0.4);
+  const shortBoxGeo = createBox(s(165, 165, 165), { x: 0.73, y: 0.73, z: 0.73 }, MatType.Metal, 0.2);
   addTransformed(objects, shortBoxGeo, shortBoxCenter, -18);
 
   // 3. 青い球
