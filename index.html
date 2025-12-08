@@ -5,29 +5,158 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WebGPU Ray Tracing</title>
     <style>
-      body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px; background: #222; color: #eee; }
-      canvas { border: 1px solid #555; background: #000; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-      .controls { display: flex; gap: 10px; align-items: center; }
-      button, select { padding: 10px 15px; font-size: 1rem; cursor: pointer; border-radius: 4px; border: none; }
-      button { background: #4CAF50; color: white; }
+      /* --- レイアウト全体設定 --- */
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh; /* 画面いっぱいに広げる */
+        background: #111;
+        color: #eee;
+        display: flex;
+        flex-direction: column; /* 上下に配置 */
+        overflow: hidden; /* スクロール禁止（Canvas内はOK） */
+      }
+
+      /* --- 操作パネル (レスポンシブ対応) --- */
+      .controls {
+        flex-shrink: 0; /* 縮まないように */
+        display: flex;
+        flex-wrap: wrap; /* ★重要: 入り切らない場合は折り返す */
+        gap: 10px; /* 要素間の隙間 */
+        align-items: center;
+        justify-content: center; /* 中央揃え */
+        padding: 10px;
+        background: #222;
+        border-bottom: 1px solid #444;
+        z-index: 10;
+        /* スマホでの横スクロールを防ぐ */
+        box-sizing: border-box; 
+        width: 100%;
+      }
+
+      /* 入力グループ（枠で囲まれた部分） */
+      .group {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap; /* グループ内も狭ければ折り返す */
+        gap: 5px;
+        background: #333;
+        padding: 5px 8px;
+        border-radius: 4px;
+        border: 1px solid #555;
+        justify-content: center;
+      }
+
+      /* --- UIパーツのスタイル --- */
+      button, select, input {
+        padding: 8px 10px;
+        font-size: 0.9rem;
+        border-radius: 4px;
+        border: none;
+        outline: none;
+      }
+      button { background: #4CAF50; color: white; cursor: pointer; white-space: nowrap; }
       button:hover { background: #45a049; }
-      select { background: #333; color: white; border: 1px solid #555; }
+      
+      /* 青いボタン (Update) */
+      button#recompile-btn { background: #2196F3; }
+      button#recompile-btn:hover { background: #1976D2; }
+
+      select, input { background: #444; color: white; border: 1px solid #666; }
+      
+      /* 数値入力欄の幅 */
+      input[type="number"] { width: 55px; text-align: right; }
+
+      .label { color: #aaa; margin-right: 3px; font-size: 0.85rem; white-space: nowrap; }
+      .title { font-weight: bold; margin-right: 5px; white-space: nowrap; }
+
+      /* --- Canvas領域 --- */
+      .canvas-wrapper {
+        flex-grow: 1; /* 余った領域を埋める */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        position: relative;
+      }
+
+      canvas {
+        display: block;
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        image-rendering: pixelated; /* 低解像度でもクッキリ表示 */
+        box-shadow: 0 0 30px rgba(0,0,0,0.8);
+      }
+
+      /* --- スマホ向け調整 (画面幅 600px以下) --- */
+      @media (max-width: 600px) {
+        .controls {
+          padding: 8px 5px;
+          gap: 8px;
+        }
+        .title {
+          font-size: 0.9rem;
+          width: 100%; /* タイトルを1行目に独占させる */
+          text-align: center;
+          margin-bottom: 5px;
+        }
+        button, select, input {
+          font-size: 0.8rem; /* 少し文字を小さく */
+          padding: 6px 8px;  /* 余白を詰める */
+        }
+        input[type="number"] {
+          width: 45px; /* 入力欄を少し狭く */
+        }
+        .group {
+          padding: 4px 6px;
+        }
+      }
     </style>
   </head>
   <body>
-    <h2>WebGPU Path Tracer</h2>
-    
     <div class="controls">
-      <select id="scene-select">
-        <option value="cornell">Cornell Box</option>
-        <option value="spheres">Random Spheres</option>
-        <option value="mixed">Mixed (Box + Spheres)</option>
-        <option value="special">Special (Cornell + Spheres)</option>
-      </select>
+      <div class="title">WebGPU Tracer</div>
+      
+      <div>
+        <select id="scene-select">
+          <option value="cornell">Cornell Box</option>
+          <option value="spheres">Random Spheres</option>
+          <option value="mixed">Mixed Scene</option>
+          <option value="special">Special Box</option>
+        </select>
+      </div>
+
+      <div class="group">
+        <span class="label">Res:</span>
+        <input id="res-width" type="number" value="720" step="10" min="10">
+        <span class="label">x</span>
+        <input id="res-height" type="number" value="480" step="10" min="10">
+      </div>
+
+      <div class="group" style="border-color: #2196F3;">
+        <span class="label">Depth:</span>
+        <input id="max-depth" type="number" value="10" min="1" max="50">
+        
+        <span class="label" style="margin-left:5px;">SPP:</span>
+        <input id="spp-frame" type="number" value="1" min="1" max="100">
+        
+        <button id="recompile-btn" title="Recompile Shader">Update</button>
+      </div>
+
       <button id="render-btn">Render Start</button>
     </div>
 
-    <canvas id="gpu-canvas" width="720" height="480"></canvas>
+    <div class="canvas-wrapper">
+      <canvas id="gpu-canvas" width="720" height="480"></canvas>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

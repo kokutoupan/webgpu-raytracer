@@ -7,6 +7,7 @@ const PI = 3.141592653589793;
 const T_MIN = 0.001;
 const T_MAX = 1e30;
 const MAX_DEPTH = 10u; // ガラスなどを綺麗に見せるため少し増やす
+const SPP = 1u;
 
 // Binding Stride
 const SPHERES_STRIDE = 3u;
@@ -320,20 +321,27 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixel_idx = id.y * dims.x + id.x;
     var rng = init_rng(pixel_idx, frame.frame_count);
 
-    // Jittered Camera Ray
-    var ro = camera.origin;
-    var offset = vec3<f32>(0.0);
-    if camera.lens_radius > 0.0 {
-        let rd = camera.lens_radius * random_in_unit_disk(&rng);
-        offset = camera.u * rd.x + camera.v * rd.y;
-        ro += offset;
+    // ★変更: SPPループで平均色を計算
+    var accum_color = vec3<f32>(0.0);
+
+    for (var s = 0u; s < SPP; s++) {
+        // レイ生成 (Jittering) をループ内で行うことでAA効果を得る
+        var ro = camera.origin;
+        var offset = vec3<f32>(0.0);
+        if camera.lens_radius > 0.0 {
+            let rd = camera.lens_radius * random_in_unit_disk(&rng);
+            offset = camera.u * rd.x + camera.v * rd.y;
+            ro += offset;
+        }
+        let u = (f32(id.x) + rand_pcg(&rng)) / f32(dims.x);
+        let v = 1.0 - (f32(id.y) + rand_pcg(&rng)) / f32(dims.y);
+        let dir = camera.lower_left_corner + u * camera.horizontal + v * camera.vertical - camera.origin - offset;
+
+        accum_color += ray_color(Ray(ro, dir), &rng);
     }
-    let u = (f32(id.x) + rand_pcg(&rng)) / f32(dims.x);
-    let v = 1.0 - (f32(id.y) + rand_pcg(&rng)) / f32(dims.y);
-    let dir = camera.lower_left_corner + u * camera.horizontal + v * camera.vertical - camera.origin - offset;
     
-    // Trace
-    let col = ray_color(Ray(ro, dir), &rng);
+    // このフレームでの平均色
+    let col = accum_color / f32(SPP);
 
     // Accumulate
     var acc = vec4<f32>(0.0);
