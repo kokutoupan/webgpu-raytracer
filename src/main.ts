@@ -2,6 +2,7 @@
 import shaderCodeRaw from './shader.wgsl?raw'; // 生データを読み込む
 import { createCameraData, getSceneData, type SceneData } from './scene';
 import { BVHBuilder } from "./bvh";
+import { Mesh } from './mesh'; // Meshをインポート
 
 // --- DOM ---
 const canvas = document.getElementById('gpu-canvas') as HTMLCanvasElement;
@@ -9,6 +10,7 @@ const btn = document.getElementById('render-btn') as HTMLButtonElement;
 const sceneSelect = document.getElementById('scene-select') as HTMLSelectElement;
 const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
+const inputFile = document.getElementById('obj-file') as HTMLInputElement;
 
 // ★追加
 const inputDepth = document.getElementById('max-depth') as HTMLInputElement;
@@ -28,6 +30,7 @@ document.body.appendChild(statsDiv);
 let frameCount = 0;
 let isRendering = false;
 let currentSceneData: SceneData | null = null;
+let uploadedMesh: Mesh | null = null; // アップロードされたメッシュを保持
 
 async function initAndRender() {
   if (!navigator.gpu) { alert("WebGPU not supported."); return; }
@@ -139,7 +142,7 @@ async function initAndRender() {
     console.log(`Loading Scene: ${sceneName}...`);
     isRendering = false;
 
-    const scene = getSceneData(sceneName);
+    const scene = getSceneData(sceneName, uploadedMesh);
     currentSceneData = scene;
 
     const bvhBuilder = new BVHBuilder();
@@ -227,6 +230,37 @@ async function initAndRender() {
   sceneSelect.addEventListener("change", (e) => {
     const target = e.target as HTMLSelectElement;
     loadScene(target.value, false);
+  });
+
+
+  // ★ファイル読み込み処理
+  inputFile.addEventListener("change", async (e) => {
+    const target = e.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) return;
+
+    // ボタンの文字を "Loading..." に変えたりしても良い
+    console.log(`Reading ${file.name}...`);
+
+    try {
+      const text = await file.text(); // テキストとして読み込み
+
+      // メッシュ生成 & 正規化
+      uploadedMesh = new Mesh(text);
+      uploadedMesh.normalize(); // ★画面に収まるように自動調整
+
+      // アップロード成功したら、自動的に "viewer" シーンに切り替える
+      sceneSelect.value = "viewer";
+      loadScene("viewer", true);
+
+      console.log(`Loaded Mesh: ${uploadedMesh.vertices.length} vertices`);
+    } catch (err) {
+      console.error("Failed to load OBJ:", err);
+      alert("Failed to load OBJ file.");
+    }
+
+    // inputをリセット（同じファイルを再選択できるように）
+    target.value = "";
   });
 
   // 解像度変更

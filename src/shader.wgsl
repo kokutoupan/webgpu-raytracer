@@ -140,6 +140,10 @@ fn hit_bvh(r: Ray, t_min: f32, t_max: f32) -> vec4<f32> {
     var hit_idx = -1.0;
     var hit_type = 0.0;
 
+    //[DEBUG] コストカウント
+    //var steps = 0.0;
+
+
     let inv_d = 1.0 / r.direction;
 
     var stack: array<u32, 32>;
@@ -160,11 +164,15 @@ fn hit_bvh(r: Ray, t_min: f32, t_max: f32) -> vec4<f32> {
         let node_idx = stack[stackptr];
         let node = bvh_nodes[node_idx];
 
+        //steps += 1.0;
+
         let count = u32(node.tri_count);
         let first = u32(node.left_first);
 
         if count > 0u {
             // Leaf Node
+           // steps += f32(count);
+
             for (var i = 0u; i < count; i++) {
                 let idx = first + i;
                 let prim = scene_primitives[idx];
@@ -212,6 +220,7 @@ fn hit_bvh(r: Ray, t_min: f32, t_max: f32) -> vec4<f32> {
             }
         }
     }
+    //return vec4<f32>(closest_t, hit_idx, hit_type, steps);
     return vec4<f32>(closest_t, hit_idx, hit_type, 0.0);
 }
 
@@ -226,6 +235,19 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let t = hit.x;
         let idx = u32(hit.y);
         let type_id = u32(hit.z);
+//        let cost = hit.w; // ★コスト取得
+//
+//        // --- ヒートマップ表示モード ---
+//        // コスト 0〜100 を 青〜赤 にマッピングする簡易表示
+//        // 100回以上の判定は真っ赤になる
+//        let heat = cost / 100.0; 
+//    
+//        // 虹色マップっぽいグラデーション
+//        let r = smoothstep(0.5, 1.0, heat);
+//        let g = sin(heat * PI);
+//        let b = smoothstep(0.5, 0.0, heat);
+//
+//        return vec3<f32>(r, g, b);
 
         if type_id == 0u {
             // Miss: Black Background
