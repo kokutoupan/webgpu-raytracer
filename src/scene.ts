@@ -1,5 +1,6 @@
 import { vec3, rnd, rndRange, type Vec3 } from './math';
 import { Sphere, Triangle, type IHittable } from './primitives';
+import { Mesh } from './mesh'; // ★追加
 
 export const MatType = {
   Lambertian: 0.0,
@@ -135,7 +136,7 @@ function getCornellBoxScene(): SceneData {
 
   // Light
   const l0 = v(213, 554, 227), l1 = v(343, 554, 227), l2 = v(343, 554, 332), l3 = v(213, 554, 332);
-  addQuad(triangles, l0, l1, l2, l3, light, MatType.Light,0.0);
+  addQuad(triangles, l0, l1, l2, l3, light, MatType.Light, 0.0);
 
   // Boxes (★addBoxを使用)
   // 1. 背の高い箱 (Tall Box)
@@ -387,12 +388,158 @@ function getCornellBoxSpecialScene(): SceneData {
   };
 }
 
+// ==========================================
+//   4. メッシュ・インスタンス シーン
+// ==========================================
+
+// 簡易的なキューブのOBJデータ（本来はfetchなどで外部ファイルから読み込む）
+const cubeObjData = `
+v -1 -1  1
+v  1 -1  1
+v -1  1  1
+v  1  1  1
+v -1 -1 -1
+v  1 -1 -1
+v -1  1 -1
+v  1  1 -1
+f 1 2 4 3
+f 3 4 8 7
+f 7 8 6 5
+f 5 6 2 1
+f 3 7 5 1
+f 8 4 2 6
+`;
+
+function getMeshScene(): SceneData {
+  const objects: IHittable[] = [];
+
+  // 1. メッシュをロード（パースは1回だけ）
+  const myMesh = new Mesh(cubeObjData);
+
+  // 2. 床
+  // const white = { x: 0.73, y: 0.73, z: 0.73 };
+  objects.push(new Sphere({ x: 0, y: -1000, z: 0 }, 1000, { x: 0.5, y: 0.5, z: 0.5 }, MatType.Lambertian));
+
+  // 3. インスタンス化して配置
+  // メッシュから三角形リストを生成し、メインのリストに追加する
+
+  // 左: 赤いメタル
+  objects.push(...myMesh.createInstance(
+    { x: -2, y: 1, z: 0 },
+    1.0,
+    45, // 45度回転
+    { x: 0.8, y: 0.2, z: 0.2 },
+    MatType.Metal,
+    0.2
+  ));
+
+  // 中央: ガラス
+  objects.push(...myMesh.createInstance(
+    { x: 0, y: 1, z: 1.5 },
+    1.2,
+    0,
+    { x: 1, y: 1, z: 1 },
+    MatType.Dielectric,
+    1.5
+  ));
+
+  // 右: 青いランバート (大量に並べてみる)
+  for (let i = 0; i < 5; i++) {
+    objects.push(...myMesh.createInstance(
+      { x: 2 + i * 0.5, y: 0.5 + i * 0.5, z: -i },
+      0.5,
+      i * 30,
+      { x: 0.2, y: 0.4, z: 0.8 },
+      MatType.Lambertian
+    ));
+  }
+
+  // ライト
+  objects.push(new Sphere({ x: 0, y: 10, z: 0 }, 3, { x: 10, y: 10, z: 10 }, MatType.Light));
+
+  return {
+    camera: {
+      lookfrom: { x: 0, y: 3, z: 6 },
+      lookat: { x: 0, y: 1, z: 0 },
+      vup: { x: 0, y: 1, z: 0 },
+      vfov: 40,
+      defocusAngle: 0,
+      focusDist: 6
+    },
+    primitives: objects
+  };
+}
+
+// ==========================================
+//   5. モデルビューアー (アップロード用)
+// ==========================================
+// 引数に mesh: Mesh | null を受け取るように変更
+function getModelViewerScene(mesh: Mesh | null): SceneData {
+  const objects: IHittable[] = [];
+
+  // 床 (チェッカーボード風の代わりに、少し反射する暗い床)
+  const floorCol = { x: 0.2, y: 0.2, z: 0.2 };
+  objects.push(new Sphere({ x: 0, y: -1000, z: 0 }, 1000, floorCol, MatType.Lambertian));
+
+  // ライティング (3点照明風)
+  // Main Light
+  objects.push(new Sphere({ x: 5, y: 10, z: 5 }, 3.0, { x: 15, y: 15, z: 15 }, MatType.Light));
+  // Fill Light (弱め)
+  objects.push(new Sphere({ x: -5, y: 5, z: 5 }, 1.0, { x: 3, y: 3, z: 5 }, MatType.Light));
+
+  if (mesh) {
+    // メッシュがある場合、中央にドンと配置
+    // normalize()済み前提なので、Y=1.0あたりを中心に置けば床に乗るはず
+
+    // 1. 中央: メイン (白・ランバート)
+    objects.push(...mesh.createInstance(
+      { x: 0, y: 1.0, z: 0 },
+      1.0, 0, // scale 1.0, rot 0
+      { x: 0.8, y: 0.8, z: 0.8 },
+      MatType.Lambertian
+    ));
+
+    // 2. 左奥: ガラス
+    objects.push(...mesh.createInstance(
+      { x: -2.5, y: 1.0, z: -1.0 },
+      0.8, 30,
+      { x: 1.0, y: 1.0, z: 1.0 },
+      MatType.Dielectric, 1.5
+    ));
+
+    // 3. 右奥: 金色メタル
+    objects.push(...mesh.createInstance(
+      { x: 2.5, y: 1.0, z: -1.0 },
+      0.8, -30,
+      { x: 0.8, y: 0.6, z: 0.2 },
+      MatType.Metal, 0.1
+    ));
+  } else {
+    // メッシュがない場合のダミー (球)
+    objects.push(new Sphere({ x: 0, y: 1, z: 0 }, 1, { x: 1, y: 0, z: 1 }, MatType.Lambertian));
+  }
+
+  return {
+    camera: {
+      lookfrom: { x: 0, y: 3, z: 6 },
+      lookat: { x: 0, y: 1, z: 0 },
+      vup: { x: 0, y: 1, z: 0 },
+      vfov: 35,
+      defocusAngle: 0,
+      focusDist: 6
+    },
+    primitives: objects
+  };
+}
+
 // --- シーン取得関数 ---
-export function getSceneData(name: string): SceneData {
+export function getSceneData(name: string, uploadedMesh: Mesh | null = null): SceneData {
   switch (name) {
     case 'spheres': return getRandomSpheresScene();
     case 'mixed': return getMixedScene();
     case 'special': return getCornellBoxSpecialScene();
+    case 'mesh': return getMeshScene();
+    case 'viewer': return getModelViewerScene(uploadedMesh); // ★追加
     case 'cornell':
     default: return getCornellBoxScene();
   }

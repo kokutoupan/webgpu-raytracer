@@ -64,6 +64,19 @@
       button#recompile-btn { background: #2196F3; }
       button#recompile-btn:hover { background: #1976D2; }
 
+    /* ファイル選択ボタンの見た目 */
+    .file-btn {
+      display: inline-block;
+      padding: 8px 12px;
+      background: #FF9800; /* オレンジ */
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      white-space: nowrap;
+    }
+    .file-btn:hover { background: #F57C00; }
+
       select, input { background: #444; color: white; border: 1px solid #666; }
       
       /* 数値入力欄の幅 */
@@ -130,7 +143,13 @@
           <option value="spheres">Random Spheres</option>
           <option value="mixed">Mixed Scene</option>
           <option value="special">Special Box</option>
+          <option value="mesh">Mesh Scene</option>
+          <option value="viewer">Obj Viewer Scene</option>
         </select>
+      </div>
+      <div class="group">
+        <label for="obj-file" class="file-btn">📂 Load OBJ</label>
+        <input type="file" id="obj-file" accept=".obj" style="display: none;">
       </div>
 
       <div class="group">
