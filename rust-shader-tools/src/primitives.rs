@@ -1,5 +1,5 @@
 // use wasm_bindgen::prelude::*;
-use glam::{Vec3, vec3}; // glamからVec3とコンストラクタ(vec3)を使う
+use glam::{Mat4, Vec3, vec3}; // glamからVec3とコンストラクタ(vec3)を使う
 
 pub const PRIMITIVE_STRIDE: usize = 16;
 // --- AABB ---
@@ -51,6 +51,27 @@ impl AABB {
 
     pub fn center(&self) -> Vec3 {
         (self.min + self.max) * 0.5
+    }
+
+    pub fn transform(&self, mat: Mat4) -> AABB {
+        let corners = [
+            vec3(self.min.x, self.min.y, self.min.z),
+            vec3(self.max.x, self.min.y, self.min.z),
+            vec3(self.min.x, self.max.y, self.min.z),
+            vec3(self.max.x, self.max.y, self.min.z),
+            vec3(self.min.x, self.min.y, self.max.z),
+            vec3(self.max.x, self.min.y, self.max.z),
+            vec3(self.min.x, self.max.y, self.max.z),
+            vec3(self.max.x, self.max.y, self.max.z),
+        ];
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for p in corners {
+            let tp = mat.transform_point3(p);
+            min = min.min(tp);
+            max = max.max(tp);
+        }
+        AABB { min, max }
     }
 }
 

@@ -74,7 +74,8 @@ struct TriangleAttributes {
 struct HitResult {
     t: f32,
     tri_idx: f32,
-    inst_idx: i32
+    inst_idx: i32,
+    steps: u32
 }
 
 // --- Random & Physics ---
@@ -185,6 +186,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
 
 fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     var res: HitResult; res.t = t_max; res.tri_idx = -1.0; res.inst_idx = -1;
+    res.steps = 0u; // 初期化
     if arrayLength(&tlas_nodes) == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
@@ -196,6 +198,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     }
 
     while stackptr > 0u {
+        res.steps++;
         stackptr--;
         let idx = stack[stackptr];
         let node = tlas_nodes[idx];
@@ -245,6 +248,32 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
         if hit.inst_idx < 0 { return vec3<f32>(0.0); }
+
+    // 全くトラバースしなかった場合（背景）
+        if hit.steps == 0u {
+            return vec3<f32>(0.0);
+        }
+
+    // --- ヒートマップ表示 ---
+    // ステップ数を色に変換して負荷を可視化します。
+    // 値が小さいほど青く、大きいほど赤くなります。
+    
+    // 基準値: この値以上で最大色（赤）になる
+    // シーンの複雑さに応じて調整してください (例: 20〜100)
+        let max_steps = 16.0;
+
+        let intensity = clamp(f32(hit.steps) / max_steps, 0.0, 1.0);
+    
+    // 青 -> シアン -> 緑 -> 黄 -> 赤 のグラデーション
+    // 簡易版: 青(低負荷) -> 赤(高負荷)
+        let r = intensity;
+        let g = 1.0 - abs(intensity - 0.5) * 2.0; // 中間で緑っぽく
+        let b = 1.0 - intensity;
+
+    // もしヒットしていれば少し明るく、ミスなら少し暗くして区別をつける
+        let brightness = select(0.5, 1.0, hit.inst_idx >= 0);
+
+        return vec3<f32>(r, g * 0.5, b) * brightness;
 
         let inst = instances[u32(hit.inst_idx)];
         let tri_idx = u32(hit.tri_idx); 

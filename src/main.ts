@@ -1,9 +1,8 @@
 // src/main.ts
 import shaderCodeRaw from './shader.wgsl?raw';
-// 古いTSモジュールのimportは全削除
 import init, { World } from '../rust-shader-tools/pkg/rust_shader_tools';
 
-// --- DOM ---
+// --- DOM Elements ---
 const canvas = document.getElementById('gpu-canvas') as HTMLCanvasElement;
 const btn = document.getElementById('render-btn') as HTMLButtonElement;
 const sceneSelect = document.getElementById('scene-select') as HTMLSelectElement;
@@ -11,11 +10,12 @@ const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
 const inputFile = document.getElementById('obj-file') as HTMLInputElement;
 if (inputFile) inputFile.accept = ".obj,.glb,.vrm";
+const inputUpdateInterval = document.getElementById('update-interval') as HTMLInputElement;
 const inputDepth = document.getElementById('max-depth') as HTMLInputElement;
 const inputSPP = document.getElementById('spp-frame') as HTMLInputElement;
 const btnRecompile = document.getElementById('recompile-btn') as HTMLButtonElement;
 
-// --- FPS UI ---
+// --- Stats UI ---
 const statsDiv = document.createElement("div");
 Object.assign(statsDiv.style, {
   position: "fixed", bottom: "10px", left: "10px", color: "#0f0",
@@ -27,26 +27,25 @@ document.body.appendChild(statsDiv);
 // --- Global State ---
 let frameCount = 0;
 let isRendering = false;
-
-// RustのWorldインスタンスとWasmメモリ
 let currentWorld: World | null = null;
 let wasmMemory: WebAssembly.Memory | null = null;
 
 
 async function initAndRender() {
-  // 1. WebGPU初期化
+  // 1. WebGPU Init
   if (!navigator.gpu) { alert("WebGPU not supported."); return; }
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) throw new Error("No adapter");
   const device = await adapter.requestDevice();
-  const context = canvas.getContext("webgpu");
-  if (!context) throw new Error("No context");
+  const context = canvas.getContext("webgpu") as GPUCanvasContext;
 
   context.configure({
-    device, format: 'rgba8unorm', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    device,
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
   });
 
-  // 2. Wasm初期化
+  // 2. Wasm Init
   const wasmInstance = await init();
   wasmMemory = wasmInstance.memory;
   console.log("Wasm initialized");
@@ -71,7 +70,6 @@ async function initAndRender() {
     bindGroupLayout = pipeline.getBindGroupLayout(0);
   };
 
-  // 初回ビルド
   buildPipeline();
 
   // --- Resources ---
@@ -81,12 +79,16 @@ async function initAndRender() {
   let frameUniformBuffer: GPUBuffer;
   let cameraUniformBuffer: GPUBuffer;
 
-  // ★新しいバッファ群
+  // Geometry Buffers
   let vertexBuffer: GPUBuffer;
   let normalBuffer: GPUBuffer;
   let indexBuffer: GPUBuffer;
   let attrBuffer: GPUBuffer;
-  let bvhBuffer: GPUBuffer;
+
+  // Acceleration Structures
+  let tlasBuffer: GPUBuffer;     // Top-Level AS (Nodes)
+  let blasBuffer: GPUBuffer;     // Bottom-Level AS (Nodes)
+  let instanceBuffer: GPUBuffer; // Instance Data
 
   let bindGroup: GPUBindGroup;
   let bufferSize = 0;
@@ -123,9 +125,9 @@ async function initAndRender() {
   };
 
   const updateBindGroup = () => {
-    // 全リソースが揃っているか確認
     if (!renderTargetView || !accumulateBuffer || !frameUniformBuffer || !cameraUniformBuffer ||
-      !vertexBuffer || !indexBuffer || !attrBuffer || !bvhBuffer || !normalBuffer) return;
+      !vertexBuffer || !indexBuffer || !attrBuffer || !normalBuffer ||
+      !tlasBuffer || !blasBuffer || !instanceBuffer) return;
 
     bindGroup = device.createBindGroup({
       layout: bindGroupLayout,
@@ -134,25 +136,27 @@ async function initAndRender() {
         { binding: 1, resource: { buffer: accumulateBuffer } },
         { binding: 2, resource: { buffer: frameUniformBuffer } },
         { binding: 3, resource: { buffer: cameraUniformBuffer } },
-        // ★Binding番号を変更・追加 (シェーダー側もこれに合わせる必要あり)
-        { binding: 4, resource: { buffer: vertexBuffer } }, // Vertices
-        { binding: 5, resource: { buffer: indexBuffer } },  // Indices
-        { binding: 6, resource: { buffer: attrBuffer } },   // Attributes
-        { binding: 7, resource: { buffer: bvhBuffer } },    // BVH Nodes
-        { binding: 8, resource: { buffer: normalBuffer } }, // Normals
+
+        { binding: 4, resource: { buffer: vertexBuffer } },   // Vertices
+        { binding: 5, resource: { buffer: indexBuffer } },    // Indices
+        { binding: 6, resource: { buffer: attrBuffer } },     // Attributes
+
+        { binding: 7, resource: { buffer: tlasBuffer } },     // TLAS Nodes
+        { binding: 8, resource: { buffer: normalBuffer } },   // Normals
+        { binding: 9, resource: { buffer: blasBuffer } },     // BLAS Nodes
+        { binding: 10, resource: { buffer: instanceBuffer } },// Instances
       ],
     });
   };
 
   const loadScene = (sceneName: string, autoStart: boolean = true) => {
-    console.log(`Loading Scene: ${sceneName}... (Rust)`);
+    console.log(`Loading Scene: ${sceneName}...`);
     isRendering = false;
 
     if (currentWorld) {
       currentWorld.free();
     }
 
-    // ファイルデータ (OBJならString, GLBならUint8Array)
     let objSource: string | undefined = undefined;
     let glbData: Uint8Array | undefined = undefined;
 
@@ -170,81 +174,54 @@ async function initAndRender() {
 
     if (!wasmMemory) return;
 
-    // --- Wasmメモリからデータを取得 (ゼロコピー) ---
+    // --- Fetch Data from Wasm (Zero Copy Views) ---
+    const getF32 = (ptr: number, len: number) => new Float32Array(wasmMemory!.buffer, ptr, len);
+    const getU32 = (ptr: number, len: number) => new Uint32Array(wasmMemory!.buffer, ptr, len);
 
-    // 1. Vertices (f32)
-    const vPtr = currentWorld.vertices_ptr();
-    const vLen = currentWorld.vertices_len();
-    const vView = new Float32Array(wasmMemory.buffer, vPtr, vLen);
+    // 1. Mesh Data
+    const vView = getF32(currentWorld.vertices_ptr(), currentWorld.vertices_len());
+    const nView = getF32(currentWorld.normals_ptr(), currentWorld.normals_len());
+    const iView = getU32(currentWorld.indices_ptr(), currentWorld.indices_len());
+    const aView = getF32(currentWorld.attributes_ptr(), currentWorld.attributes_len());
 
-    // ★Normals
-    const nPtr = currentWorld.normals_ptr();
-    const nLen = currentWorld.normals_len();
-    const nView = new Float32Array(wasmMemory.buffer, nPtr, nLen);
+    // 2. Acceleration Structures
+    const tView = getF32(currentWorld.tlas_ptr(), currentWorld.tlas_len());
+    const bView = getF32(currentWorld.blas_ptr(), currentWorld.blas_len());
+    const instView = getF32(currentWorld.instances_ptr(), currentWorld.instances_len());
 
-    // 2. Indices (u32)
-    const iPtr = currentWorld.indices_ptr();
-    const iLen = currentWorld.indices_len();
-    const iView = new Uint32Array(wasmMemory.buffer, iPtr, iLen);
+    console.log(`Scene Stats: 
+      Vertices: ${vView.length / 4}
+      Triangles: ${iView.length / 3}
+      TLAS Nodes: ${tView.length / 8}
+      BLAS Nodes: ${bView.length / 8}
+      Instances: ${instView.length / 36}
+    `);
 
-    // 3. Attributes (f32)
-    const aPtr = currentWorld.attributes_ptr();
-    const aLen = currentWorld.attributes_len();
-    const aView = new Float32Array(wasmMemory.buffer, aPtr, aLen);
+    // --- Upload to GPU ---
+    const createStorage = (view: Float32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>) => {
+      const size = Math.max(view.byteLength, 4); // Avoid 0 size error
+      const buf = device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      if (view.byteLength > 0) device.queue.writeBuffer(buf, 0, view);
+      return buf;
+    };
 
-    // 4. BVH Nodes (f32)
-    const bPtr = currentWorld.bvh_ptr();
-    const bLen = currentWorld.bvh_len();
-    const bView = new Float32Array(wasmMemory.buffer, bPtr, bLen);
+    if (vertexBuffer) vertexBuffer.destroy(); vertexBuffer = createStorage(vView);
+    if (normalBuffer) normalBuffer.destroy(); normalBuffer = createStorage(nView);
+    if (indexBuffer) indexBuffer.destroy(); indexBuffer = createStorage(iView);
+    if (attrBuffer) attrBuffer.destroy(); attrBuffer = createStorage(aView);
 
-    // ★追加: Joints & Weights (まだシェーダーには送らないが取得だけしておく)
-    // const jPtr = currentWorld.joints_ptr();
-    // const jLen = currentWorld.joints_len();
-    // const wPtr = currentWorld.weights_ptr();
-    // const wLen = currentWorld.weights_len();
+    if (tlasBuffer) tlasBuffer.destroy(); tlasBuffer = createStorage(tView);
+    if (blasBuffer) blasBuffer.destroy(); blasBuffer = createStorage(bView);
+    if (instanceBuffer) instanceBuffer.destroy(); instanceBuffer = createStorage(instView);
 
-    // 5. Camera (f32)
-    // const cPtr = currentWorld.camera_ptr();
-    // const cView = new Float32Array(wasmMemory.buffer, cPtr, 24);
-
-    console.log(`Scene Stats: Verts:${vLen / 4}, Tris:${iLen / 3}, Nodes:${bLen / 8}`);
-
-    // --- WebGPUバッファ転送 ---
-
-    if (vertexBuffer) vertexBuffer.destroy();
-    vertexBuffer = device.createBuffer({ size: vView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(vertexBuffer, 0, vView);
-
-    if (normalBuffer) normalBuffer.destroy();
-    normalBuffer = device.createBuffer({ size: nView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(normalBuffer, 0, nView);
-
-
-    if (indexBuffer) indexBuffer.destroy();
-    // Indicesはアライメント(4byte)に注意が必要だがu32なら問題なし
-    // ただしサイズが0バイトだとcreateBufferで落ちることがあるので安全策
-    const iSize = Math.max(iView.byteLength, 4);
-    indexBuffer = device.createBuffer({ size: iSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    if (iView.byteLength > 0) device.queue.writeBuffer(indexBuffer, 0, iView);
-
-    if (attrBuffer) attrBuffer.destroy();
-    const aSize = Math.max(aView.byteLength, 4);
-    attrBuffer = device.createBuffer({ size: aSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    if (aView.byteLength > 0) device.queue.writeBuffer(attrBuffer, 0, aView);
-
-    if (bvhBuffer) bvhBuffer.destroy();
-    bvhBuffer = device.createBuffer({ size: bView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(bvhBuffer, 0, bView);
-
-    // カメラバッファ
+    // Camera
     if (!cameraUniformBuffer) {
       cameraUniformBuffer = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     }
-    // 初期化時はWasmが計算したデフォルトを転送
-    // (解像度がWasm側の想定と違う場合があるので、本当はここで updateCamera を呼ぶべき)
-    currentWorld.update_camera(canvas.width, canvas.height); // 正しいアスペクト比で再計算
-    const updatedCamView = new Float32Array(wasmMemory.buffer, currentWorld.camera_ptr(), 24);
-    device.queue.writeBuffer(cameraUniformBuffer, 0, updatedCamView);
+    // Update camera aspect ratio
+    currentWorld.update_camera(canvas.width, canvas.height);
+    const cView = getF32(currentWorld.camera_ptr(), 24); // 24 floats
+    device.queue.writeBuffer(cameraUniformBuffer, 0, cView);
 
     updateBindGroup();
     resetAccumulation();
@@ -266,15 +243,53 @@ async function initAndRender() {
 
   const renderFrame = () => {
     requestAnimationFrame(renderFrame);
-    if (!isRendering || !bindGroup) return;
+    if (!isRendering || !bindGroup || !currentWorld) return;
 
+    // ★修正: 毎回入力値を取得 (動的に変更可能にするため)
+    // 値が NaN や 負の場合は 0 (更新なし) として扱う
+    let updateInterval = parseInt(inputUpdateInterval.value, 10);
+    if (isNaN(updateInterval) || updateInterval < 0) updateInterval = 0;
+
+    // ★ 修正: アニメーション更新と累積バッファのリセット制御
+    // 指定フレーム数(UPDATE_INTERVAL)だけ蓄積したら、時間を進めてリセットする
+    if (updateInterval > 0 && frameCount >= updateInterval) {
+      const now = performance.now();
+      const time = now / 1000.0;
+
+      // 1. Rust側で位置更新 & TLAS再構築
+      currentWorld.update(time);
+
+      // 2. 更新されたデータをGPUに転送
+      // TLAS Nodeの転送
+      const tPtr = currentWorld.tlas_ptr();
+      const tLen = currentWorld.tlas_len();
+      const tView = new Float32Array(wasmMemory!.buffer, tPtr, tLen);
+
+      // バッファサイズが足りない場合は再作成が必要だが、ここでは簡易的に既存バッファに書き込む
+      // (インスタンス数が増減しない限りサイズは変わらない前提)
+      if (tlasBuffer.size >= tView.byteLength) {
+        device.queue.writeBuffer(tlasBuffer, 0, tView);
+      } else {
+        // サイズ不足時の対応（本来はBindGroupの再生成が必要だが、今回は警告のみ<ArrayBuffer>）
+        console.warn("TLAS buffer size mismatch during update. Animation might glitch.");
+      }
+
+      // Instanceデータの転送
+      const instPtr = currentWorld.instances_ptr();
+      const instLen = currentWorld.instances_len();
+      const instView = new Float32Array(wasmMemory!.buffer, instPtr, instLen);
+      device.queue.writeBuffer(instanceBuffer, 0, instView);
+
+      // 3. 累積バッファをリセット (frameCount = 0 になる)
+      resetAccumulation();
+    }
+
+    // --- 描画パス ---
     const dispatchX = Math.ceil(canvas.width / 8);
     const dispatchY = Math.ceil(canvas.height / 8);
 
-    const now = performance.now();
-    frameCount++;
+    frameCount++; // ここで 0 -> 1 (リセット直後) または N -> N+1 (蓄積中) になる
     frameTimer++;
-
     frameData[0] = frameCount;
     device.queue.writeBuffer(frameUniformBuffer, 0, frameData);
 
@@ -287,10 +302,10 @@ async function initAndRender() {
     pass.end();
 
     const copySize: GPUExtent3DStrict = { width: canvas.width, height: canvas.height, depthOrArrayLayers: 1 };
-    const copySrc = { texture: renderTarget };
-    commandEncoder.copyTextureToTexture(copySrc, copyDst, copySize);
+    commandEncoder.copyTextureToTexture({ texture: renderTarget }, copyDst, copySize);
     device.queue.submit([commandEncoder.finish()]);
 
+    const now = performance.now();
     if (now - lastTime >= 1000) {
       statsDiv.textContent = `FPS: ${frameTimer} | ${(1000 / frameTimer).toFixed(2)}ms | Frame: ${frameCount} | Res: ${canvas.width}x${canvas.height}`;
       frameTimer = 0;
@@ -298,10 +313,10 @@ async function initAndRender() {
     }
   };
 
+  // --- Event Listeners ---
   let currentFileData: string | ArrayBuffer | null = null;
   let currentFileType: 'obj' | 'glb' | null = null;
 
-  // --- Events ---
   btn.addEventListener("click", () => {
     isRendering = !isRendering;
     btn.textContent = isRendering ? "Stop Rendering" : "Resume Rendering";
@@ -319,30 +334,25 @@ async function initAndRender() {
 
     console.log(`Reading ${file.name}...`);
     const ext = file.name.split('.').pop()?.toLowerCase();
-    try {
-      if (ext === 'obj') {
-        currentFileData = await file.text();
-        currentFileType = 'obj';
-      } else if (ext === 'glb' || ext === 'vrm') { // VRMもGLBとして読む
-        currentFileData = await file.arrayBuffer();
-        currentFileType = 'glb';
-      } else {
-        alert("Unsupported file format");
-        return;
-      }
 
-      sceneSelect.value = "viewer";
-      loadScene("viewer", false);
-    } catch (err) {
-      console.error("Failed to load OBJ:", err);
-      alert("Failed to load OBJ file.");
+    if (ext === 'obj') {
+      currentFileData = await file.text();
+      currentFileType = 'obj';
+    } else if (ext === 'glb' || ext === 'vrm') {
+      currentFileData = await file.arrayBuffer();
+      currentFileType = 'glb';
+    } else {
+      alert("Unsupported file format");
+      return;
     }
+
+    sceneSelect.value = "viewer";
+    loadScene("viewer", false);
     target.value = "";
   });
 
   const onResolutionChange = () => {
     updateScreenResources();
-    // 解像度変更時、Rust側でカメラバッファを再計算
     if (currentWorld && wasmMemory && cameraUniformBuffer) {
       currentWorld.update_camera(canvas.width, canvas.height);
       const cView = new Float32Array(wasmMemory.buffer, currentWorld.camera_ptr(), 24);
@@ -363,7 +373,7 @@ async function initAndRender() {
     btn.textContent = "Stop Rendering";
   });
 
-  // --- Init ---
+  // --- Start ---
   updateScreenResources();
   loadScene("cornell", false);
   requestAnimationFrame(renderFrame);

@@ -1,8 +1,17 @@
 // src/scene/scenes.rs
-use super::{CameraConfig, SceneData, helpers, mat_type};
+use super::{CameraConfig, SceneData, SceneInstance, helpers, mat_type};
 use crate::geometry::Geometry;
 use crate::mesh::Mesh;
-use glam::vec3;
+use glam::{Mat4, Vec3, vec3};
+
+// Helper: 単一のIdentityインスタンスを作成
+// (シフトや複製は行わない)
+fn create_instances() -> Vec<SceneInstance> {
+    vec![SceneInstance {
+        transform: Mat4::IDENTITY,
+        geometry_index: 0,
+    }]
+}
 
 // --- 1. Cornell Box ---
 pub fn get_cornell_box_scene() -> SceneData {
@@ -13,9 +22,7 @@ pub fn get_cornell_box_scene() -> SceneData {
     let light = vec3(20.0, 20.0, 20.0);
 
     let s = 555.0;
-    // 0..555 の座標を -1..1 に正規化するヘルパー
     let v = |x: f32, y: f32, z: f32| vec3(x / s * 2. - 1., y / s * 2., z / s * 2. - 1.);
-    // サイズ用ヘルパー
     let sz = |x: f32, y: f32, z: f32| vec3(x / s * 2., y / s * 2., z / s * 2.);
 
     // Walls
@@ -111,7 +118,8 @@ pub fn get_cornell_box_scene() -> SceneData {
             defocus_angle: 0.,
             focus_dist: 2.4,
         },
-        geometry: geom,
+        geometries: vec![geom],
+        instances: create_instances(),
     }
 }
 
@@ -119,7 +127,7 @@ pub fn get_cornell_box_scene() -> SceneData {
 pub fn get_random_spheres_scene() -> SceneData {
     let mut geom = Geometry::new();
 
-    // Ground & Sun (Tessellated Sphere)
+    // Ground & Sun
     geom.add_sphere(
         vec3(0., -1000., 0.),
         1000.,
@@ -143,7 +151,6 @@ pub fn get_random_spheres_scene() -> SceneData {
                 0.2,
                 b as f32 + 0.9 * helpers::rnd(),
             );
-
             if (center - vec3(4., 0.2, 0.)).length() > 0.9 {
                 if choose_mat < 0.8 {
                     let col = vec3(
@@ -203,7 +210,8 @@ pub fn get_random_spheres_scene() -> SceneData {
             defocus_angle: 0.6,
             focus_dist: 10.,
         },
-        geometry: geom,
+        geometries: vec![geom],
+        instances: create_instances(),
     }
 }
 
@@ -340,7 +348,8 @@ pub fn get_mixed_scene() -> SceneData {
             defocus_angle: 0.3,
             focus_dist: 9.0,
         },
-        geometry: geom,
+        geometries: vec![geom],
+        instances: create_instances(),
     }
 }
 
@@ -356,7 +365,6 @@ pub fn get_cornell_box_special_scene() -> SceneData {
     let v = |x: f32, y: f32, z: f32| vec3(x / s * 2. - 1., y / s * 2., z / s * 2. - 1.);
     let sz = |x: f32, y: f32, z: f32| vec3(x / s * 2., y / s * 2., z / s * 2.);
 
-    // Walls
     helpers::add_quad(
         &mut geom,
         v(0., 0., 0.),
@@ -429,7 +437,6 @@ pub fn get_cornell_box_special_scene() -> SceneData {
         mat_type::DIELECTRIC,
         1.5,
     );
-
     let short_pos = v(183., 82.5, 209.);
     helpers::create_box(
         &mut geom,
@@ -440,8 +447,6 @@ pub fn get_cornell_box_special_scene() -> SceneData {
         mat_type::METAL,
         0.2,
     );
-
-    // Blue Sphere inside glass box
     geom.add_sphere(
         tall_pos,
         (60.0 / s) * 1.0,
@@ -459,7 +464,8 @@ pub fn get_cornell_box_special_scene() -> SceneData {
             defocus_angle: 0.,
             focus_dist: 2.4,
         },
-        geometry: geom,
+        geometries: vec![geom],
+        instances: create_instances(), // 複製なし
     }
 }
 
@@ -477,7 +483,6 @@ pub fn get_mesh_scene() -> SceneData {
         mat_type::LAMBERTIAN,
         0.,
     );
-
     geom.add_mesh_instance(
         &mesh,
         vec3(-2., 1., 0.),
@@ -527,32 +532,39 @@ pub fn get_mesh_scene() -> SceneData {
             defocus_angle: 0.,
             focus_dist: 6.,
         },
-        geometry: geom,
+        geometries: vec![geom],
+        instances: create_instances(),
     }
 }
 
-// --- 6. Viewer Scene ---
-pub fn get_model_viewer_scene(mesh: Option<&Mesh>, should_add_dummy: bool) -> SceneData {
-    let mut geom = Geometry::new();
-
-    geom.add_sphere(
+// --- 6. Viewer Scene (Updated) ---
+pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
+    // Geometry 0: Environment (Ground, Lights)
+    let mut geom_env = Geometry::new();
+    geom_env.add_sphere(
         vec3(0., -1000., 0.),
         1000.,
         vec3(0.2, 0.2, 0.2),
         mat_type::LAMBERTIAN,
         0.,
     );
-    geom.add_sphere(
+    geom_env.add_sphere(
         vec3(5., 10., 5.),
         3.,
         vec3(15., 15., 15.),
         mat_type::LIGHT,
         0.,
     );
-    geom.add_sphere(vec3(-5., 5., 5.), 1., vec3(3., 3., 5.), mat_type::LIGHT, 0.);
+    geom_env.add_sphere(vec3(-5., 5., 5.), 1., vec3(3., 3., 5.), mat_type::LIGHT, 0.);
+
+    // Geometry 1: Model
+    let mut geom_model = Geometry::new();
+
+    // ダミー球体を表示するか判定（モデルもGLBもなく、空の場合）
+    let should_add_dummy = mesh.is_none() && !has_glb;
 
     if let Some(m) = mesh {
-        geom.add_mesh_instance(
+        geom_model.add_mesh_instance(
             m,
             vec3(0., 1., 0.),
             1.,
@@ -561,32 +573,33 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, should_add_dummy: bool) -> Sc
             mat_type::LAMBERTIAN,
             0.,
         );
-        geom.add_mesh_instance(
-            m,
-            vec3(-2.5, 1., -1.),
-            0.8,
-            30.,
-            vec3(1., 1., 1.),
-            mat_type::DIELECTRIC,
-            1.5,
-        );
-        geom.add_mesh_instance(
-            m,
-            vec3(2.5, 1., -1.),
-            0.8,
-            -30.,
-            vec3(0.8, 0.6, 0.2),
-            mat_type::METAL,
-            0.1,
-        );
     } else if should_add_dummy {
-        geom.add_sphere(
+        geom_model.add_sphere(
             vec3(0., 1., 0.),
             1.,
             vec3(1., 0., 1.),
             mat_type::LAMBERTIAN,
             0.,
         );
+    }
+
+    // Instances
+    let mut instances = Vec::new();
+
+    // Instance 0 -> Geometry 0 (Env)
+    instances.push(SceneInstance {
+        transform: Mat4::IDENTITY,
+        geometry_index: 0,
+    });
+
+    // Instance 1 -> Geometry 1 (Model)
+    // 修正: OBJやダミーでデータが入っている場合のみ追加します。
+    // GLBの場合はloader側でインスタンスが追加されるため、ここでは何もしません。
+    if !geom_model.vertices.is_empty() {
+        instances.push(SceneInstance {
+            transform: Mat4::IDENTITY,
+            geometry_index: 1,
+        });
     }
 
     SceneData {
@@ -598,7 +611,8 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, should_add_dummy: bool) -> Sc
             defocus_angle: 0.,
             focus_dist: 6.,
         },
-        geometry: geom,
+        geometries: vec![geom_env, geom_model],
+        instances,
     }
 }
 
@@ -614,9 +628,8 @@ pub fn get_scene_data(
         "special" => get_cornell_box_special_scene(),
         "mesh" => get_mesh_scene(),
         "viewer" => {
-            // OBJもない、かつGLBもない場合だけダミーを出す
-            let should_add_dummy = uploaded_mesh.is_none() && !has_glb_content;
-            get_model_viewer_scene(uploaded_mesh, should_add_dummy)
+            // ★修正: has_glb_content をそのまま渡す
+            get_model_viewer_scene(uploaded_mesh, has_glb_content)
         }
         _ => get_cornell_box_scene(),
     }
