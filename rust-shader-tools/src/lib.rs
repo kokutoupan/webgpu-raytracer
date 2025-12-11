@@ -6,6 +6,7 @@ use wasm_bindgen::prelude::*;
 
 pub mod bvh;
 pub mod geometry;
+pub mod loader;
 pub mod mesh;
 pub mod primitives;
 pub mod scene;
@@ -22,6 +23,10 @@ pub struct World {
     normals: Vec<f32>,
     indices: Vec<u32>,
     attributes: Vec<f32>,
+
+    joints: Vec<u32>,  // ★追加: 骨インデックス
+    weights: Vec<f32>, // ★追加: ウェイト
+
     camera_data: Vec<f32>,
     current_camera: scene::CameraConfig,
 }
@@ -29,9 +34,19 @@ pub struct World {
 #[wasm_bindgen]
 impl World {
     #[wasm_bindgen(constructor)]
-    pub fn new(scene_name: &str, mesh_obj_source: Option<String>) -> World {
+    pub fn new(
+        scene_name: &str,
+        mesh_obj_source: Option<String>,
+        glb_data: Option<Vec<u8>>,
+    ) -> World {
         let loaded_mesh = mesh_obj_source.map(|source| Mesh::new(&source));
-        let scene_data: SceneData = scene::get_scene_data(scene_name, loaded_mesh.as_ref());
+        let has_glb = glb_data.is_some();
+        let mut scene_data: SceneData =
+            scene::get_scene_data(scene_name, loaded_mesh.as_ref(), has_glb);
+
+        if let Some(data) = glb_data {
+            loader::load_gltf(&mut scene_data.geometry, &data);
+        }
 
         // BVH構築
         // bvh::BVHBuilder は tri_indices (三角形IDの並び順) を内部で計算しています。
@@ -76,6 +91,8 @@ impl World {
             normals: scene_data.geometry.normals,   // 法線プールは不動
             indices: sorted_indices,                // ソート済み
             attributes: sorted_attributes,          // ソート済み
+            joints: scene_data.geometry.joints,     // ★追加
+            weights: scene_data.geometry.weights,   // ★追加
             camera_data: cam_buffer.to_vec(),
             current_camera: scene_data.camera,
         }
@@ -112,6 +129,20 @@ impl World {
     pub fn attributes_len(&self) -> usize {
         self.attributes.len()
     }
+
+    pub fn joints_ptr(&self) -> *const u32 {
+        self.joints.as_ptr()
+    }
+    pub fn joints_len(&self) -> usize {
+        self.joints.len()
+    }
+    pub fn weights_ptr(&self) -> *const f32 {
+        self.weights.as_ptr()
+    }
+    pub fn weights_len(&self) -> usize {
+        self.weights.len()
+    }
+
     pub fn camera_ptr(&self) -> *const f32 {
         self.camera_data.as_ptr()
     }

@@ -532,7 +532,7 @@ pub fn get_mesh_scene() -> SceneData {
 }
 
 // --- 6. Viewer Scene ---
-pub fn get_model_viewer_scene(mesh: Option<&Mesh>) -> SceneData {
+pub fn get_model_viewer_scene(mesh: Option<&Mesh>, should_add_dummy: bool) -> SceneData {
     let mut geom = Geometry::new();
 
     geom.add_sphere(
@@ -579,7 +579,7 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>) -> SceneData {
             mat_type::METAL,
             0.1,
         );
-    } else {
+    } else if should_add_dummy {
         geom.add_sphere(
             vec3(0., 1., 0.),
             1.,
@@ -603,13 +603,21 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>) -> SceneData {
 }
 
 // --- Dispatcher ---
-pub fn get_scene_data(name: &str, uploaded_mesh: Option<&Mesh>) -> SceneData {
+pub fn get_scene_data(
+    name: &str,
+    uploaded_mesh: Option<&Mesh>,
+    has_glb_content: bool,
+) -> SceneData {
     match name {
         "spheres" => get_random_spheres_scene(),
         "mixed" => get_mixed_scene(),
         "special" => get_cornell_box_special_scene(),
         "mesh" => get_mesh_scene(),
-        "viewer" => get_model_viewer_scene(uploaded_mesh),
+        "viewer" => {
+            // OBJもない、かつGLBもない場合だけダミーを出す
+            let should_add_dummy = uploaded_mesh.is_none() && !has_glb_content;
+            get_model_viewer_scene(uploaded_mesh, should_add_dummy)
+        }
         _ => get_cornell_box_scene(),
     }
 }
