@@ -84,6 +84,7 @@ async function initAndRender() {
 
   // ★新しいバッファ群
   let vertexBuffer: GPUBuffer;
+  let normalBuffer: GPUBuffer;
   let indexBuffer: GPUBuffer;
   let attrBuffer: GPUBuffer;
   let bvhBuffer: GPUBuffer;
@@ -125,7 +126,7 @@ async function initAndRender() {
   const updateBindGroup = () => {
     // 全リソースが揃っているか確認
     if (!renderTargetView || !accumulateBuffer || !frameUniformBuffer || !cameraUniformBuffer ||
-      !vertexBuffer || !indexBuffer || !attrBuffer || !bvhBuffer) return;
+      !vertexBuffer || !indexBuffer || !attrBuffer || !bvhBuffer || !normalBuffer) return;
 
     bindGroup = device.createBindGroup({
       layout: bindGroupLayout,
@@ -139,6 +140,7 @@ async function initAndRender() {
         { binding: 5, resource: { buffer: indexBuffer } },  // Indices
         { binding: 6, resource: { buffer: attrBuffer } },   // Attributes
         { binding: 7, resource: { buffer: bvhBuffer } },    // BVH Nodes
+        { binding: 8, resource: { buffer: normalBuffer } }, // Normals
       ],
     });
   };
@@ -168,6 +170,11 @@ async function initAndRender() {
     const vLen = currentWorld.vertices_len();
     const vView = new Float32Array(wasmMemory.buffer, vPtr, vLen);
 
+    // ★Normals
+    const nPtr = currentWorld.normals_ptr();
+    const nLen = currentWorld.normals_len();
+    const nView = new Float32Array(wasmMemory.buffer, nPtr, nLen);
+
     // 2. Indices (u32)
     const iPtr = currentWorld.indices_ptr();
     const iLen = currentWorld.indices_len();
@@ -194,6 +201,11 @@ async function initAndRender() {
     if (vertexBuffer) vertexBuffer.destroy();
     vertexBuffer = device.createBuffer({ size: vView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(vertexBuffer, 0, vView);
+
+    if(normalBuffer) normalBuffer.destroy();
+    normalBuffer = device.createBuffer({ size: nView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(normalBuffer, 0, nView);
+
 
     if (indexBuffer) indexBuffer.destroy();
     // Indicesはアライメント(4byte)に注意が必要だがu32なら問題なし

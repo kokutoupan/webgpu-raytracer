@@ -5,6 +5,7 @@ use std::f32::consts::PI;
 #[derive(Default, Clone)]
 pub struct Geometry {
     pub vertices: Vec<f32>,   // [x, y, z, pad]
+    pub normals: Vec<f32>,    // [nx, ny, nz, pad]
     pub indices: Vec<u32>,    // [i0, i1, i2]
     pub attributes: Vec<f32>, // [r, g, b, mat_bits, extra, 0, 0, 0]
 }
@@ -15,9 +16,10 @@ impl Geometry {
     }
 
     // 内部ヘルパー
-    fn push_vertex(&mut self, v: Vec3) -> u32 {
+    fn push_vertex(&mut self, v: Vec3, n: Vec3) -> u32 {
         let index = (self.vertices.len() / 4) as u32;
         self.vertices.extend_from_slice(&[v.x, v.y, v.z, 0.0]);
+        self.normals.extend_from_slice(&[n.x, n.y, n.z, 0.0]);
         index
     }
     fn push_attributes(&mut self, color: Vec3, mat_type: u32, extra: f32) {
@@ -38,9 +40,14 @@ impl Geometry {
         mat_type: u32,
         extra: f32,
     ) {
-        let i0 = self.push_vertex(v0);
-        let i1 = self.push_vertex(v1);
-        let i2 = self.push_vertex(v2);
+        // 面法線
+        let e1 = v1 - v0;
+        let e2 = v2 - v0;
+        let normal = e1.cross(e2).normalize_or_zero();
+
+        let i0 = self.push_vertex(v0, normal);
+        let i1 = self.push_vertex(v1, normal);
+        let i2 = self.push_vertex(v2, normal);
         self.indices.extend_from_slice(&[i0, i1, i2]);
         self.push_attributes(color, mat_type, extra);
     }
@@ -67,7 +74,10 @@ impl Geometry {
                 let sector_angle = 2.0 * PI * (j as f32) / (sectors as f32);
                 let x = xy * sector_angle.cos();
                 let y = xy * sector_angle.sin();
-                self.push_vertex(vec3(x, y, z) + center);
+
+                let pos = vec3(x, y, z) + center;
+                let normal = vec3(x, y, z).normalize();
+                self.push_vertex(pos, normal);
             }
         }
 
@@ -109,9 +119,18 @@ impl Geometry {
         let rot_mat = Mat3::from_rotation_y(rad);
         let start_offset = (self.vertices.len() / 4) as u32;
 
-        for v in &mesh.vertices {
+        // 頂点と法線を変換して追加
+        for (i, v) in mesh.vertices.iter().enumerate() {
             let tv = (rot_mat * (*v * scale)) + pos;
-            self.push_vertex(tv);
+
+            // 法線も回転させる (スケールが均一ならこれでOK)
+            let tn = if i < mesh.normals.len() {
+                rot_mat * mesh.normals[i]
+            } else {
+                vec3(0., 1., 0.) // フォールバック
+            };
+
+            self.push_vertex(tv, tn);
         }
 
         for chunk in mesh.indices.chunks(3) {

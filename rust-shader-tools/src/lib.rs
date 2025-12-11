@@ -19,6 +19,7 @@ pub fn init_panic_hook() {
 pub struct World {
     bvh_nodes: Vec<f32>,
     vertices: Vec<f32>,
+    normals: Vec<f32>,
     indices: Vec<u32>,
     attributes: Vec<f32>,
     camera_data: Vec<f32>,
@@ -72,6 +73,7 @@ impl World {
         World {
             bvh_nodes: packed_nodes,
             vertices: scene_data.geometry.vertices, // 頂点プールは不動
+            normals: scene_data.geometry.normals,   // 法線プールは不動
             indices: sorted_indices,                // ソート済み
             attributes: sorted_attributes,          // ソート済み
             camera_data: cam_buffer.to_vec(),
@@ -91,6 +93,12 @@ impl World {
     }
     pub fn vertices_len(&self) -> usize {
         self.vertices.len()
+    }
+    pub fn normals_ptr(&self) -> *const f32 {
+        self.normals.as_ptr()
+    }
+    pub fn normals_len(&self) -> usize {
+        self.normals.len()
     }
     pub fn indices_ptr(&self) -> *const u32 {
         self.indices.as_ptr()

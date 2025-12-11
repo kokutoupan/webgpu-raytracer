@@ -22,6 +22,7 @@ const SPP = 1u;
 @group(0) @binding(5) var<storage, read> indices: array<u32>;               // [i0, i1, i2, i3...]
 @group(0) @binding(6) var<storage, read> attributes: array<TriangleAttributes>; // [Color, Mat, Extra...]
 @group(0) @binding(7) var<storage, read> bvh_nodes: array<BVHNode>;
+@group(0) @binding(8) var<storage, read> normals: array<vec4<f32>>; // ★追加
 
 // --- Structs ---
 
@@ -119,6 +120,20 @@ fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: 
     return -1.0;
 }
 
+// 重心座標 (u, v) を計算するヘルパー 
+fn get_triangle_barycentrics(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray) -> vec2<f32> {
+    let e1 = v1 - v0;
+    let e2 = v2 - v0;
+    let h = cross(r.direction, e2);
+    let a = dot(e1, h);
+    let f = 1.0 / a;
+    let s = r.origin - v0;
+    let u = f * dot(s, h);
+    let q = cross(s, e1);
+    let v = f * dot(r.direction, q);
+    return vec2<f32>(u, v);
+}
+
 // 戻り値: x=t, y=triangle_index
 fn hit_bvh(r: Ray, t_min: f32, t_max: f32) -> vec2<f32> {
     var closest_t = t_max;
@@ -213,19 +228,29 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
         // Hit: Fetch Attributes
         let tri_idx = u32(tri_idx_f);
-        
-        // 1. 頂点法線を計算 (スムーズシェーディングする場合はここで頂点法線を補間するが、今回はフラット)
         let base_idx = tri_idx * 3u;
+
         let i0 = indices[base_idx];
         let i1 = indices[base_idx + 1u];
         let i2 = indices[base_idx + 2u];
+
         let v0 = vertices[i0].xyz;
         let v1 = vertices[i1].xyz;
         let v2 = vertices[i2].xyz;
 
-        let e1 = v1 - v0;
-        let e2 = v2 - v0;
-        var normal = normalize(cross(e1, e2));
+        // ★ここでUVを再計算する
+        let uv = get_triangle_barycentrics(v0, v1, v2, ray);
+        let u = uv.x;
+        let v = uv.y;
+        let w = 1.0 - u - v;
+
+        // 法線補間 (Smooth Shading)
+        let n0 = normals[i0].xyz;
+        let n1 = normals[i1].xyz;
+        let n2 = normals[i2].xyz;
+        
+        // 補間後の法線を正規化
+        var normal = normalize(n0 * w + n1 * u + n2 * v);
         var front_face = dot(ray.direction, normal) < 0.0;
         normal = select(-normal, normal, front_face);
 
