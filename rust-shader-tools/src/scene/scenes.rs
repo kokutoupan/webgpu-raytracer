@@ -538,7 +538,6 @@ pub fn get_mesh_scene() -> SceneData {
 }
 
 // --- 6. Viewer Scene (Updated) ---
-// ★修正: has_glb 引数を追加
 pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
     // Geometry 0: Environment (Ground, Lights)
     let mut geom_env = Geometry::new();
@@ -594,8 +593,9 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
     });
 
     // Instance 1 -> Geometry 1 (Model)
-    // ★修正: モデルがあるか、GLBロード予定(has_glb)ならインスタンスを追加する
-    if !geom_model.vertices.is_empty() || has_glb {
+    // 修正: OBJやダミーでデータが入っている場合のみ追加します。
+    // GLBの場合はloader側でインスタンスが追加されるため、ここでは何もしません。
+    if !geom_model.vertices.is_empty() {
         instances.push(SceneInstance {
             transform: Mat4::IDENTITY,
             geometry_index: 1,

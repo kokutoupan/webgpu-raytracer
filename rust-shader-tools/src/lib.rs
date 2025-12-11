@@ -49,16 +49,9 @@ impl World {
             scene::get_scene_data(scene_name, loaded_mesh.as_ref(), has_glb);
 
         if let Some(data) = glb_data {
-            // GLBがある場合、Geometries[1] (Model用) にロードする想定
-            if scene_data.geometries.len() < 2 {
-                scene_data.geometries.push(geometry::Geometry::new());
-            }
-            let target_geom = if scene_data.geometries.len() > 1 {
-                &mut scene_data.geometries[1]
-            } else {
-                &mut scene_data.geometries[0]
-            };
-            loader::load_gltf(target_geom, &data);
+            // loader::load_gltf の呼び出し方を変更
+            // geometries と instances のベクタを直接渡して追記してもらう
+            loader::load_gltf(&mut scene_data.geometries, &mut scene_data.instances, &data);
         }
 
         // --- Global Buffers ---
