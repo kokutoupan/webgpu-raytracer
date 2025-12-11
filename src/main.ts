@@ -191,8 +191,8 @@ async function initAndRender() {
     const bView = new Float32Array(wasmMemory.buffer, bPtr, bLen);
 
     // 5. Camera (f32)
-    const cPtr = currentWorld.camera_ptr();
-    const cView = new Float32Array(wasmMemory.buffer, cPtr, 24);
+    // const cPtr = currentWorld.camera_ptr();
+    // const cView = new Float32Array(wasmMemory.buffer, cPtr, 24);
 
     console.log(`Scene Stats: Verts:${vLen / 4}, Tris:${iLen / 3}, Nodes:${bLen / 8}`);
 
