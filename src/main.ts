@@ -10,6 +10,7 @@ const sceneSelect = document.getElementById('scene-select') as HTMLSelectElement
 const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
 const inputFile = document.getElementById('obj-file') as HTMLInputElement;
+if (inputFile) inputFile.accept = ".obj,.glb,.vrm";
 const inputDepth = document.getElementById('max-depth') as HTMLInputElement;
 const inputSPP = document.getElementById('spp-frame') as HTMLInputElement;
 const btnRecompile = document.getElementById('recompile-btn') as HTMLButtonElement;
@@ -31,8 +32,6 @@ let isRendering = false;
 let currentWorld: World | null = null;
 let wasmMemory: WebAssembly.Memory | null = null;
 
-// OBJテキストデータの一時保持
-let currentObjText: string | undefined = undefined;
 
 async function initAndRender() {
   // 1. WebGPU初期化
@@ -153,12 +152,20 @@ async function initAndRender() {
       currentWorld.free();
     }
 
-    // Rust側でシーン構築
-    // viewerシーンならロード済みのOBJテキストを渡す
-    const meshArg = (sceneName === 'viewer' && currentObjText) ? currentObjText : undefined;
+    // ファイルデータ (OBJならString, GLBならUint8Array)
+    let objSource: string | undefined = undefined;
+    let glbData: Uint8Array | undefined = undefined;
+
+    if (sceneName === 'viewer' && currentFileData) {
+      if (currentFileType === 'obj') {
+        objSource = currentFileData as string;
+      } else if (currentFileType === 'glb') {
+        glbData = new Uint8Array(currentFileData as ArrayBuffer);
+      }
+    }
 
     console.time("Rust Build");
-    currentWorld = new World(sceneName, meshArg);
+    currentWorld = new World(sceneName, objSource, glbData);
     console.timeEnd("Rust Build");
 
     if (!wasmMemory) return;
@@ -190,6 +197,12 @@ async function initAndRender() {
     const bLen = currentWorld.bvh_len();
     const bView = new Float32Array(wasmMemory.buffer, bPtr, bLen);
 
+    // ★追加: Joints & Weights (まだシェーダーには送らないが取得だけしておく)
+    // const jPtr = currentWorld.joints_ptr();
+    // const jLen = currentWorld.joints_len();
+    // const wPtr = currentWorld.weights_ptr();
+    // const wLen = currentWorld.weights_len();
+
     // 5. Camera (f32)
     // const cPtr = currentWorld.camera_ptr();
     // const cView = new Float32Array(wasmMemory.buffer, cPtr, 24);
@@ -202,7 +215,7 @@ async function initAndRender() {
     vertexBuffer = device.createBuffer({ size: vView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(vertexBuffer, 0, vView);
 
-    if(normalBuffer) normalBuffer.destroy();
+    if (normalBuffer) normalBuffer.destroy();
     normalBuffer = device.createBuffer({ size: nView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(normalBuffer, 0, nView);
 
@@ -285,6 +298,9 @@ async function initAndRender() {
     }
   };
 
+  let currentFileData: string | ArrayBuffer | null = null;
+  let currentFileType: 'obj' | 'glb' | null = null;
+
   // --- Events ---
   btn.addEventListener("click", () => {
     isRendering = !isRendering;
@@ -300,10 +316,21 @@ async function initAndRender() {
     const target = e.target as HTMLInputElement;
     const file = target.files?.[0];
     if (!file) return;
+
     console.log(`Reading ${file.name}...`);
+    const ext = file.name.split('.').pop()?.toLowerCase();
     try {
-      const text = await file.text();
-      currentObjText = text;
+      if (ext === 'obj') {
+        currentFileData = await file.text();
+        currentFileType = 'obj';
+      } else if (ext === 'glb' || ext === 'vrm') { // VRMもGLBとして読む
+        currentFileData = await file.arrayBuffer();
+        currentFileType = 'glb';
+      } else {
+        alert("Unsupported file format");
+        return;
+      }
+
       sceneSelect.value = "viewer";
       loadScene("viewer", false);
     } catch (err) {

@@ -8,6 +8,10 @@ pub struct Geometry {
     pub normals: Vec<f32>,    // [nx, ny, nz, pad]
     pub indices: Vec<u32>,    // [i0, i1, i2]
     pub attributes: Vec<f32>, // [r, g, b, mat_bits, extra, 0, 0, 0]
+
+    // ★追加: スキニング用データ (アニメーションしない物体は 0 で埋める)
+    pub joints: Vec<u32>,  // [j0, j1, j2, j3] (stride 4)
+    pub weights: Vec<f32>, // [w0, w1, w2, w3] (stride 4)
 }
 
 impl Geometry {
@@ -20,9 +24,26 @@ impl Geometry {
         let index = (self.vertices.len() / 4) as u32;
         self.vertices.extend_from_slice(&[v.x, v.y, v.z, 0.0]);
         self.normals.extend_from_slice(&[n.x, n.y, n.z, 0.0]);
+
+        // デフォルトのスキニング情報 (骨なし)
+        self.joints.extend_from_slice(&[0, 0, 0, 0]);
+        self.weights.extend_from_slice(&[0.0, 0.0, 0.0, 0.0]);
         index
     }
-    fn push_attributes(&mut self, color: Vec3, mat_type: u32, extra: f32) {
+
+    // ★追加: スキニング情報付きで頂点を追加するメソッド
+    pub fn push_vertex_skinned(&mut self, v: Vec3, n: Vec3, j: [u32; 4], w: [f32; 4]) -> u32 {
+        let index = (self.vertices.len() / 4) as u32;
+        self.vertices.extend_from_slice(&[v.x, v.y, v.z, 0.0]);
+        self.normals.extend_from_slice(&[n.x, n.y, n.z, 0.0]);
+
+        self.joints.extend_from_slice(&j);
+        self.weights.extend_from_slice(&w);
+
+        index
+    }
+
+    pub fn push_attributes(&mut self, color: Vec3, mat_type: u32, extra: f32) {
         let mat_bits = f32::from_bits(mat_type);
         self.attributes
             .extend_from_slice(&[color.x, color.y, color.z, mat_bits, extra, 0.0, 0.0, 0.0]);
