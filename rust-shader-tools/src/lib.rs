@@ -1,7 +1,8 @@
 // src/lib.rs
-use crate::bvh::BVHBuilder;
+use crate::bvh::{BVHBuilder, Instance, TLASBuilder};
 use crate::mesh::Mesh;
 use crate::scene::SceneData;
+use glam::{Mat4, Vec3};
 use wasm_bindgen::prelude::*;
 
 pub mod bvh;
@@ -18,14 +19,17 @@ pub fn init_panic_hook() {
 
 #[wasm_bindgen]
 pub struct World {
-    bvh_nodes: Vec<f32>,
+    tlas_nodes: Vec<f32>,
+    blas_nodes: Vec<f32>,
+    instances: Vec<f32>,
+
     vertices: Vec<f32>,
     normals: Vec<f32>,
     indices: Vec<u32>,
     attributes: Vec<f32>,
 
-    joints: Vec<u32>,  // ★追加: 骨インデックス
-    weights: Vec<f32>, // ★追加: ウェイト
+    joints: Vec<u32>,
+    weights: Vec<f32>,
 
     camera_data: Vec<f32>,
     current_camera: scene::CameraConfig,
@@ -48,63 +52,113 @@ impl World {
             loader::load_gltf(&mut scene_data.geometry, &data);
         }
 
-        // BVH構築
-        // bvh::BVHBuilder は tri_indices (三角形IDの並び順) を内部で計算しています。
-        // これを公開するように bvh.rs を少し修正するか、
-        // ここでは「ソート済みインデックス」だけ受け取って、属性の整合性は一旦無視するか...
-        //
-        // ★修正方針: BVHBuilder::build は (packed_nodes, sorted_indices, sorted_tri_ids) を返すように変更するのがベストですが、
-        // 今回は「geometry.attributes」のデータ構造が [tri0_attr, tri1_attr...] と並んでいるため、
-        // インデックスバッファだけソートしても、属性との対応がずれてしまいます。
-
-        // 簡易対応:
-        // bvh.rs の build() が返す sorted_indices は「頂点インデックス」の羅列です。
-        // これを使えば頂点は正しく引けますが、「この三角形の色は？」が分からなくなります。
-
-        // なので、World内で「属性も並び替える」処理が必要です。
-        // bvh.rs の build() を少し改造して「ソートされた三角形IDリスト」も返すようにします。
-
+        // --- 1. BLAS Build ---
+        // Currently treating the entire scene geometry as one Mesh (one BLAS)
         let mut builder =
             BVHBuilder::new(&scene_data.geometry.vertices, &scene_data.geometry.indices);
-
-        // ※ bvh.rs の build() が (nodes, indices, tri_ids) を返すように修正したと仮定
-        // 実際には bvh.rs の最後に `self.tri_indices` を返せばOKです。
         let (packed_nodes, sorted_indices, sorted_tri_ids) = builder.build_with_ids();
+        let root_aabb = builder.root_aabb();
 
-        // 属性の並び替え
-        let attr_stride = 8; // float x 8
+        // Attribute Sorting
+        let attr_stride = 8;
         let mut sorted_attributes = vec![0.0; scene_data.geometry.attributes.len()];
-
         for (new_idx, &old_tri_id) in sorted_tri_ids.iter().enumerate() {
-            let src_start = old_tri_id * attr_stride;
-            let dst_start = new_idx * attr_stride;
-            sorted_attributes[dst_start..dst_start + attr_stride].copy_from_slice(
-                &scene_data.geometry.attributes[src_start..src_start + attr_stride],
-            );
+            let src = old_tri_id * attr_stride;
+            let dst = new_idx * attr_stride;
+            if src + attr_stride <= scene_data.geometry.attributes.len() {
+                sorted_attributes[dst..dst + attr_stride]
+                    .copy_from_slice(&scene_data.geometry.attributes[src..src + attr_stride]);
+            }
         }
+
+        // Since we only have 1 BLAS, offsets are 0
+        let blas_node_offset = 0;
+        let attr_offset = 0;
+
+        // --- 2. Instance Creation ---
+        // Creating 2 instances for demonstration
+        let mut instances = Vec::new();
+        let mut instance_blas_aabbs = Vec::new();
+
+        // Instance 0: Identity
+        instances.push(Instance {
+            transform: Mat4::IDENTITY,
+            inverse_transform: Mat4::IDENTITY,
+            blas_node_offset,
+            attr_offset,
+            instance_id: 0,
+            pad: 0,
+        });
+        instance_blas_aabbs.push(root_aabb);
+
+        // Instance 1: Shifted (if not pure viewer mode)
+        // If scene is 'viewer', we might just want 1 instance centered.
+        if scene_name != "viewer" {
+            let shift = Mat4::from_translation(Vec3::new(
+                1.2 * (root_aabb.max.x - root_aabb.min.x),
+                0.0,
+                0.0,
+            ));
+            instances.push(Instance {
+                transform: shift,
+                inverse_transform: shift.inverse(),
+                blas_node_offset,
+                attr_offset,
+                instance_id: 1,
+                pad: 0,
+            });
+            instance_blas_aabbs.push(root_aabb);
+        }
+
+        // --- 3. TLAS Build ---
+        let mut tlas_builder = TLASBuilder::new(&instances, &instance_blas_aabbs);
+        let (tlas_nodes, sorted_instances) = tlas_builder.build();
+
+        // Convert Instances to f32 for GPU
+        let instance_floats = unsafe {
+            let ratio = std::mem::size_of::<Instance>() / std::mem::size_of::<f32>();
+            let len = sorted_instances.len() * ratio;
+            let ptr = sorted_instances.as_ptr() as *const f32;
+            std::slice::from_raw_parts(ptr, len).to_vec()
+        };
 
         let cam_buffer = scene_data.camera.create_buffer(1.5);
 
         World {
-            bvh_nodes: packed_nodes,
-            vertices: scene_data.geometry.vertices, // 頂点プールは不動
-            normals: scene_data.geometry.normals,   // 法線プールは不動
-            indices: sorted_indices,                // ソート済み
-            attributes: sorted_attributes,          // ソート済み
-            joints: scene_data.geometry.joints,     // ★追加
-            weights: scene_data.geometry.weights,   // ★追加
+            tlas_nodes,
+            blas_nodes: packed_nodes,
+            instances: instance_floats,
+            vertices: scene_data.geometry.vertices,
+            normals: scene_data.geometry.normals,
+            indices: sorted_indices,
+            attributes: sorted_attributes,
+            joints: scene_data.geometry.joints,
+            weights: scene_data.geometry.weights,
             camera_data: cam_buffer.to_vec(),
             current_camera: scene_data.camera,
         }
     }
 
-    // ... getter ...
-    pub fn bvh_ptr(&self) -> *const f32 {
-        self.bvh_nodes.as_ptr()
+    // Pointers
+    pub fn tlas_ptr(&self) -> *const f32 {
+        self.tlas_nodes.as_ptr()
     }
-    pub fn bvh_len(&self) -> usize {
-        self.bvh_nodes.len()
+    pub fn tlas_len(&self) -> usize {
+        self.tlas_nodes.len()
     }
+    pub fn blas_ptr(&self) -> *const f32 {
+        self.blas_nodes.as_ptr()
+    }
+    pub fn blas_len(&self) -> usize {
+        self.blas_nodes.len()
+    }
+    pub fn instances_ptr(&self) -> *const f32 {
+        self.instances.as_ptr()
+    }
+    pub fn instances_len(&self) -> usize {
+        self.instances.len()
+    }
+
     pub fn vertices_ptr(&self) -> *const f32 {
         self.vertices.as_ptr()
     }
@@ -129,7 +183,6 @@ impl World {
     pub fn attributes_len(&self) -> usize {
         self.attributes.len()
     }
-
     pub fn joints_ptr(&self) -> *const u32 {
         self.joints.as_ptr()
     }
@@ -151,8 +204,6 @@ impl World {
         if height == 0.0 {
             return;
         }
-        let aspect = width / height;
-        let new_buffer = self.current_camera.create_buffer(aspect);
-        self.camera_data = new_buffer.to_vec();
+        self.camera_data = self.current_camera.create_buffer(width / height).to_vec();
     }
 }
