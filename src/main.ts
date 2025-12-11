@@ -1,5 +1,6 @@
 // src/main.ts
 import shaderCodeRaw from './shader.wgsl?raw';
+// import shaderCodeRaw from './shader_debug.wgsl?raw';
 import init, { World } from '../rust-shader-tools/pkg/rust_shader_tools';
 
 // --- DOM Elements ---

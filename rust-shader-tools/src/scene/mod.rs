@@ -1,5 +1,6 @@
 // src/scene/mod.rs
 use crate::geometry::Geometry;
+use glam::Mat4;
 
 // サブモジュールの公開
 pub mod camera;
@@ -18,8 +19,15 @@ pub mod mat_type {
     pub const LIGHT: u32 = 3;
 }
 
+// シーンインスタンス構造体
+pub struct SceneInstance {
+    pub transform: Mat4,
+    pub geometry_index: usize, // ★追加: どのGeometry(BLAS)を使うか
+}
+
 // シーンデータ構造体
 pub struct SceneData {
     pub camera: CameraConfig,
-    pub geometry: Geometry, // ★ここが Geometry になりました
+    pub geometries: Vec<Geometry>, // ★変更: 複数のGeometryを持てるようにする
+    pub instances: Vec<SceneInstance>,
 }
