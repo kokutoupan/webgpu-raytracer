@@ -9,6 +9,12 @@ pub struct AABB {
     pub max: Vec3,
 }
 
+impl Default for AABB {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl AABB {
     pub fn empty() -> Self {
         Self {

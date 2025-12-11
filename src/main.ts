@@ -1,11 +1,7 @@
 // src/main.ts
 import shaderCodeRaw from './shader.wgsl?raw';
-
-// ★Wasmモジュールと初期化関数、メモリをインポート
+// 古いTSモジュールのimportは全削除
 import init, { World } from '../rust-shader-tools/pkg/rust_shader_tools';
-// ※ vite-plugin-wasm の場合、メモリへのアクセスは
-// exportされた memory オブジェクトを使うか、initの戻り値を使います。
-// デフォルトエクスポートの init を呼ぶと、インスタンスなどが返ってきます。
 
 // --- DOM ---
 const canvas = document.getElementById('gpu-canvas') as HTMLCanvasElement;
@@ -31,12 +27,12 @@ document.body.appendChild(statsDiv);
 let frameCount = 0;
 let isRendering = false;
 
-// ★ RustのWorldインスタンスを保持
+// RustのWorldインスタンスとWasmメモリ
 let currentWorld: World | null = null;
-let wasmMemory: WebAssembly.Memory | null = null; // メモリへの参照
+let wasmMemory: WebAssembly.Memory | null = null;
 
 // OBJテキストデータの一時保持
-let currentObjText: string | null = null;
+let currentObjText: string | undefined = undefined;
 
 async function initAndRender() {
   // 1. WebGPU初期化
@@ -53,7 +49,7 @@ async function initAndRender() {
 
   // 2. Wasm初期化
   const wasmInstance = await init();
-  wasmMemory = wasmInstance.memory; // メモリ取得
+  wasmMemory = wasmInstance.memory;
   console.log("Wasm initialized");
 
   // --- Dynamic Pipeline & Shader ---
@@ -75,6 +71,8 @@ async function initAndRender() {
     });
     bindGroupLayout = pipeline.getBindGroupLayout(0);
   };
+
+  // 初回ビルド
   buildPipeline();
 
   // --- Resources ---
@@ -83,8 +81,13 @@ async function initAndRender() {
   let accumulateBuffer: GPUBuffer;
   let frameUniformBuffer: GPUBuffer;
   let cameraUniformBuffer: GPUBuffer;
-  let primBuffer: GPUBuffer;
+
+  // ★新しいバッファ群
+  let vertexBuffer: GPUBuffer;
+  let indexBuffer: GPUBuffer;
+  let attrBuffer: GPUBuffer;
   let bvhBuffer: GPUBuffer;
+
   let bindGroup: GPUBindGroup;
   let bufferSize = 0;
 
@@ -120,7 +123,10 @@ async function initAndRender() {
   };
 
   const updateBindGroup = () => {
-    if (!renderTargetView || !accumulateBuffer || !frameUniformBuffer || !cameraUniformBuffer || !primBuffer || !bvhBuffer) return;
+    // 全リソースが揃っているか確認
+    if (!renderTargetView || !accumulateBuffer || !frameUniformBuffer || !cameraUniformBuffer ||
+      !vertexBuffer || !indexBuffer || !attrBuffer || !bvhBuffer) return;
+
     bindGroup = device.createBindGroup({
       layout: bindGroupLayout,
       entries: [
@@ -128,67 +134,92 @@ async function initAndRender() {
         { binding: 1, resource: { buffer: accumulateBuffer } },
         { binding: 2, resource: { buffer: frameUniformBuffer } },
         { binding: 3, resource: { buffer: cameraUniformBuffer } },
-        { binding: 4, resource: { buffer: primBuffer } },
-        { binding: 5, resource: { buffer: bvhBuffer } },
+        // ★Binding番号を変更・追加 (シェーダー側もこれに合わせる必要あり)
+        { binding: 4, resource: { buffer: vertexBuffer } }, // Vertices
+        { binding: 5, resource: { buffer: indexBuffer } },  // Indices
+        { binding: 6, resource: { buffer: attrBuffer } },   // Attributes
+        { binding: 7, resource: { buffer: bvhBuffer } },    // BVH Nodes
       ],
     });
   };
 
-  // ★ Wasmを使ってシーンロード
   const loadScene = (sceneName: string, autoStart: boolean = true) => {
     console.log(`Loading Scene: ${sceneName}... (Rust)`);
     isRendering = false;
 
-    // 前のWorldがあれば解放(Rust側のdrop)
     if (currentWorld) {
       currentWorld.free();
     }
 
-    // 1. RustでWorld作成 (BVH構築含む)
-    // viewerシーン以外なら meshText は undefined でOK
-    // sceneName === 'viewer' の場合だけ currentObjText を渡す
+    // Rust側でシーン構築
+    // viewerシーンならロード済みのOBJテキストを渡す
     const meshArg = (sceneName === 'viewer' && currentObjText) ? currentObjText : undefined;
 
-    // 計測
     console.time("Rust Build");
     currentWorld = new World(sceneName, meshArg);
     console.timeEnd("Rust Build");
 
     if (!wasmMemory) return;
 
-    // 2. Wasmメモリからデータを取得 (ゼロコピーView)
-    const bvhPtr = currentWorld.bvh_ptr();
-    const bvhLen = currentWorld.bvh_len();
-    const bvhView = new Float32Array(wasmMemory.buffer, bvhPtr, bvhLen);
+    // --- Wasmメモリからデータを取得 (ゼロコピー) ---
 
-    const primPtr = currentWorld.prim_ptr();
-    const primLen = currentWorld.prim_len();
-    const primView = new Float32Array(wasmMemory.buffer, primPtr, primLen);
+    // 1. Vertices (f32)
+    const vPtr = currentWorld.vertices_ptr();
+    const vLen = currentWorld.vertices_len();
+    const vView = new Float32Array(wasmMemory.buffer, vPtr, vLen);
 
-    const camPtr = currentWorld.camera_ptr();
-    // カメラデータは固定長(24 floats)
-    const camView = new Float32Array(wasmMemory.buffer, camPtr, 24);
+    // 2. Indices (u32)
+    const iPtr = currentWorld.indices_ptr();
+    const iLen = currentWorld.indices_len();
+    const iView = new Uint32Array(wasmMemory.buffer, iPtr, iLen);
 
-    // 3. WebGPUバッファへ転送
-    if (primBuffer) primBuffer.destroy();
-    primBuffer = device.createBuffer({
-      size: primView.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-    });
-    device.queue.writeBuffer(primBuffer, 0, primView);
+    // 3. Attributes (f32)
+    const aPtr = currentWorld.attributes_ptr();
+    const aLen = currentWorld.attributes_len();
+    const aView = new Float32Array(wasmMemory.buffer, aPtr, aLen);
+
+    // 4. BVH Nodes (f32)
+    const bPtr = currentWorld.bvh_ptr();
+    const bLen = currentWorld.bvh_len();
+    const bView = new Float32Array(wasmMemory.buffer, bPtr, bLen);
+
+    // 5. Camera (f32)
+    const cPtr = currentWorld.camera_ptr();
+    const cView = new Float32Array(wasmMemory.buffer, cPtr, 24);
+
+    console.log(`Scene Stats: Verts:${vLen / 4}, Tris:${iLen / 3}, Nodes:${bLen / 8}`);
+
+    // --- WebGPUバッファ転送 ---
+
+    if (vertexBuffer) vertexBuffer.destroy();
+    vertexBuffer = device.createBuffer({ size: vView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(vertexBuffer, 0, vView);
+
+    if (indexBuffer) indexBuffer.destroy();
+    // Indicesはアライメント(4byte)に注意が必要だがu32なら問題なし
+    // ただしサイズが0バイトだとcreateBufferで落ちることがあるので安全策
+    const iSize = Math.max(iView.byteLength, 4);
+    indexBuffer = device.createBuffer({ size: iSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    if (iView.byteLength > 0) device.queue.writeBuffer(indexBuffer, 0, iView);
+
+    if (attrBuffer) attrBuffer.destroy();
+    const aSize = Math.max(aView.byteLength, 4);
+    attrBuffer = device.createBuffer({ size: aSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    if (aView.byteLength > 0) device.queue.writeBuffer(attrBuffer, 0, aView);
 
     if (bvhBuffer) bvhBuffer.destroy();
-    bvhBuffer = device.createBuffer({
-      size: bvhView.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-    });
-    device.queue.writeBuffer(bvhBuffer, 0, bvhView);
+    bvhBuffer = device.createBuffer({ size: bView.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(bvhBuffer, 0, bView);
 
+    // カメラバッファ
     if (!cameraUniformBuffer) {
       cameraUniformBuffer = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     }
-    // カメラ初期データ転送 (リサイズ時の再計算は一旦省略、あるいはJSでやるなら別途)
-    device.queue.writeBuffer(cameraUniformBuffer, 0, camView);
+    // 初期化時はWasmが計算したデフォルトを転送
+    // (解像度がWasm側の想定と違う場合があるので、本当はここで updateCamera を呼ぶべき)
+    currentWorld.update_camera(canvas.width, canvas.height); // 正しいアスペクト比で再計算
+    const updatedCamView = new Float32Array(wasmMemory.buffer, currentWorld.camera_ptr(), 24);
+    device.queue.writeBuffer(cameraUniformBuffer, 0, updatedCamView);
 
     updateBindGroup();
     resetAccumulation();
@@ -202,7 +233,7 @@ async function initAndRender() {
     }
   };
 
-  // --- Render Loop (変更なし) ---
+  // --- Render Loop ---
   const frameData = new Uint32Array(1);
   const copyDst = { texture: null as unknown as GPUTexture };
   let lastTime = performance.now();
@@ -260,9 +291,9 @@ async function initAndRender() {
     console.log(`Reading ${file.name}...`);
     try {
       const text = await file.text();
-      currentObjText = text; // テキストを保持
+      currentObjText = text;
       sceneSelect.value = "viewer";
-      loadScene("viewer", false); // 再ロード
+      loadScene("viewer", false);
     } catch (err) {
       console.error("Failed to load OBJ:", err);
       alert("Failed to load OBJ file.");
@@ -272,8 +303,12 @@ async function initAndRender() {
 
   const onResolutionChange = () => {
     updateScreenResources();
-    // 本当はここでCameraのアスペクト比更新＆バッファ転送が必要
-    // currentWorld.update_camera(...) -> get buffer -> writeBuffer
+    // 解像度変更時、Rust側でカメラバッファを再計算
+    if (currentWorld && wasmMemory && cameraUniformBuffer) {
+      currentWorld.update_camera(canvas.width, canvas.height);
+      const cView = new Float32Array(wasmMemory.buffer, currentWorld.camera_ptr(), 24);
+      device.queue.writeBuffer(cameraUniformBuffer, 0, cView);
+    }
     updateBindGroup();
     resetAccumulation();
   };
