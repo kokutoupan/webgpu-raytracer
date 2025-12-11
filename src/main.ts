@@ -1,6 +1,5 @@
 // src/main.ts
 import shaderCodeRaw from './shader.wgsl?raw';
-// import shaderCodeRaw from './shader_debug.wgsl?raw';
 import init, { World } from '../rust-shader-tools/pkg/rust_shader_tools';
 
 // --- DOM Elements ---
@@ -11,6 +10,7 @@ const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
 const inputFile = document.getElementById('obj-file') as HTMLInputElement;
 if (inputFile) inputFile.accept = ".obj,.glb,.vrm";
+const inputUpdateInterval = document.getElementById('update-interval') as HTMLInputElement;
 const inputDepth = document.getElementById('max-depth') as HTMLInputElement;
 const inputSPP = document.getElementById('spp-frame') as HTMLInputElement;
 const btnRecompile = document.getElementById('recompile-btn') as HTMLButtonElement;
@@ -29,6 +29,7 @@ let frameCount = 0;
 let isRendering = false;
 let currentWorld: World | null = null;
 let wasmMemory: WebAssembly.Memory | null = null;
+
 
 async function initAndRender() {
   // 1. WebGPU Init
@@ -124,7 +125,6 @@ async function initAndRender() {
   };
 
   const updateBindGroup = () => {
-    // Check if all buffers are ready
     if (!renderTargetView || !accumulateBuffer || !frameUniformBuffer || !cameraUniformBuffer ||
       !vertexBuffer || !indexBuffer || !attrBuffer || !normalBuffer ||
       !tlasBuffer || !blasBuffer || !instanceBuffer) return;
@@ -175,7 +175,6 @@ async function initAndRender() {
     if (!wasmMemory) return;
 
     // --- Fetch Data from Wasm (Zero Copy Views) ---
-    // Helpers
     const getF32 = (ptr: number, len: number) => new Float32Array(wasmMemory!.buffer, ptr, len);
     const getU32 = (ptr: number, len: number) => new Uint32Array(wasmMemory!.buffer, ptr, len);
 
@@ -199,7 +198,6 @@ async function initAndRender() {
     `);
 
     // --- Upload to GPU ---
-
     const createStorage = (view: Float32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>) => {
       const size = Math.max(view.byteLength, 4); // Avoid 0 size error
       const buf = device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -209,7 +207,7 @@ async function initAndRender() {
 
     if (vertexBuffer) vertexBuffer.destroy(); vertexBuffer = createStorage(vView);
     if (normalBuffer) normalBuffer.destroy(); normalBuffer = createStorage(nView);
-    if (indexBuffer) indexBuffer.destroy(); indexBuffer = createStorage(iView); // Uint32Array OK
+    if (indexBuffer) indexBuffer.destroy(); indexBuffer = createStorage(iView);
     if (attrBuffer) attrBuffer.destroy(); attrBuffer = createStorage(aView);
 
     if (tlasBuffer) tlasBuffer.destroy(); tlasBuffer = createStorage(tView);
@@ -245,12 +243,52 @@ async function initAndRender() {
 
   const renderFrame = () => {
     requestAnimationFrame(renderFrame);
-    if (!isRendering || !bindGroup) return;
+    if (!isRendering || !bindGroup || !currentWorld) return;
 
+    // ★修正: 毎回入力値を取得 (動的に変更可能にするため)
+    // 値が NaN や 負の場合は 0 (更新なし) として扱う
+    let updateInterval = parseInt(inputUpdateInterval.value, 10);
+    if (isNaN(updateInterval) || updateInterval < 0) updateInterval = 0;
+
+    // ★ 修正: アニメーション更新と累積バッファのリセット制御
+    // 指定フレーム数(UPDATE_INTERVAL)だけ蓄積したら、時間を進めてリセットする
+    if (updateInterval > 0 && frameCount >= updateInterval) {
+      const now = performance.now();
+      const time = now / 1000.0;
+
+      // 1. Rust側で位置更新 & TLAS再構築
+      currentWorld.update(time);
+
+      // 2. 更新されたデータをGPUに転送
+      // TLAS Nodeの転送
+      const tPtr = currentWorld.tlas_ptr();
+      const tLen = currentWorld.tlas_len();
+      const tView = new Float32Array(wasmMemory!.buffer, tPtr, tLen);
+
+      // バッファサイズが足りない場合は再作成が必要だが、ここでは簡易的に既存バッファに書き込む
+      // (インスタンス数が増減しない限りサイズは変わらない前提)
+      if (tlasBuffer.size >= tView.byteLength) {
+        device.queue.writeBuffer(tlasBuffer, 0, tView);
+      } else {
+        // サイズ不足時の対応（本来はBindGroupの再生成が必要だが、今回は警告のみ<ArrayBuffer>）
+        console.warn("TLAS buffer size mismatch during update. Animation might glitch.");
+      }
+
+      // Instanceデータの転送
+      const instPtr = currentWorld.instances_ptr();
+      const instLen = currentWorld.instances_len();
+      const instView = new Float32Array(wasmMemory!.buffer, instPtr, instLen);
+      device.queue.writeBuffer(instanceBuffer, 0, instView);
+
+      // 3. 累積バッファをリセット (frameCount = 0 になる)
+      resetAccumulation();
+    }
+
+    // --- 描画パス ---
     const dispatchX = Math.ceil(canvas.width / 8);
     const dispatchY = Math.ceil(canvas.height / 8);
 
-    frameCount++;
+    frameCount++; // ここで 0 -> 1 (リセット直後) または N -> N+1 (蓄積中) になる
     frameTimer++;
     frameData[0] = frameCount;
     device.queue.writeBuffer(frameUniformBuffer, 0, frameData);
@@ -264,8 +302,7 @@ async function initAndRender() {
     pass.end();
 
     const copySize: GPUExtent3DStrict = { width: canvas.width, height: canvas.height, depthOrArrayLayers: 1 };
-    const copySrc = { texture: renderTarget };
-    commandEncoder.copyTextureToTexture(copySrc, copyDst, copySize);
+    commandEncoder.copyTextureToTexture({ texture: renderTarget }, copyDst, copySize);
     device.queue.submit([commandEncoder.finish()]);
 
     const now = performance.now();
