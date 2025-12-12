@@ -1,4 +1,4 @@
-// src/scene/scenes.rs
+// src/scene/procedural.rs
 use super::{CameraConfig, SceneData, SceneInstance, helpers, mat_type};
 use crate::geometry::Geometry;
 use crate::mesh::Mesh;
@@ -13,7 +13,7 @@ fn create_instances() -> Vec<SceneInstance> {
 }
 
 // --- 1. Cornell Box ---
-pub fn get_cornell_box_scene() -> SceneData {
+pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
     let mut geom = Geometry::new();
     let white = vec3(0.73, 0.73, 0.73);
     let red = vec3(0.65, 0.05, 0.05);
@@ -88,25 +88,60 @@ pub fn get_cornell_box_scene() -> SceneData {
         0.,
     );
 
-    // Boxes
-    helpers::create_box(
-        &mut geom,
-        sz(165., 330., 165.),
-        v(297.5, 165., 378.5),
-        -15.,
-        white,
-        mat_type::LAMBERTIAN,
-        0.,
-    );
-    helpers::create_box(
-        &mut geom,
-        sz(165., 165., 165.),
-        v(232.5, 82.5, 147.5),
-        18.,
-        white,
-        mat_type::LAMBERTIAN,
-        0.,
-    );
+    // Objects or Default Boxes
+    if let Some(mesh) = loaded_mesh {
+        let mut mesh_geo = Geometry::from_mesh(mesh);
+        mesh_geo.normalize_scale();
+
+        let geometries = vec![geom, mesh_geo];
+        let instances = vec![
+            SceneInstance {
+                transform: Mat4::IDENTITY,
+                geometry_index: 0,
+            },
+            SceneInstance {
+                transform: Mat4::from_translation(vec3(0.0, 1.0, 0.0))
+                    * Mat4::from_scale(Vec3::splat(2.0)),
+                geometry_index: 1,
+            },
+        ];
+
+        return SceneData {
+            camera: CameraConfig {
+                lookfrom: vec3(0., 1., -2.4),
+                lookat: vec3(0., 1., 0.),
+                vup: vec3(0., 1., 0.),
+                vfov: 60.,
+                defocus_angle: 0.,
+                focus_dist: 2.4,
+            },
+            geometries,
+            instances,
+            nodes: Vec::new(),
+            skins: Vec::new(),
+            animations: Vec::new(),
+        };
+    } else {
+        // Default Boxes
+        helpers::create_box(
+            &mut geom,
+            sz(165., 330., 165.),
+            v(297.5, 165., 378.5),
+            -15.,
+            white,
+            mat_type::LAMBERTIAN,
+            0.,
+        );
+        helpers::create_box(
+            &mut geom,
+            sz(165., 165., 165.),
+            v(232.5, 82.5, 147.5),
+            18.,
+            white,
+            mat_type::LAMBERTIAN,
+            0.,
+        );
+    }
 
     SceneData {
         camera: CameraConfig {
@@ -119,14 +154,14 @@ pub fn get_cornell_box_scene() -> SceneData {
         },
         geometries: vec![geom],
         instances: create_instances(),
-        nodes: Vec::new(),      // ★初期化
-        skins: Vec::new(),      // ★初期化
-        animations: Vec::new(), // ★初期化
+        nodes: Vec::new(),
+        skins: Vec::new(),
+        animations: Vec::new(),
     }
 }
 
 // --- 2. Random Spheres ---
-pub fn get_random_spheres_scene() -> SceneData {
+pub fn create_random_spheres() -> SceneData {
     let mut geom = Geometry::new();
 
     geom.add_sphere(
@@ -220,7 +255,7 @@ pub fn get_random_spheres_scene() -> SceneData {
 }
 
 // --- 3. Mixed Scene ---
-pub fn get_mixed_scene() -> SceneData {
+pub fn create_mixed_scene() -> SceneData {
     let mut geom = Geometry::new();
 
     helpers::create_box(
@@ -355,7 +390,7 @@ pub fn get_mixed_scene() -> SceneData {
 }
 
 // --- 4. Special (Glass Box) Scene ---
-pub fn get_cornell_box_special_scene() -> SceneData {
+pub fn create_cornell_box_special() -> SceneData {
     let mut geom = Geometry::new();
     let white = vec3(0.73, 0.73, 0.73);
     let red = vec3(0.65, 0.05, 0.05);
@@ -465,7 +500,7 @@ pub fn get_cornell_box_special_scene() -> SceneData {
             focus_dist: 2.4,
         },
         geometries: vec![geom],
-        instances: create_instances(), // Specialは1つだけ
+        instances: create_instances(),
         nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
@@ -475,7 +510,7 @@ pub fn get_cornell_box_special_scene() -> SceneData {
 // --- 5. Mesh Scene ---
 const CUBE_OBJ: &str = "v -1 -1 1\nv 1 -1 1\nv -1 1 1\nv 1 1 1\nv -1 -1 -1\nv 1 -1 -1\nv -1 1 -1\nv 1 1 -1\nf 1 2 4 3\nf 3 4 8 7\nf 7 8 6 5\nf 5 6 2 1\nf 3 7 5 1\nf 8 4 2 6";
 
-pub fn get_mesh_scene() -> SceneData {
+pub fn create_mesh_scene() -> SceneData {
     let mut geom = Geometry::new();
     let mesh = Mesh::new(CUBE_OBJ);
 
@@ -536,7 +571,7 @@ pub fn get_mesh_scene() -> SceneData {
             focus_dist: 6.,
         },
         geometries: vec![geom],
-        instances: create_instances(), // Meshシーンも1つで良いなら
+        instances: create_instances(),
         nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
@@ -544,7 +579,7 @@ pub fn get_mesh_scene() -> SceneData {
 }
 
 // --- 6. Viewer Scene ---
-pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
+pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
     // Geometry 0: Environment
     let mut geom_env = Geometry::new();
     geom_env.add_sphere(
@@ -589,12 +624,12 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
 
     // Instances
     let mut instances = Vec::new();
-    // 0: Env
     instances.push(SceneInstance {
         transform: Mat4::IDENTITY,
         geometry_index: 0,
     });
-    // 1: Model (if exists)
+
+    // Model Instance (if geometry exists)
     if !geom_model.vertices.is_empty() {
         instances.push(SceneInstance {
             transform: Mat4::IDENTITY,
@@ -613,23 +648,8 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
         },
         geometries: vec![geom_env, geom_model],
         instances,
-        nodes: Vec::new(), // loaderで埋められる
+        nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
-    }
-}
-
-pub fn get_scene_data(
-    name: &str,
-    uploaded_mesh: Option<&Mesh>,
-    has_glb_content: bool,
-) -> SceneData {
-    match name {
-        "spheres" => get_random_spheres_scene(),
-        "mixed" => get_mixed_scene(),
-        "special" => get_cornell_box_special_scene(),
-        "mesh" => get_mesh_scene(),
-        "viewer" => get_model_viewer_scene(uploaded_mesh, has_glb_content),
-        _ => get_cornell_box_scene(),
     }
 }

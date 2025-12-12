@@ -68,7 +68,7 @@ async function main() {
     renderer.recreateBindGroup();
     renderer.resetAccumulation();
     frameCount = 0;
-    totalFrameCount=0;
+    totalFrameCount = 0;
   };
 
   const loadScene = (name: string, autoStart = true) => {
@@ -116,7 +116,7 @@ async function main() {
 
     // アニメーション更新 (インターバル毎)
     if (updateInterval > 0 && frameCount >= updateInterval) {
-      worldBridge.update(totalFrameCount/updateInterval);
+      worldBridge.update(totalFrameCount / updateInterval / 30);
 
       // 変更があったバッファのみ更新 (戻り値がtrueならBindGroup再生成が必要)
       let needsRebind = false;

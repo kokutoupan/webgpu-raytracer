@@ -157,4 +157,64 @@ impl Geometry {
             }
         }
     }
+
+    // src/geometry.rs の impl Geometry 内に追加
+
+    pub fn from_mesh(mesh: &Mesh) -> Self {
+        let mut geo = Self::new();
+        // デフォルトのマテリアル (灰色、Lambertian)
+        let color = vec3(0.8, 0.8, 0.8);
+        let mat_type = 0; // LAMBERTIAN
+        let extra = 0.0;
+
+        for (i, v) in mesh.vertices.iter().enumerate() {
+            let n = if i < mesh.normals.len() {
+                mesh.normals[i]
+            } else {
+                vec3(0., 1., 0.)
+            };
+            geo.push_vertex(*v, n);
+        }
+
+        for chunk in mesh.indices.chunks(3) {
+            if chunk.len() == 3 {
+                geo.indices.extend_from_slice(chunk);
+                geo.push_attributes(color, mat_type, extra);
+            }
+        }
+        geo
+    }
+
+    pub fn normalize_scale(&mut self) {
+        if self.base_positions.is_empty() {
+            return;
+        }
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+
+        for p in &self.base_positions {
+            min = min.min(*p);
+            max = max.max(*p);
+        }
+
+        let center = (min + max) * 0.5;
+        let extent = max - min;
+        let max_dim = extent.max_element();
+
+        if max_dim < 1e-6 {
+            return;
+        }
+        // [-1, 1] の範囲に収まるように正規化
+        let scale = 2.0 / max_dim;
+
+        for i in 0..self.base_positions.len() {
+            let p = (self.base_positions[i] - center) * scale;
+            self.base_positions[i] = p;
+
+            // verticesバッファも同期して更新
+            self.vertices[i * 4 + 0] = p.x;
+            self.vertices[i * 4 + 1] = p.y;
+            self.vertices[i * 4 + 2] = p.z;
+        }
+    }
 }
