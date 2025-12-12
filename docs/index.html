@@ -11,36 +11,34 @@
         margin: 0;
         padding: 0;
         width: 100vw;
-        height: 100vh; /* 画面いっぱいに広げる */
+        height: 100vh;
         background: #111;
         color: #eee;
         display: flex;
-        flex-direction: column; /* 上下に配置 */
-        overflow: hidden; /* スクロール禁止（Canvas内はOK） */
+        flex-direction: column;
+        overflow: hidden;
       }
 
-      /* --- 操作パネル (レスポンシブ対応) --- */
+      /* --- 操作パネル --- */
       .controls {
-        flex-shrink: 0; /* 縮まないように */
+        flex-shrink: 0;
         display: flex;
-        flex-wrap: wrap; /* ★重要: 入り切らない場合は折り返す */
-        gap: 10px; /* 要素間の隙間 */
+        flex-wrap: wrap;
+        gap: 10px;
         align-items: center;
-        justify-content: center; /* 中央揃え */
+        justify-content: center;
         padding: 10px;
         background: #222;
         border-bottom: 1px solid #444;
         z-index: 10;
-        /* スマホでの横スクロールを防ぐ */
         box-sizing: border-box; 
         width: 100%;
       }
 
-      /* 入力グループ（枠で囲まれた部分） */
       .group {
         display: flex;
         align-items: center;
-        flex-wrap: wrap; /* グループ内も狭ければ折り返す */
+        flex-wrap: wrap;
         gap: 5px;
         background: #333;
         padding: 5px 8px;
@@ -49,7 +47,6 @@
         justify-content: center;
       }
 
-      /* --- UIパーツのスタイル --- */
       button, select, input {
         padding: 8px 10px;
         font-size: 0.9rem;
@@ -60,34 +57,34 @@
       button { background: #4CAF50; color: white; cursor: pointer; white-space: nowrap; }
       button:hover { background: #45a049; }
       
-      /* 青いボタン (Update) */
       button#recompile-btn { background: #2196F3; }
       button#recompile-btn:hover { background: #1976D2; }
 
-    /* ファイル選択ボタンの見た目 */
-    .file-btn {
-      display: inline-block;
-      padding: 8px 12px;
-      background: #FF9800; /* オレンジ */
-      color: white;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 0.9rem;
-      white-space: nowrap;
-    }
-    .file-btn:hover { background: #F57C00; }
+      /* ファイル選択ボタン */
+      .file-btn {
+        display: inline-block;
+        padding: 8px 12px;
+        background: #FF9800;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        white-space: nowrap;
+      }
+      .file-btn:hover { background: #F57C00; }
+      
+      /* モーション用ボタン (紫) */
+      .file-btn.motion { background: #9C27B0; }
+      .file-btn.motion:hover { background: #7B1FA2; }
 
       select, input { background: #444; color: white; border: 1px solid #666; }
-      
-      /* 数値入力欄の幅 */
       input[type="number"] { width: 55px; text-align: right; }
 
       .label { color: #aaa; margin-right: 3px; font-size: 0.85rem; white-space: nowrap; }
       .title { font-weight: bold; margin-right: 5px; white-space: nowrap; }
 
-      /* --- Canvas領域 --- */
       .canvas-wrapper {
-        flex-grow: 1; /* 余った領域を埋める */
+        flex-grow: 1;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -104,35 +101,19 @@
         max-height: 100%;
         width: auto;
         height: auto;
-        image-rendering: pixelated; /* 低解像度でもクッキリ表示 */
+        image-rendering: pixelated;
         box-shadow: 0 0 30px rgba(0,0,0,0.8);
       }
 
-      /* --- スマホ向け調整 (画面幅 600px以下) --- */
       @media (max-width: 600px) {
-        .controls {
-          padding: 8px 5px;
-          gap: 8px;
-        }
-        .title {
-          font-size: 0.9rem;
-          width: 100%; /* タイトルを1行目に独占させる */
-          text-align: center;
-          margin-bottom: 5px;
-        }
-        button, select, input {
-          font-size: 0.8rem; /* 少し文字を小さく */
-          padding: 6px 8px;  /* 余白を詰める */
-        }
-        input[type="number"] {
-          width: 45px; /* 入力欄を少し狭く */
-        }
-        .group {
-          padding: 4px 6px;
-        }
+        .controls { padding: 8px 5px; gap: 8px; }
+        .title { font-size: 0.9rem; width: 100%; text-align: center; margin-bottom: 5px; }
+        button, select, input { font-size: 0.8rem; padding: 6px 8px; }
+        input[type="number"] { width: 45px; }
+        .group { padding: 4px 6px; }
       }
     </style>
-    <script type="module" crossorigin src="/webgpu-raytracer/assets/index-BnkES_fB.js"></script>
+    <script type="module" crossorigin src="/webgpu-raytracer/assets/index-BEn0Rz7K.js"></script>
   </head>
   <body>
     <div class="controls">
@@ -148,14 +129,15 @@
           <option value="viewer">Obj Viewer Scene</option>
         </select>
       </div>
+      
       <div class="group">
-        <label for="obj-file" class="file-btn">📂 Load OBJ</label>
-        <input type="file" id="obj-file" accept=".obj" style="display: none;">
+        <label for="obj-file" class="file-btn">📂 Model</label>
+        <input type="file" id="obj-file" accept=".obj,.glb,.vrm" style="display: none;">
       </div>
 
       <div class="group">
-        <span class="label">Anim Interval:</span>
-        <input id="update-interval" type="number" value="4" min="0" step="1">
+        <label for="anim-file" class="file-btn motion">💃 Motion</label>
+        <input type="file" id="anim-file" accept=".glb,.gltf" style="display: none;">
       </div>
 
       <div class="group">
@@ -165,13 +147,16 @@
         <input id="res-height" type="number" value="480" step="10" min="10">
       </div>
 
+      <div class="group">
+        <span class="label">Interval:</span>
+        <input id="update-interval" type="number" value="4" min="0" step="1">
+      </div>
+
       <div class="group" style="border-color: #2196F3;">
         <span class="label">Depth:</span>
         <input id="max-depth" type="number" value="10" min="1" max="50">
-        
         <span class="label" style="margin-left:5px;">SPP:</span>
         <input id="spp-frame" type="number" value="1" min="1" max="100">
-        
         <button id="recompile-btn" title="Recompile Shader">Update</button>
       </div>
 

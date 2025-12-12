@@ -1,33 +1,32 @@
 // src/scene/mod.rs
-use crate::geometry::Geometry;
-use glam::Mat4;
-
-// サブモジュールの公開
+pub mod animation;
 pub mod camera;
 pub mod helpers;
-pub mod scenes;
+pub mod material;
+pub mod node;
+pub mod procedural;
+pub mod factory; // scenes -> factory に変更
 
-// 外部からアクセスしやすいように再エクスポート
+use crate::geometry::Geometry;
 pub use camera::CameraConfig;
-pub use scenes::get_scene_data;
+pub use node::{Node, SceneInstance, Skin};
 
-// マテリアルタイプ定数
+// lib.rs から scene::get_scene_data() で呼べるように再エクスポート
+pub use factory::get_scene_data;
+
+// マテリアル定数へのエイリアス
 pub mod mat_type {
-    pub const LAMBERTIAN: u32 = 0;
-    pub const METAL: u32 = 1;
-    pub const DIELECTRIC: u32 = 2;
-    pub const LIGHT: u32 = 3;
+    pub use super::material::*;
 }
 
-// シーンインスタンス構造体
-pub struct SceneInstance {
-    pub transform: Mat4,
-    pub geometry_index: usize, // ★追加: どのGeometry(BLAS)を使うか
-}
-
-// シーンデータ構造体
+// シーン全体を表すデータコンテナ
 pub struct SceneData {
     pub camera: CameraConfig,
-    pub geometries: Vec<Geometry>, // ★変更: 複数のGeometryを持てるようにする
+    pub geometries: Vec<Geometry>,
     pub instances: Vec<SceneInstance>,
+    
+    // Animation Support
+    pub nodes: Vec<Node>,
+    pub skins: Vec<Skin>,
+    pub animations: Vec<animation::Animation>,
 }
