@@ -5,7 +5,6 @@ use crate::mesh::Mesh;
 use glam::{Mat4, Vec3, vec3};
 
 // Helper: 単一のIdentityインスタンスを作成
-// (シフトや複製は行わない)
 fn create_instances() -> Vec<SceneInstance> {
     vec![SceneInstance {
         transform: Mat4::IDENTITY,
@@ -120,6 +119,9 @@ pub fn get_cornell_box_scene() -> SceneData {
         },
         geometries: vec![geom],
         instances: create_instances(),
+        nodes: Vec::new(),      // ★初期化
+        skins: Vec::new(),      // ★初期化
+        animations: Vec::new(), // ★初期化
     }
 }
 
@@ -127,7 +129,6 @@ pub fn get_cornell_box_scene() -> SceneData {
 pub fn get_random_spheres_scene() -> SceneData {
     let mut geom = Geometry::new();
 
-    // Ground & Sun
     geom.add_sphere(
         vec3(0., -1000., 0.),
         1000.,
@@ -212,6 +213,9 @@ pub fn get_random_spheres_scene() -> SceneData {
         },
         geometries: vec![geom],
         instances: create_instances(),
+        nodes: Vec::new(),
+        skins: Vec::new(),
+        animations: Vec::new(),
     }
 }
 
@@ -219,7 +223,6 @@ pub fn get_random_spheres_scene() -> SceneData {
 pub fn get_mixed_scene() -> SceneData {
     let mut geom = Geometry::new();
 
-    // Floor
     helpers::create_box(
         &mut geom,
         vec3(40., 2., 40.),
@@ -230,7 +233,6 @@ pub fn get_mixed_scene() -> SceneData {
         0.05,
     );
 
-    // Lights
     let warm = vec3(40., 30., 10.);
     let la = vec3(-4., 8., 4.);
     helpers::add_quad(
@@ -257,7 +259,6 @@ pub fn get_mixed_scene() -> SceneData {
         0.,
     );
 
-    // Tower
     helpers::create_box(
         &mut geom,
         vec3(2., 1., 2.),
@@ -282,7 +283,6 @@ pub fn get_mixed_scene() -> SceneData {
         1.0,
     );
 
-    // Floating Cube
     helpers::create_box(
         &mut geom,
         vec3(0.8, 0.8, 0.8),
@@ -293,7 +293,6 @@ pub fn get_mixed_scene() -> SceneData {
         0.2,
     );
 
-    // Rings
     for i in 0..12 {
         let fi = i as f32;
         let angle = fi / 12.0 * std::f32::consts::PI * 2.0;
@@ -319,7 +318,6 @@ pub fn get_mixed_scene() -> SceneData {
         }
     }
 
-    // Pillars
     helpers::create_box(
         &mut geom,
         vec3(1., 6., 1.),
@@ -350,6 +348,9 @@ pub fn get_mixed_scene() -> SceneData {
         },
         geometries: vec![geom],
         instances: create_instances(),
+        nodes: Vec::new(),
+        skins: Vec::new(),
+        animations: Vec::new(),
     }
 }
 
@@ -426,7 +427,6 @@ pub fn get_cornell_box_special_scene() -> SceneData {
         0.,
     );
 
-    // Objects
     let tall_pos = v(366., 165., 383.);
     helpers::create_box(
         &mut geom,
@@ -465,7 +465,10 @@ pub fn get_cornell_box_special_scene() -> SceneData {
             focus_dist: 2.4,
         },
         geometries: vec![geom],
-        instances: create_instances(), // 複製なし
+        instances: create_instances(), // Specialは1つだけ
+        nodes: Vec::new(),
+        skins: Vec::new(),
+        animations: Vec::new(),
     }
 }
 
@@ -533,13 +536,16 @@ pub fn get_mesh_scene() -> SceneData {
             focus_dist: 6.,
         },
         geometries: vec![geom],
-        instances: create_instances(),
+        instances: create_instances(), // Meshシーンも1つで良いなら
+        nodes: Vec::new(),
+        skins: Vec::new(),
+        animations: Vec::new(),
     }
 }
 
-// --- 6. Viewer Scene (Updated) ---
+// --- 6. Viewer Scene ---
 pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
-    // Geometry 0: Environment (Ground, Lights)
+    // Geometry 0: Environment
     let mut geom_env = Geometry::new();
     geom_env.add_sphere(
         vec3(0., -1000., 0.),
@@ -559,8 +565,6 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
 
     // Geometry 1: Model
     let mut geom_model = Geometry::new();
-
-    // ダミー球体を表示するか判定（モデルもGLBもなく、空の場合）
     let should_add_dummy = mesh.is_none() && !has_glb;
 
     if let Some(m) = mesh {
@@ -585,16 +589,12 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
 
     // Instances
     let mut instances = Vec::new();
-
-    // Instance 0 -> Geometry 0 (Env)
+    // 0: Env
     instances.push(SceneInstance {
         transform: Mat4::IDENTITY,
         geometry_index: 0,
     });
-
-    // Instance 1 -> Geometry 1 (Model)
-    // 修正: OBJやダミーでデータが入っている場合のみ追加します。
-    // GLBの場合はloader側でインスタンスが追加されるため、ここでは何もしません。
+    // 1: Model (if exists)
     if !geom_model.vertices.is_empty() {
         instances.push(SceneInstance {
             transform: Mat4::IDENTITY,
@@ -604,7 +604,7 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
 
     SceneData {
         camera: CameraConfig {
-            lookfrom: vec3(0., 3., 6.),
+            lookfrom: vec3(0., 3., -3.),
             lookat: vec3(0., 1., 0.),
             vup: vec3(0., 1., 0.),
             vfov: 35.,
@@ -613,10 +613,12 @@ pub fn get_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
         },
         geometries: vec![geom_env, geom_model],
         instances,
+        nodes: Vec::new(), // loaderで埋められる
+        skins: Vec::new(),
+        animations: Vec::new(),
     }
 }
 
-// --- Dispatcher ---
 pub fn get_scene_data(
     name: &str,
     uploaded_mesh: Option<&Mesh>,
@@ -627,10 +629,7 @@ pub fn get_scene_data(
         "mixed" => get_mixed_scene(),
         "special" => get_cornell_box_special_scene(),
         "mesh" => get_mesh_scene(),
-        "viewer" => {
-            // ★修正: has_glb_content をそのまま渡す
-            get_model_viewer_scene(uploaded_mesh, has_glb_content)
-        }
+        "viewer" => get_model_viewer_scene(uploaded_mesh, has_glb_content),
         _ => get_cornell_box_scene(),
     }
 }
