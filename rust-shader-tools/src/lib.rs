@@ -1,8 +1,8 @@
 // src/lib.rs
 use crate::bvh::{Instance, tlas::TLASBuilder};
 use crate::mesh::Mesh;
-use crate::scene::animation::{Animation, ChannelOutputs};
-use crate::scene::{Node, SceneData};
+use crate::render_buffers::RenderBuffers;
+use crate::scene::SceneData;
 use glam::{Mat4, Quat, Vec3};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -16,8 +16,6 @@ pub mod rebuilder;
 pub mod render_buffers;
 pub mod scene;
 
-use crate::render_buffers::RenderBuffers;
-
 #[wasm_bindgen(start)]
 pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
@@ -25,7 +23,7 @@ pub fn init_panic_hook() {
 
 #[wasm_bindgen]
 pub struct World {
-    // 分離したバッファ
+    // 分離したバッファ (Vertices, Normals, UVs, Indices...)
     buffers: RenderBuffers,
 
     // シーンデータ (Nodes, Skins, Animations, Geometries)
@@ -48,6 +46,7 @@ impl World {
         let loaded_mesh = mesh_obj_source.map(|source| Mesh::new(&source));
         let has_glb = glb_data.is_some();
 
+        // シーンデータのロード (factory経由)
         let mut scene_data: SceneData =
             scene::get_scene_data(scene_name, loaded_mesh.as_ref(), has_glb);
 
@@ -62,6 +61,7 @@ impl World {
             );
         }
 
+        // 初期インスタンスリストの作成
         let mut raw_instances = Vec::new();
         let mut instance_blas_aabbs = Vec::new();
 
@@ -90,6 +90,7 @@ impl World {
             raw_instances,
         };
 
+        // 初回計算
         world.update(0.0);
         world
     }
@@ -136,7 +137,7 @@ impl World {
             self.scene.nodes[i].global_transform = globals[i];
         }
 
-        // 3. Rebuild Geometry
+        // 3. Rebuild Geometry (Skinning & BLAS)
         rebuilder::build_blas_and_vertices(
             &self.scene.geometries,
             &self.scene.skins,
@@ -147,6 +148,7 @@ impl World {
 
         // 4. Update Instances
         for (i, inst) in self.raw_instances.iter_mut().enumerate() {
+            // 背景(0番目)以外にモデルスケールなどを適用する簡易ロジック
             if i > 0 {
                 let model_scale = 1.0;
                 let model_transform = Mat4::from_scale(Vec3::splat(model_scale));
@@ -226,6 +228,14 @@ impl World {
         self.buffers.normals.len()
     }
 
+    // ★追加: UVポインタ
+    pub fn uvs_ptr(&self) -> *const f32 {
+        self.buffers.uvs.as_ptr()
+    }
+    pub fn uvs_len(&self) -> usize {
+        self.buffers.uvs.len()
+    }
+
     pub fn indices_ptr(&self) -> *const u32 {
         self.buffers.indices.as_ptr()
     }
@@ -265,6 +275,8 @@ impl World {
     }
 
     fn apply_animation(&mut self, anim_idx: usize, time: f32) {
+        use crate::scene::animation::ChannelOutputs;
+
         let anim = &self.scene.animations[anim_idx];
         let mut node_name_map = HashMap::new();
         for (i, node) in self.scene.nodes.iter().enumerate() {
@@ -285,7 +297,6 @@ impl World {
                 } else if let Some(idx) = node_name_map.get(&format!("J_Bip_C_{}", stripped)) {
                     node_idx_opt = Some(idx);
                 } else if let Some(rest) = stripped.strip_prefix("Left") {
-                    // Left prefix logic
                     let vrm_l = format!("J_Bip_L_{}", rest);
                     node_idx_opt = node_name_map.get(&vrm_l);
                     if node_idx_opt.is_none() && rest == "Arm" {
@@ -298,7 +309,6 @@ impl World {
                         node_idx_opt = node_name_map.get("J_Bip_L_UpperLeg");
                     }
                 } else if let Some(rest) = stripped.strip_prefix("Right") {
-                    // Right prefix logic (ここがWarning箇所)
                     let vrm_r = format!("J_Bip_R_{}", rest);
                     node_idx_opt = node_name_map.get(&vrm_r);
                     if node_idx_opt.is_none() && rest == "Arm" {
@@ -366,7 +376,6 @@ impl World {
 
             match &channel.outputs {
                 ChannelOutputs::Translations(vecs) => {
-                    // ★修正: if条件を結合
                     if prev_idx < vecs.len()
                         && next_idx < vecs.len()
                         && (target_name.contains("Hips") || target_name.contains("Root"))

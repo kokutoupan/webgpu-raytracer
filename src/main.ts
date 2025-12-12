@@ -17,6 +17,7 @@ const inputDepth = document.getElementById('max-depth') as HTMLInputElement;
 const inputSPP = document.getElementById('spp-frame') as HTMLInputElement;
 const btnRecompile = document.getElementById('recompile-btn') as HTMLButtonElement;
 const inputUpdateInterval = document.getElementById('update-interval') as HTMLInputElement;
+const inputTexFile = document.getElementById('tex-file') as HTMLInputElement;
 
 // --- Stats UI ---
 const statsDiv = document.createElement("div");
@@ -89,6 +90,7 @@ async function main() {
     // Initial Buffer Upload
     renderer.updateGeometryBuffer('vertex', worldBridge.vertices);
     renderer.updateGeometryBuffer('normal', worldBridge.normals);
+    renderer.updateGeometryBuffer('uv', worldBridge.uvs); // ★追加: UV転送
     renderer.updateGeometryBuffer('index', worldBridge.indices);
     renderer.updateGeometryBuffer('attr', worldBridge.attributes);
     renderer.updateGeometryBuffer('tlas', worldBridge.tlas);
@@ -194,6 +196,23 @@ async function main() {
     console.log("Motion Loaded!");
     (e.target as HTMLInputElement).value = "";
   });
+
+  // ★追加: テクスチャ読み込みイベント
+  if (inputTexFile) {
+    inputTexFile.addEventListener("change", async (e) => {
+      const f = (e.target as HTMLInputElement).files?.[0];
+      if (!f) return;
+
+      console.log(`Loading Texture: ${f.name}`);
+      isRendering = false; // 一旦停止
+
+      await renderer.loadTexture(f); // 画像ロード & テクスチャ生成
+      renderer.recreateBindGroup();  // BindGroupを作り直してテクスチャを差し替え
+      renderer.resetAccumulation();  // 描画リセット
+
+      isRendering = true; // 再開
+    });
+  }
 
   // Start
   updateResolution();

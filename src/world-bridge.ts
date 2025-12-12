@@ -29,7 +29,6 @@ export class WorldBridge {
   }
 
   // --- Data Accessors ---
-  // ポインタから直接TypedArrayのビューを返す
   private getF32(ptr: number, len: number) {
     return new Float32Array(this.wasmMemory!.buffer, ptr, len);
   }
@@ -39,16 +38,16 @@ export class WorldBridge {
 
   get vertices() { return this.getF32(this.world!.vertices_ptr(), this.world!.vertices_len()); }
   get normals() { return this.getF32(this.world!.normals_ptr(), this.world!.normals_len()); }
+  get uvs() { return this.getF32(this.world!.uvs_ptr(), this.world!.uvs_len()); } // ★追加
   get indices() { return this.getU32(this.world!.indices_ptr(), this.world!.indices_len()); }
   get attributes() { return this.getF32(this.world!.attributes_ptr(), this.world!.attributes_len()); }
   get tlas() { return this.getF32(this.world!.tlas_ptr(), this.world!.tlas_len()); }
   get blas() { return this.getF32(this.world!.blas_ptr(), this.world!.blas_len()); }
   get instances() { return this.getF32(this.world!.instances_ptr(), this.world!.instances_len()); }
-  get cameraData() { return this.getF32(this.world!.camera_ptr(), 24); } // Camera struct size
+  get cameraData() { return this.getF32(this.world!.camera_ptr(), 24); }
 
   get hasWorld() { return !!this.world; }
 
-  // デバッグ用
   printStats() {
     if (!this.world) return;
     console.log(`Scene Stats: V=${this.vertices.length / 4}, Tri=${this.indices.length / 3}, BLAS=${this.blas.length / 8}, TLAS=${this.tlas.length / 8}`);

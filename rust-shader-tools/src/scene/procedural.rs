@@ -108,7 +108,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
 
         return SceneData {
             camera: CameraConfig {
-                lookfrom: vec3(0., 1., -2.4),
+                lookfrom: vec3(0., 1., -1.0),
                 lookat: vec3(0., 1., 0.),
                 vup: vec3(0., 1., 0.),
                 vfov: 60.,
