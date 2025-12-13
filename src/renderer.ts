@@ -80,15 +80,15 @@ export class WebGPURenderer {
   createDefaultTexture() {
     const data = new Uint8Array([255, 255, 255, 255]); // RGBA: White
     this.defaultTexture = this.device.createTexture({
-      size: [1, 1],
+      size: [1, 1, 1],
       format: 'rgba8unorm',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
     });
 
     this.device.queue.writeTexture(
-      { texture: this.defaultTexture },
+      { texture: this.defaultTexture, origin: [0, 0, 0] },
       data,
-      { bytesPerRow: 256, rowsPerImage: 1 }, // ★修正: ここを 256 にする
+      { bytesPerRow: 256, rowsPerImage: 1 },
       [1, 1]
     );
   }
@@ -135,24 +135,69 @@ export class WebGPURenderer {
 
 
   async loadTexture(blob: Blob) {
-    const img = await createImageBitmap(blob);
+    const img = await createImageBitmap(blob, { resizeWidth: 1024, resizeHeight: 1024 });
+    // Single texture fallback (array of 1)
+    if (this.texture) this.texture.destroy();
+    this.texture = this.device.createTexture({
+      size: [1024, 1024, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    this.device.queue.copyExternalImageToTexture(
+      { source: img },
+      { texture: this.texture, origin: [0, 0, 0] },
+      [1024, 1024]
+    );
+  }
 
-    // 以前のユーザーテクスチャがあれば消す（デフォルトテクスチャでなければ）
-    if (this.texture !== this.defaultTexture && this.texture) {
-      this.texture.destroy();
+  async loadTexturesFromWorld(bridge: any) {
+    const count = bridge.textureCount;
+    if (count === 0) {
+      this.createDefaultTexture(); // Use default 1x1
+      return;
     }
 
+    console.log(`Loading ${count} textures...`);
+    const bitmaps: ImageBitmap[] = [];
+    for (let i = 0; i < count; i++) {
+      const data = bridge.getTexture(i);
+      if (data) {
+        const blob = new Blob([data]);
+        try {
+          const bmp = await createImageBitmap(blob, { resizeWidth: 1024, resizeHeight: 1024 });
+          bitmaps.push(bmp);
+        } catch (e) {
+          console.warn(`Failed to load texture ${i}`, e);
+          bitmaps.push(await this.createFallbackBitmap());
+        }
+      } else {
+        bitmaps.push(await this.createFallbackBitmap());
+      }
+    }
+
+    if (this.texture) this.texture.destroy();
     this.texture = this.device.createTexture({
-      size: [img.width, img.height],
+      size: [1024, 1024, bitmaps.length],
       format: 'rgba8unorm',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
     });
 
-    this.device.queue.copyExternalImageToTexture(
-      { source: img },
-      { texture: this.texture },
-      [img.width, img.height]
-    );
+    for (let i = 0; i < bitmaps.length; i++) {
+      this.device.queue.copyExternalImageToTexture(
+        { source: bitmaps[i] },
+        { texture: this.texture, origin: [0, 0, i] },
+        [1024, 1024]
+      );
+    }
+  }
+
+  async createFallbackBitmap() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024; canvas.height = 1024;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, 1024, 1024);
+    return await createImageBitmap(canvas);
   }
 
   // バッファの更新・再生成ロジック
@@ -227,7 +272,7 @@ export class WebGPURenderer {
         { binding: 9, resource: { buffer: this.blasBuffer } },
         { binding: 10, resource: { buffer: this.instanceBuffer } },
         { binding: 11, resource: { buffer: this.uvBuffer } },
-        { binding: 12, resource: this.texture.createView() },
+        { binding: 12, resource: this.texture.createView({ dimension: '2d-array' }) },
         { binding: 13, resource: this.sampler },
       ],
     });

@@ -12,6 +12,7 @@ pub fn add_quad(
     color: Vec3,
     mat_type: u32,
     extra: f32,
+    texture_index: f32,
 ) {
     let n = (b - a).cross(d - a).normalize();
     // UV自動割当: a(0,0), b(1,0), c(1,1), d(0,1)
@@ -21,10 +22,10 @@ pub fn add_quad(
     let i3 = geom.push_vertex(d, n, vec2(0., 1.));
 
     geom.indices.extend_from_slice(&[i0, i1, i2]);
-    geom.push_attributes(color, mat_type, extra);
+    geom.push_attributes(color, mat_type, extra, texture_index);
 
     geom.indices.extend_from_slice(&[i0, i2, i3]);
-    geom.push_attributes(color, mat_type, extra);
+    geom.push_attributes(color, mat_type, extra, texture_index);
 }
 
 pub fn create_box(
@@ -35,6 +36,7 @@ pub fn create_box(
     color: Vec3,
     mat_type: u32,
     extra: f32,
+    texture_index: f32,
 ) {
     let rad = rot_y_deg.to_radians();
     let cos_r = rad.cos();
@@ -60,6 +62,7 @@ pub fn create_box(
         color,
         mat_type,
         extra,
+        texture_index,
     );
     // Back
     add_quad(
@@ -71,6 +74,7 @@ pub fn create_box(
         color,
         mat_type,
         extra,
+        texture_index,
     );
     // Top
     add_quad(
@@ -82,6 +86,7 @@ pub fn create_box(
         color,
         mat_type,
         extra,
+        texture_index,
     );
     // Bottom
     add_quad(
@@ -93,6 +98,7 @@ pub fn create_box(
         color,
         mat_type,
         extra,
+        texture_index,
     );
     // Right
     add_quad(
@@ -104,6 +110,7 @@ pub fn create_box(
         color,
         mat_type,
         extra,
+        texture_index,
     );
     // Left
     add_quad(
@@ -115,6 +122,7 @@ pub fn create_box(
         color,
         mat_type,
         extra,
+        texture_index,
     );
 }
 
@@ -128,7 +136,3 @@ pub fn rnd_range(min: f32, max: f32) -> f32 {
     let mut rng = rand::rng();
     rng.random_range(min..max)
 }
-
-// ※ load_gltf_nodes_skins_anims を loader.rs から呼び出す場合、ここに実装するか、
-// loader.rs 内に記述して呼び出す構成にしてください（相互依存回避のため loader.rs に書く方が無難です）。
-// ここでは省略します。

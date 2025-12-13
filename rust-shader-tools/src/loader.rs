@@ -11,9 +11,27 @@ pub fn load_gltf(
     nodes: &mut Vec<Node>,
     skins: &mut Vec<Skin>,
     animations: &mut Vec<Animation>,
+    textures: &mut Vec<Vec<u8>>, // 追加
     data: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (gltf, buffers, _) = gltf::import_slice(data)?;
+
+    // 0. Load Images -> Textures
+    for image in gltf.images() {
+        match image.source() {
+            gltf::image::Source::View { view, mime_type: _ } => {
+                let parent_buffer_data = &buffers[view.buffer().index()];
+                let begin = view.offset();
+                let end = begin + view.length();
+                let image_data = &parent_buffer_data[begin..end];
+                textures.push(image_data.to_vec());
+            }
+            _ => {
+                // URI参照などは今回はスキップ (or Empty)
+                textures.push(Vec::new());
+            }
+        }
+    }
 
     // 1. Load Meshes -> Geometries
     let mut mesh_map = HashMap::new();
@@ -87,10 +105,18 @@ pub fn load_gltf(
             let mat_type = 0; // Lambertian
             let extra = 0.0;
 
+            // Texture Index
+            let tex_info = pbr.base_color_texture();
+            let texture_index = if let Some(info) = tex_info {
+                info.texture().index() as f32
+            } else {
+                -1.0
+            };
+
             for chunk in indices.chunks(3) {
                 if chunk.len() == 3 {
                     geom.indices.extend_from_slice(chunk);
-                    geom.push_attributes(col, mat_type, extra);
+                    geom.push_attributes(col, mat_type, extra, texture_index);
                 }
             }
 

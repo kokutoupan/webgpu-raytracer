@@ -72,7 +72,7 @@ async function main() {
     totalFrameCount = 0;
   };
 
-  const loadScene = (name: string, autoStart = true) => {
+  const loadScene = async (name: string, autoStart = true) => {
     isRendering = false;
     console.log(`Loading Scene: ${name}...`);
 
@@ -87,10 +87,13 @@ async function main() {
     worldBridge.loadScene(name, objSource, glbData);
     worldBridge.printStats();
 
+    // ★追加: テクスチャ転送 (非同期)
+    await renderer.loadTexturesFromWorld(worldBridge);
+
     // Initial Buffer Upload
     renderer.updateGeometryBuffer('vertex', worldBridge.vertices);
     renderer.updateGeometryBuffer('normal', worldBridge.normals);
-    renderer.updateGeometryBuffer('uv', worldBridge.uvs); // ★追加: UV転送
+    renderer.updateGeometryBuffer('uv', worldBridge.uvs);
     renderer.updateGeometryBuffer('index', worldBridge.indices);
     renderer.updateGeometryBuffer('attr', worldBridge.attributes);
     renderer.updateGeometryBuffer('tlas', worldBridge.tlas);

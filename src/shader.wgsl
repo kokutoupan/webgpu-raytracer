@@ -25,7 +25,7 @@ const SPP = 1u;
 
 // Bindings 追加
 @group(0) @binding(11) var<storage, read> uvs: array<vec2<f32>>;
-@group(0) @binding(12) var tex: texture_2d<f32>;
+@group(0) @binding(12) var tex: texture_2d_array<f32>;
 @group(0) @binding(13) var smp: sampler;
 
 struct FrameInfo {
@@ -318,7 +318,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         }
 
         ray = Ray(ray.origin + hit.t * ray.direction + scat * 1e-4, scat);
-        let tex_color = textureSampleLevel(tex, smp, uv, 0.0).rgb;
+        let tex_idx = attr.data1.y;
+        var tex_color = vec3(1.0);
+        if (tex_idx > -0.5) {
+            tex_color = textureSampleLevel(tex, smp, uv, i32(tex_idx), 0.0).rgb;
+        }
         let final_albedo = albedo * tex_color;
 
         throughput *= final_albedo;

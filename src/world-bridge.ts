@@ -46,6 +46,16 @@ export class WorldBridge {
   get instances() { return this.getF32(this.world!.instances_ptr(), this.world!.instances_len()); }
   get cameraData() { return this.getF32(this.world!.camera_ptr(), 24); }
 
+  get textureCount() { return this.world?.get_texture_count() || 0; }
+
+  getTexture(index: number): Uint8Array | null {
+    if (!this.world) return null;
+    const ptr = this.world.get_texture_ptr(index);
+    const size = this.world.get_texture_size(index);
+    if (!ptr || size === 0) return null;
+    return new Uint8Array(this.wasmMemory!.buffer, ptr, size).slice();
+  }
+
   get hasWorld() { return !!this.world; }
 
   printStats() {

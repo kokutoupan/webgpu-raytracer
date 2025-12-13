@@ -65,10 +65,10 @@ impl Geometry {
         (self.vertices.len() / 4 - 1) as u32
     }
 
-    pub fn push_attributes(&mut self, color: Vec3, mat_type: u32, extra: f32) {
+    pub fn push_attributes(&mut self, color: Vec3, mat_type: u32, extra: f32, texture_index: f32) {
         let mat_bits = f32::from_bits(mat_type);
         self.attributes
-            .extend_from_slice(&[color.x, color.y, color.z, mat_bits, extra, 0.0, 0.0, 0.0]);
+            .extend_from_slice(&[color.x, color.y, color.z, mat_bits, extra, texture_index, 0.0, 0.0]);
     }
 
     pub fn from_mesh(mesh: &Mesh) -> Self {
@@ -77,6 +77,7 @@ impl Geometry {
         let color = vec3(0.8, 0.8, 0.8);
         let mat_type = 0; // LAMBERTIAN
         let extra = 0.0;
+        let texture_index = -1.0;
 
         for (i, v) in mesh.vertices.iter().enumerate() {
             let n = mesh.normals.get(i).copied().unwrap_or(vec3(0., 1., 0.));
@@ -87,7 +88,7 @@ impl Geometry {
         for chunk in mesh.indices.chunks(3) {
             if chunk.len() == 3 {
                 geo.indices.extend_from_slice(chunk);
-                geo.push_attributes(color, mat_type, extra);
+                geo.push_attributes(color, mat_type, extra, texture_index);
             }
         }
         geo
@@ -134,6 +135,7 @@ impl Geometry {
         color: Vec3,
         mat_type: u32,
         extra: f32,
+        texture_index: f32,
     ) {
         let e1 = v1 - v0;
         let e2 = v2 - v0;
@@ -145,7 +147,7 @@ impl Geometry {
         let i2 = self.push_vertex(v2, normal, vec2(0., 1.));
 
         self.indices.extend_from_slice(&[i0, i1, i2]);
-        self.push_attributes(color, mat_type, extra);
+        self.push_attributes(color, mat_type, extra, texture_index);
     }
 
     pub fn add_sphere(
@@ -155,6 +157,7 @@ impl Geometry {
         color: Vec3,
         mat_type: u32,
         extra: f32,
+        texture_index: f32,
     ) {
         let sectors = 24;
         let stacks = 12;
@@ -181,12 +184,12 @@ impl Geometry {
                 if i != 0 {
                     self.indices
                         .extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
-                    self.push_attributes(color, mat_type, extra);
+                    self.push_attributes(color, mat_type, extra, texture_index);
                 }
                 if i != (stacks - 1) {
                     self.indices
                         .extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
-                    self.push_attributes(color, mat_type, extra);
+                    self.push_attributes(color, mat_type, extra, texture_index);
                 }
             }
         }
@@ -201,6 +204,7 @@ impl Geometry {
         color: Vec3,
         mat_type: u32,
         extra: f32,
+        texture_index: f32,
     ) {
         if mesh.vertices.is_empty() {
             return;
@@ -223,7 +227,7 @@ impl Geometry {
                 self.indices.push(chunk[0] + start_offset);
                 self.indices.push(chunk[1] + start_offset);
                 self.indices.push(chunk[2] + start_offset);
-                self.push_attributes(color, mat_type, extra);
+                self.push_attributes(color, mat_type, extra, texture_index);
             }
         }
     }

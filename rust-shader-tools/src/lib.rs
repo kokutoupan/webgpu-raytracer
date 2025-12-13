@@ -57,6 +57,7 @@ impl World {
                 &mut scene_data.nodes,
                 &mut scene_data.skins,
                 &mut scene_data.animations,
+                &mut scene_data.textures,
                 &data,
             );
         }
@@ -101,6 +102,7 @@ impl World {
         let mut temp_nodes = Vec::new();
         let mut temp_skins = Vec::new();
         let mut new_anims = Vec::new();
+        let mut new_textures = Vec::new();
 
         if loader::load_gltf(
             &mut temp_geoms,
@@ -108,6 +110,7 @@ impl World {
             &mut temp_nodes,
             &mut temp_skins,
             &mut new_anims,
+            &mut new_textures,
             glb_data,
         )
         .is_ok()
@@ -259,6 +262,27 @@ impl World {
             return;
         }
         self.buffers.camera_data = self.scene.camera.create_buffer(width / height).to_vec();
+    }
+
+    // --- Texture Access ---
+    pub fn get_texture_count(&self) -> usize {
+        self.scene.textures.len()
+    }
+
+    pub fn get_texture_ptr(&self, index: usize) -> *const u8 {
+        if index < self.scene.textures.len() {
+            self.scene.textures[index].as_ptr()
+        } else {
+            std::ptr::null()
+        }
+    }
+
+    pub fn get_texture_size(&self, index: usize) -> usize {
+        if index < self.scene.textures.len() {
+            self.scene.textures[index].len()
+        } else {
+            0
+        }
     }
 
     // --- Internal Helpers ---
