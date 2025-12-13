@@ -1,5 +1,5 @@
 // src/renderer.ts
-import shaderCodeRaw from './shader.wgsl?raw';
+import shaderCodeRaw from './shader_debug.wgsl?raw';
 
 export class WebGPURenderer {
   device!: GPUDevice;
