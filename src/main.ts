@@ -121,7 +121,7 @@ async function main() {
 
     // アニメーション更新 (インターバル毎)
     if (updateInterval > 0 && frameCount >= updateInterval) {
-      worldBridge.update(totalFrameCount / updateInterval / 30);
+      worldBridge.update(totalFrameCount / updateInterval / 60);
 
       // 変更があったバッファのみ更新 (戻り値がtrueならBindGroup再生成が必要)
       let needsRebind = false;

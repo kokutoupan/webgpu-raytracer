@@ -137,7 +137,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
     // Push Root Node (Global Index)
@@ -193,7 +193,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if arrayLength(&tlas_nodes) == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
     if intersect_aabb(tlas_nodes[0].min_b, tlas_nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {

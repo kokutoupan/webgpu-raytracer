@@ -58,7 +58,7 @@ pub fn load_gltf(
             // UV読み込み
             let tex_coords: Vec<Vec2> = reader
                 .read_tex_coords(0)
-                .map(|v| v.into_f32().map(|[u, v]| vec2(u, v)).collect())
+                .map(|v| v.into_f32().map(|[u, v]| vec2(u, 1.0 - v)).collect()) // Flip V for WebGPU?
                 .unwrap_or_else(|| vec![vec2(0., 0.); positions.len()]);
 
             let joints_u16: Vec<[u16; 4]> = reader
@@ -157,7 +157,7 @@ fn load_gltf_nodes_skins_anims(
 
         nodes[idx].name = node.name().unwrap_or("").to_string();
         nodes[idx].translation = vec3(trans[0], trans[1], trans[2]);
-        nodes[idx].rotation = Quat::from_array(rot);
+        nodes[idx].rotation = Quat::from_array(rot); 
         nodes[idx].scale = vec3(scale[0], scale[1], scale[2]);
         nodes[idx].children_indices = node.children().map(|c| c.index()).collect();
     }

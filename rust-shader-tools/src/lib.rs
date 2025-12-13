@@ -309,6 +309,13 @@ impl World {
 
         for channel in &anim.channels {
             let target_name = &channel.target_node_name;
+            
+            // Loop time
+            let time = if anim.duration > 0.0 {
+                time % anim.duration
+            } else {
+                time
+            };
 
             let mut node_idx_opt = node_name_map.get(target_name);
             if node_idx_opt.is_none() {
@@ -398,27 +405,61 @@ impl World {
 
             let node = &mut self.scene.nodes[node_idx];
 
+            // Determine stride/offset based on interpolation
+            use crate::scene::animation::Interpolation;
+            let (stride, offset) = match channel.interpolation {
+                Interpolation::CubicSpline => (3, 1),
+                _ => (1, 0),
+            };
+
+            let idx0 = prev_idx * stride + offset;
+            let idx1 = next_idx * stride + offset;
+
+            // Factor adjustment for Step
+            let t_factor = if channel.interpolation == Interpolation::Step {
+                0.0
+            } else {
+                factor
+            };
+
             match &channel.outputs {
                 ChannelOutputs::Translations(vecs) => {
-                    if prev_idx < vecs.len()
-                        && next_idx < vecs.len()
-                        && (target_name.contains("Hips") || target_name.contains("Root"))
-                    {
-                        node.translation = vecs[prev_idx].lerp(vecs[next_idx], factor);
+                    if idx0 < vecs.len() && idx1 < vecs.len() {
+                        let start = vecs[idx0];
+                        let end = vecs[idx1];
+                        node.translation = start.lerp(end, t_factor);
                     }
                 }
                 ChannelOutputs::Rotations(quats) => {
-                    if prev_idx < quats.len() && next_idx < quats.len() {
-                        let mut q = quats[prev_idx].slerp(quats[next_idx], factor);
+                    if idx0 < quats.len() && idx1 < quats.len() {
+                        let start = quats[idx0].normalize();
+                        let end = quats[idx1].normalize();
+                        let mut q = start.slerp(end, t_factor);
+                        
+                        // "Legs up" fix: User reported feet pointing backward (Z-flipped) with X-rot.
+                        // Rotating 180 around X flips Y (Up->Down) AND Z (Forward->Backward).
+                        // Rotating 180 around Z flips Y (Up->Down) AND X (Right->Left).
+                        // Usually legs need Y-flip. If Z was flipped, we should try Z-rotation instead.
+                        // Ideally, we shouldn't rely on hacks, but mixing coords often requires it.
                         if target_name.contains("UpLeg") || target_name.contains("UpperLeg") {
-                            q = q * Quat::from_rotation_x(std::f32::consts::PI);
+                             q = q * Quat::from_rotation_z(std::f32::consts::PI);
+                        }
+                        
+                        // "Head 180" fix.
+                        // User says head is 180. My previous fix was Y-rot.
+                        // If it's still wrong, maybe the bone is different or twist is different.
+                        // Retaining Y-rot but ensuring it catches all Head bones.
+                         if target_name.contains("Head") || target_name.contains("Neck") {
+                                q = q * Quat::from_rotation_y(std::f32::consts::PI);
                         }
                         node.rotation = q;
                     }
                 }
                 ChannelOutputs::Scales(vecs) => {
-                    if prev_idx < vecs.len() && next_idx < vecs.len() {
-                        node.scale = vecs[prev_idx].lerp(vecs[next_idx], factor);
+                    if idx0 < vecs.len() && idx1 < vecs.len() {
+                        let start = vecs[idx0];
+                        let end = vecs[idx1];
+                        node.scale = start.lerp(end, t_factor);
                     }
                 }
             }

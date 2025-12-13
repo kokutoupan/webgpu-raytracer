@@ -1,7 +1,7 @@
 // src/scene/animation.rs
 use glam::{Quat, Vec3};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Interpolation {
     Linear,
     Step,

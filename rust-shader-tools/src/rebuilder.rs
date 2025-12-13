@@ -74,10 +74,14 @@ pub fn build_blas_and_vertices(
                 }
 
                 let p = mat.transform_point3(pos);
-                let n = mat.transform_vector3(norm).normalize();
+                let mut n = mat.transform_vector3(norm).normalize_or_zero();
+                
+                // Sanitize NaNs
+                let p_safe = if p.is_nan() { Vec3::ZERO } else { p };
+                let n_safe = if n.is_nan() { Vec3::Z } else { n };
 
-                v_vec4.extend_from_slice(&[p.x, p.y, p.z, 1.0]);
-                n_vec4.extend_from_slice(&[n.x, n.y, n.z, 0.0]);
+                v_vec4.extend_from_slice(&[p_safe.x, p_safe.y, p_safe.z, 1.0]);
+                n_vec4.extend_from_slice(&[n_safe.x, n_safe.y, n_safe.z, 0.0]);
                 uv_vec2.extend_from_slice(&[uv.x, uv.y]);
             }
         } else {
@@ -90,8 +94,12 @@ pub fn build_blas_and_vertices(
                     glam::Vec2::ZERO
                 };
 
-                v_vec4.extend_from_slice(&[p.x, p.y, p.z, 1.0]);
-                n_vec4.extend_from_slice(&[n.x, n.y, n.z, 0.0]);
+                // Sanitize NaNs
+                let p_safe = if p.is_nan() { Vec3::ZERO } else { p };
+                let n_safe = if n.is_nan() { Vec3::Z } else { n };
+
+                v_vec4.extend_from_slice(&[p_safe.x, p_safe.y, p_safe.z, 1.0]);
+                n_vec4.extend_from_slice(&[n_safe.x, n_safe.y, n_safe.z, 0.0]);
                 uv_vec2.extend_from_slice(&[uv.x, uv.y]);
             }
         }
