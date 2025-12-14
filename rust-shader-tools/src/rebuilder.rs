@@ -74,7 +74,7 @@ pub fn build_blas_and_vertices(
                 }
 
                 let p = mat.transform_point3(pos);
-                let mut n = mat.transform_vector3(norm).normalize_or_zero();
+                let n = mat.transform_vector3(norm).normalize_or_zero();
                 
                 // Sanitize NaNs
                 let p_safe = if p.is_nan() { Vec3::ZERO } else { p };

@@ -15,7 +15,6 @@ const inputDepth = document.getElementById('max-depth') as HTMLInputElement;
 const inputSPP = document.getElementById('spp-frame') as HTMLInputElement;
 const btnRecompile = document.getElementById('recompile-btn') as HTMLButtonElement;
 const inputUpdateInterval = document.getElementById('update-interval') as HTMLInputElement;
-// const inputTexFile = document.getElementById('tex-file') as HTMLInputElement; // Removed
 const animSelect = document.getElementById('anim-select') as HTMLSelectElement;
 
 // --- Stats UI ---
@@ -189,9 +188,6 @@ async function main() {
     sceneSelect.value = "viewer";
     loadScene("viewer", false); // Auto-start rendering is false
   });
-
-
-
   // --- Animation Selection ---
   const updateAnimList = () => {
     const list = worldBridge.getAnimationList();

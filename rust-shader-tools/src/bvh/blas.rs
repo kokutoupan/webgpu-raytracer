@@ -11,7 +11,6 @@ struct Bin {
 
 pub struct BVHBuilder<'a> {
     pub nodes: Vec<BVHNode>,
-    vertices: &'a [f32],
     indices: &'a [u32],
     tri_indices: Vec<usize>,
     tri_aabbs: Vec<AABB>,
@@ -58,7 +57,6 @@ impl<'a> BVHBuilder<'a> {
 
         Self {
             nodes: Vec::new(),
-            vertices,
             indices,
             tri_indices: Vec::new(),
             tri_aabbs,
