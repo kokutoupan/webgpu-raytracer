@@ -3,8 +3,8 @@ use crate::bvh::{Instance, tlas::TLASBuilder};
 use crate::mesh::Mesh;
 use crate::render_buffers::RenderBuffers;
 use crate::scene::SceneData;
-use glam::{Mat4, Quat, Vec3};
-use std::collections::HashMap;
+use glam::{Mat4, Vec3};
+// use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
 pub mod bvh;
@@ -33,6 +33,9 @@ pub struct World {
     blas_root_offsets: Vec<u32>,
     instance_blas_aabbs: Vec<crate::primitives::AABB>,
     raw_instances: Vec<Instance>,
+    
+    // Animation State
+    active_anim_index: usize,
 }
 
 #[wasm_bindgen]
@@ -89,11 +92,34 @@ impl World {
             blas_root_offsets: Vec::new(),
             instance_blas_aabbs,
             raw_instances,
+            active_anim_index: 0,
         };
 
         // 初回計算
         world.update(0.0);
         world
+    }
+
+    // --- Animation Control ---
+    
+    pub fn get_animation_count(&self) -> usize {
+        self.scene.animations.len()
+    }
+
+    pub fn get_animation_name(&self, index: usize) -> String {
+        if index < self.scene.animations.len() {
+            self.scene.animations[index].name.clone()
+        } else {
+            "".to_string()
+        }
+    }
+
+    pub fn set_animation(&mut self, index: usize) {
+        if index < self.scene.animations.len() {
+            self.active_anim_index = index;
+            // Immediate reset/apply could be done here if needed, 
+            // but update() loop handles it.
+        }
     }
 
     pub fn load_animation_glb(&mut self, glb_data: &[u8]) {
@@ -122,9 +148,25 @@ impl World {
     pub fn update(&mut self, time: f32) {
         // 1. Animation
         if !self.scene.animations.is_empty() {
-            let anim_idx = 0;
+            let anim_idx = if self.active_anim_index < self.scene.animations.len() {
+                self.active_anim_index
+            } else {
+                0
+            };
+            
             let anim = &self.scene.animations[anim_idx];
-            let t = time % anim.duration;
+            let duration = anim.duration;
+
+            if time == 0.0 {
+                 let msg = format!(">> Playing Anim [{}]: '{}'", anim_idx, anim.name);
+                 web_sys::console::log_1(&msg.into());
+            }
+
+            let t = if duration > 0.001 {
+                time % duration
+            } else {
+                0.0
+            };
             self.apply_animation(anim_idx, t);
         }
 
@@ -302,61 +344,19 @@ impl World {
         use crate::scene::animation::ChannelOutputs;
 
         let anim = &self.scene.animations[anim_idx];
-        let mut node_name_map = HashMap::new();
-        for (i, node) in self.scene.nodes.iter().enumerate() {
-            node_name_map.insert(node.name.clone(), i);
-        }
 
         for channel in &anim.channels {
-            let target_name = &channel.target_node_name;
-            
+            // Use index directly
+            let node_idx = channel.target_node_index;
+            if node_idx >= self.scene.nodes.len() {
+                continue;
+            }
+
             // Loop time
             let time = if anim.duration > 0.0 {
                 time % anim.duration
             } else {
                 time
-            };
-
-            let mut node_idx_opt = node_name_map.get(target_name);
-            if node_idx_opt.is_none() {
-                // Name resolving logic
-                let stripped = target_name
-                    .replace("mixamorig:", "")
-                    .replace("mixamorig", "");
-                if let Some(idx) = node_name_map.get(&stripped) {
-                    node_idx_opt = Some(idx);
-                } else if let Some(idx) = node_name_map.get(&format!("J_Bip_C_{}", stripped)) {
-                    node_idx_opt = Some(idx);
-                } else if let Some(rest) = stripped.strip_prefix("Left") {
-                    let vrm_l = format!("J_Bip_L_{}", rest);
-                    node_idx_opt = node_name_map.get(&vrm_l);
-                    if node_idx_opt.is_none() && rest == "Arm" {
-                        node_idx_opt = node_name_map.get("J_Bip_L_UpperArm");
-                    }
-                    if node_idx_opt.is_none() && rest == "ForeArm" {
-                        node_idx_opt = node_name_map.get("J_Bip_L_LowerArm");
-                    }
-                    if node_idx_opt.is_none() && rest == "UpLeg" {
-                        node_idx_opt = node_name_map.get("J_Bip_L_UpperLeg");
-                    }
-                } else if let Some(rest) = stripped.strip_prefix("Right") {
-                    let vrm_r = format!("J_Bip_R_{}", rest);
-                    node_idx_opt = node_name_map.get(&vrm_r);
-                    if node_idx_opt.is_none() && rest == "Arm" {
-                        node_idx_opt = node_name_map.get("J_Bip_R_UpperArm");
-                    }
-                    if node_idx_opt.is_none() && rest == "ForeArm" {
-                        node_idx_opt = node_name_map.get("J_Bip_R_LowerArm");
-                    }
-                    if node_idx_opt.is_none() && rest == "UpLeg" {
-                        node_idx_opt = node_name_map.get("J_Bip_R_UpperLeg");
-                    }
-                }
-            }
-
-            let node_idx = match node_idx_opt {
-                Some(&idx) => idx,
-                None => continue,
             };
 
             let inputs = &channel.inputs;
@@ -434,24 +434,8 @@ impl World {
                     if idx0 < quats.len() && idx1 < quats.len() {
                         let start = quats[idx0].normalize();
                         let end = quats[idx1].normalize();
-                        let mut q = start.slerp(end, t_factor);
-                        
-                        // "Legs up" fix: User reported feet pointing backward (Z-flipped) with X-rot.
-                        // Rotating 180 around X flips Y (Up->Down) AND Z (Forward->Backward).
-                        // Rotating 180 around Z flips Y (Up->Down) AND X (Right->Left).
-                        // Usually legs need Y-flip. If Z was flipped, we should try Z-rotation instead.
-                        // Ideally, we shouldn't rely on hacks, but mixing coords often requires it.
-                        if target_name.contains("UpLeg") || target_name.contains("UpperLeg") {
-                             q = q * Quat::from_rotation_z(std::f32::consts::PI);
-                        }
-                        
-                        // "Head 180" fix.
-                        // User says head is 180. My previous fix was Y-rot.
-                        // If it's still wrong, maybe the bone is different or twist is different.
-                        // Retaining Y-rot but ensuring it catches all Head bones.
-                         if target_name.contains("Head") || target_name.contains("Neck") {
-                                q = q * Quat::from_rotation_y(std::f32::consts::PI);
-                        }
+                        let q = start.slerp(end, t_factor);
+                        // Removed hacks for Head/Legs
                         node.rotation = q;
                     }
                 }

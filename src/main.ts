@@ -10,14 +10,13 @@ const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
 const inputFile = document.getElementById('obj-file') as HTMLInputElement;
 if (inputFile) inputFile.accept = ".obj,.glb,.vrm";
-const inputAnimFile = document.getElementById('anim-file') as HTMLInputElement;
-if (inputAnimFile) inputAnimFile.accept = ".glb,.gltf";
 
 const inputDepth = document.getElementById('max-depth') as HTMLInputElement;
 const inputSPP = document.getElementById('spp-frame') as HTMLInputElement;
 const btnRecompile = document.getElementById('recompile-btn') as HTMLButtonElement;
 const inputUpdateInterval = document.getElementById('update-interval') as HTMLInputElement;
-const inputTexFile = document.getElementById('tex-file') as HTMLInputElement;
+// const inputTexFile = document.getElementById('tex-file') as HTMLInputElement; // Removed
+const animSelect = document.getElementById('anim-select') as HTMLSelectElement;
 
 // --- Stats UI ---
 const statsDiv = document.createElement("div");
@@ -101,6 +100,7 @@ async function main() {
     renderer.updateGeometryBuffer('instance', worldBridge.instances);
 
     updateResolution(); // Camera update & BindGroup creation included
+    updateAnimList(); // ★ Populate animation list
 
     if (autoStart) {
       isRendering = true;
@@ -187,35 +187,38 @@ async function main() {
       currentFileType = 'glb';
     }
     sceneSelect.value = "viewer";
-    loadScene("viewer", false);
+    loadScene("viewer", false); // Auto-start rendering is false
   });
 
-  inputAnimFile.addEventListener("change", async (e) => {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    if (!f) return;
-    console.log(`Loading Motion: ${f.name}...`);
-    const buffer = await f.arrayBuffer();
-    worldBridge.loadAnimation(new Uint8Array(buffer));
-    console.log("Motion Loaded!");
-    (e.target as HTMLInputElement).value = "";
-  });
 
-  // ★追加: テクスチャ読み込みイベント
-  if (inputTexFile) {
-    inputTexFile.addEventListener("change", async (e) => {
-      const f = (e.target as HTMLInputElement).files?.[0];
-      if (!f) return;
 
-      console.log(`Loading Texture: ${f.name}`);
-      isRendering = false; // 一旦停止
-
-      await renderer.loadTexture(f); // 画像ロード & テクスチャ生成
-      renderer.recreateBindGroup();  // BindGroupを作り直してテクスチャを差し替え
-      renderer.resetAccumulation();  // 描画リセット
-
-      isRendering = true; // 再開
+  // --- Animation Selection ---
+  const updateAnimList = () => {
+    const list = worldBridge.getAnimationList();
+    animSelect.innerHTML = "";
+    if (list.length === 0) {
+      const opt = document.createElement("option");
+      opt.text = "No Anim";
+      animSelect.add(opt);
+      animSelect.disabled = true;
+      return;
+    }
+    animSelect.disabled = false;
+    list.forEach((name, i) => {
+      const opt = document.createElement("option");
+      opt.text = `[${i}] ${name}`;
+      opt.value = i.toString();
+      animSelect.add(opt);
     });
-  }
+    // Default to 0? Or keep current?
+    // User requested switching. Default 0 is fine.
+    animSelect.value = "0";
+  };
+
+  animSelect.addEventListener("change", () => {
+    const idx = parseInt(animSelect.value, 10);
+    worldBridge.setAnimation(idx);
+  });
 
   // Start
   updateResolution();

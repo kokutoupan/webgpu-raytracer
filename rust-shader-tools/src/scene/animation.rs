@@ -10,9 +10,8 @@ pub enum Interpolation {
 
 #[derive(Clone, Debug)]
 pub struct Channel {
-    // ターゲットをインデックスではなく「名前」で持つことで、
-    // 別のモデルのモーションを適用(リターゲティング)しやすくする
-    pub target_node_name: String,
+    // ターゲットをインデックスで持つ
+    pub target_node_index: usize,
     pub inputs: Vec<f32>, // Time keys
     pub outputs: ChannelOutputs,
     pub interpolation: Interpolation,

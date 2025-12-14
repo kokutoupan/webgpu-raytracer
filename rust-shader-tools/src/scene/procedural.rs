@@ -687,7 +687,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
 
     SceneData {
         camera: CameraConfig {
-            lookfrom: vec3(0., 3., -6.),
+            lookfrom: vec3(0., 3., 6.),
             lookat: vec3(0., 1., 0.),
             vup: vec3(0., 1., 0.),
             vfov: 20.,

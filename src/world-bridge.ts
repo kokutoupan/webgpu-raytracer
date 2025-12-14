@@ -28,6 +28,20 @@ export class WorldBridge {
     this.world?.load_animation_glb(data);
   }
 
+  getAnimationList(): string[] {
+    if (!this.world) return [];
+    const count = this.world.get_animation_count();
+    const list: string[] = [];
+    for (let i = 0; i < count; i++) {
+      list.push(this.world.get_animation_name(i));
+    }
+    return list;
+  }
+
+  setAnimation(index: number) {
+    this.world?.set_animation(index);
+  }
+
   // --- Data Accessors ---
   private getF32(ptr: number, len: number) {
     return new Float32Array(this.wasmMemory!.buffer, ptr, len);
