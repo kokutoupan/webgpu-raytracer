@@ -5,7 +5,7 @@ import * as WebMMuxer from 'webm-muxer'; // WebM (VP9)
 
 // --- DOM Elements ---
 const canvas = document.getElementById('gpu-canvas') as HTMLCanvasElement;
-const btn = document.getElementById('render-btn') as HTMLButtonElement; // ★ここが重要
+const btn = document.getElementById('render-btn') as HTMLButtonElement; 
 const sceneSelect = document.getElementById('scene-select') as HTMLSelectElement;
 const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
@@ -37,7 +37,7 @@ document.body.appendChild(statsDiv);
 // --- Global State ---
 let frameCount = 0;
 let isRendering = false;
-let isRecording = false; // 録画中フラグ
+let isRecording = false; 
 let currentFileData: string | ArrayBuffer | null = null;
 let currentFileType: 'obj' | 'glb' | null = null;
 
@@ -67,10 +67,12 @@ async function main() {
   const updateResolution = () => {
     const w = parseInt(inputWidth.value, 10) || 720;
     const h = parseInt(inputHeight.value, 10) || 480;
-    renderer.updateScreenSize(w, h);
+    renderer.updateScreenSize(w, h); // This also resets accumulation
+    
+    // Camera update is part of uniform update now, will happen in render loop or explicit call
     if (worldBridge.hasWorld) {
-      worldBridge.updateCamera(w, h);
-      renderer.updateCameraBuffer(worldBridge.cameraData);
+        worldBridge.updateCamera(w, h);
+        renderer.updateSceneUniforms(worldBridge.cameraData, 0);
     }
     renderer.recreateBindGroup();
     renderer.resetAccumulation();
@@ -96,16 +98,14 @@ async function main() {
     await renderer.loadTexturesFromWorld(worldBridge);
 
     // Initial Buffer Upload
-    renderer.updateGeometryBuffer('vertex', worldBridge.vertices);
-    renderer.updateGeometryBuffer('normal', worldBridge.normals);
-    renderer.updateGeometryBuffer('uv', worldBridge.uvs);
-    renderer.updateGeometryBuffer('index', worldBridge.indices);
-    renderer.updateGeometryBuffer('attr', worldBridge.attributes);
-    renderer.updateGeometryBuffer('tlas', worldBridge.tlas);
-    renderer.updateGeometryBuffer('blas', worldBridge.blas);
-    renderer.updateGeometryBuffer('instance', worldBridge.instances);
+    renderer.updateCombinedGeometry(worldBridge.vertices, worldBridge.normals, worldBridge.uvs);
+    renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
+    
+    renderer.updateBuffer('index', worldBridge.indices);
+    renderer.updateBuffer('attr', worldBridge.attributes);
+    renderer.updateBuffer('instance', worldBridge.instances);
 
-    updateResolution();
+    updateResolution(); // This triggers recreateBindGroup
     updateAnimList();
 
     if (autoStart) {
@@ -123,20 +123,17 @@ async function main() {
 
     btnRecord.textContent = "Initializing...";
     btnRecord.disabled = true;
-    if (btn) btn.textContent = "Resume Rendering"; // 録画中は通常再生ボタンのテキストを戻す
+    if (btn) btn.textContent = "Resume Rendering"; 
 
     const fps = parseInt(inputRecFps.value, 10) || 30;
     const duration = parseInt(inputRecDur.value, 10) || 3;
     const totalFrames = fps * duration;
 
-    // UIから設定を取得
     const samplesPerFrame = parseInt(inputRecSPP.value, 10) || 64;
     const batchSize = parseInt(inputRecBatch.value, 10) || 4;
 
     console.log(`Starting recording: ${totalFrames} frames @ ${fps}fps (VP9)`);
-    console.log(`Quality: ${samplesPerFrame} SPP, Batch: ${batchSize}`);
 
-    // WebM Muxer Setup
     const muxer = new WebMMuxer.Muxer({
       target: new WebMMuxer.ArrayBufferTarget(),
       video: {
@@ -153,7 +150,7 @@ async function main() {
     });
 
     videoEncoder.configure({
-      codec: 'vp09.00.10.08', // VP9
+      codec: 'vp09.00.10.08', 
       width: canvas.width,
       height: canvas.height,
       bitrate: 12_000_000,
@@ -165,19 +162,23 @@ async function main() {
 
         await new Promise(r => setTimeout(r, 0));
 
-        // 1. 時間更新
         const time = i / fps;
         worldBridge.update(time);
 
         // 2. ジオメトリ更新
         let needsRebind = false;
-        needsRebind ||= renderer.updateGeometryBuffer('tlas', worldBridge.tlas);
-        needsRebind ||= renderer.updateGeometryBuffer('blas', worldBridge.blas);
-        needsRebind ||= renderer.updateGeometryBuffer('instance', worldBridge.instances);
-        needsRebind ||= renderer.updateGeometryBuffer('vertex', worldBridge.vertices);
-        needsRebind ||= renderer.updateGeometryBuffer('normal', worldBridge.normals);
-        needsRebind ||= renderer.updateGeometryBuffer('index', worldBridge.indices);
-        needsRebind ||= renderer.updateGeometryBuffer('attr', worldBridge.attributes);
+        needsRebind ||= renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
+        needsRebind ||= renderer.updateBuffer('instance', worldBridge.instances);
+        
+        // Skinning support: Vertices/Normals need update every frame
+        needsRebind ||= renderer.updateCombinedGeometry(worldBridge.vertices, worldBridge.normals, worldBridge.uvs);
+        
+        // BVH Rebuild sorts triangles, so indices and attributes change order every frame!
+        needsRebind ||= renderer.updateBuffer('index', worldBridge.indices);
+        needsRebind ||= renderer.updateBuffer('attr', worldBridge.attributes);
+
+        worldBridge.updateCamera(canvas.width, canvas.height); // Ensure camera matches
+        renderer.updateSceneUniforms(worldBridge.cameraData, 0);
 
         if (needsRebind) renderer.recreateBindGroup();
         renderer.resetAccumulation();
@@ -186,15 +187,11 @@ async function main() {
         let samplesDone = 0;
         while (samplesDone < samplesPerFrame) {
           const batch = Math.min(batchSize, samplesPerFrame - samplesDone);
-
           for (let k = 0; k < batch; k++) {
-            renderer.render(samplesDone + k);
+             renderer.render(samplesDone + k);
           }
           samplesDone += batch;
-
           await renderer.device.queue.onSubmittedWorkDone();
-
-          // 次のバッチがある場合のみ待機 (黒画面対策)
           if (samplesDone < samplesPerFrame) {
             await new Promise(r => setTimeout(r, 0));
           }
@@ -244,7 +241,7 @@ async function main() {
   let frameTimer = 0;
 
   const renderFrame = () => {
-    if (isRecording) return; // 録画中はスキップ
+    if (isRecording) return; 
 
     requestAnimationFrame(renderFrame);
     if (!isRendering || !worldBridge.hasWorld) return;
@@ -256,25 +253,47 @@ async function main() {
       worldBridge.update(totalFrameCount / updateInterval / 60);
 
       let needsRebind = false;
-      needsRebind ||= renderer.updateGeometryBuffer('tlas', worldBridge.tlas);
-      needsRebind ||= renderer.updateGeometryBuffer('blas', worldBridge.blas);
-      needsRebind ||= renderer.updateGeometryBuffer('instance', worldBridge.instances);
-      needsRebind ||= renderer.updateGeometryBuffer('vertex', worldBridge.vertices);
-      needsRebind ||= renderer.updateGeometryBuffer('normal', worldBridge.normals);
-      needsRebind ||= renderer.updateGeometryBuffer('index', worldBridge.indices);
-      needsRebind ||= renderer.updateGeometryBuffer('attr', worldBridge.attributes);
+      needsRebind ||= renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
+      needsRebind ||= renderer.updateBuffer('instance', worldBridge.instances);
+      needsRebind ||= renderer.updateCombinedGeometry(worldBridge.vertices, worldBridge.normals, worldBridge.uvs);
+      
+      // BVH Rebuild sorts triangles, so indices and attributes change order every frame!
+      needsRebind ||= renderer.updateBuffer('index', worldBridge.indices);
+      needsRebind ||= renderer.updateBuffer('attr', worldBridge.attributes);
+      
+      worldBridge.updateCamera(canvas.width, canvas.height);
+      renderer.updateSceneUniforms(worldBridge.cameraData, 0);
 
       if (needsRebind) {
         renderer.recreateBindGroup();
       }
       renderer.resetAccumulation();
-      frameCount = 0;
+      frameCount = 0; 
+    } else {
+        // Even if no update, we might want camera updates if we had controls (mouse orbit etc not impl yet but good practice)
+        // For now, static camera.
     }
 
     frameCount++;
     frameTimer++;
     totalFrameCount++;
-
+    
+    // Update uniforms (camera, frame)
+    // Actually we should separate camera update from animation update
+    // But user controls camera implicitly via WASM update currently if WASM has camera controls?
+    // The WASM `update_camera` is mostly for aspect ratio. 
+    // Let's ensure uniforms are up to date.
+    // Optimization: Only update if changed? 
+    // Always updating is safer for now.
+    
+    // We update sceneUniforms with frameCount. But wait, renderer.render() also updates frameCount in uniforms.
+    // renderer.updateSceneUniforms(worldBridge.cameraData, frameCount); 
+    // The renderer.render() call handles frameCount partial update. 
+    // But we need to ensure camera data is there.
+    
+    // renderer.updateSceneUniforms should only be called if camera changes or BLAS offset changes.
+    // We already called it during update interval or load.
+    
     renderer.render(frameCount);
 
     const now = performance.now();
