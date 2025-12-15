@@ -25,15 +25,8 @@ struct SceneUniforms {
     camera: Camera,
     frame_count: u32,
     blas_base_idx: u32, // Start index of BLAS nodes in 'nodes' array
-    pad1: u32,
+    vertex_count: u32,
     pad2: u32
-}
-
-struct Vertex {
-    pos: vec4<f32>,
-    normal: vec4<f32>,
-    uv: vec2<f32>,
-    pad: vec2<f32> // Pad to 48 bytes (vec4 + vec4 + vec4)
 }
 
 struct TriangleAttributes {
@@ -69,7 +62,7 @@ struct Instance {
 @group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> scene: SceneUniforms;
 
-@group(0) @binding(3) var<storage, read> geometry: array<Vertex>; // Merged Verts/Normals/UVs
+@group(0) @binding(3) var<storage, read> geometry: array<f32>; // [Pos(4)... | Norm(4)... | UV(2)...]
 @group(0) @binding(4) var<storage, read> indices: array<u32>;
 @group(0) @binding(5) var<storage, read> attributes: array<TriangleAttributes>;
 @group(0) @binding(6) var<storage, read> nodes: array<BVHNode>; // Merged TLAS/BLAS
@@ -79,6 +72,20 @@ struct Instance {
 @group(0) @binding(9) var smp: sampler;
 
 // --- Helpers ---
+
+// Accessors
+fn get_pos(idx: u32) -> vec3<f32> {
+    let i = idx * 4u;
+    return vec3(geometry[i], geometry[i + 1u], geometry[i + 2u]);
+}
+fn get_normal(idx: u32) -> vec3<f32> {
+    let i = (scene.vertex_count * 4u) + (idx * 4u);
+    return vec3(geometry[i], geometry[i + 1u], geometry[i + 2u]);
+}
+fn get_uv(idx: u32) -> vec2<f32> {
+    let i = (scene.vertex_count * 8u) + (idx * 2u);
+    return vec2(geometry[i], geometry[i + 1u]);
+}
 
 struct Ray {
     origin: vec3<f32>,
@@ -149,7 +156,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 64>;
+    var stack: array<u32, 48>;
     var stackptr = 0u;
 
     // Root Node (Global Index in 'nodes' array)
@@ -163,7 +170,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
 
     while stackptr > 0u {
         stackptr--;
-        let idx = stack[stackptr]; 
+        let idx = stack[stackptr];
         let node = nodes[idx];
         let count = u32(node.tri_count);
 
@@ -175,17 +182,17 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
                 let b = tri_id * 3u;
                 
                 // Get vertices from geometry buffer
-                let v0 = geometry[indices[b]].pos.xyz;
-                let v1 = geometry[indices[b+1u]].pos.xyz;
-                let v2 = geometry[indices[b+2u]].pos.xyz;
-                
+                let v0 = get_pos(indices[b]);
+                let v1 = get_pos(indices[b + 1u]);
+                let v2 = get_pos(indices[b + 2u]);
+
                 let t = hit_triangle_raw(v0, v1, v2, r, t_min, closest_t);
                 if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
             }
         } else {
             // Internal Node
             // node.left_first is RELATIVE to the start of this BLAS.
-            let l = u32(node.left_first) + node_start_idx; 
+            let l = u32(node.left_first) + node_start_idx;
             let r_node_idx = l + 1u;
 
             let nl = nodes[l];
@@ -212,7 +219,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if scene.blas_base_idx == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 64>;
+    var stack: array<u32, 24>;
     var stackptr = 0u;
 
     if intersect_aabb(nodes[0].min_b, nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {
@@ -228,7 +235,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
             let inst_idx = u32(node.left_first);
             let inst = instances[inst_idx];
             let inv = get_inv_transform(inst);
-            
+
             let r_local = Ray((inv * vec4(r.origin, 1.0)).xyz, (inv * vec4(r.direction, 0.0)).xyz);
             
             // BLAS start = global BLAS base + instance specific offset
@@ -273,33 +280,38 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         if hit.inst_idx < 0 { return vec3<f32>(0.0); }
 
         let inst = instances[u32(hit.inst_idx)];
-        let tri_idx = u32(hit.tri_idx); 
+        let tri_idx = u32(hit.tri_idx);
 
         let i0 = indices[tri_idx * 3u];
         let i1 = indices[tri_idx * 3u + 1u];
         let i2 = indices[tri_idx * 3u + 2u];
 
-        // Retrieve properties from merged geometry buffer
-        let v0 = geometry[i0];
-        let v1 = geometry[i1];
-        let v2 = geometry[i2];
+        // Retrieve properties from separate geometry blocks
+        let v0_pos = get_pos(i0);
+        let v1_pos = get_pos(i1);
+        let v2_pos = get_pos(i2);
 
         // Normal Interpolation
         let inv = get_inv_transform(inst);
         let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
 
-        let e1 = v1.pos.xyz - v0.pos.xyz;
-        let e2 = v2.pos.xyz - v0.pos.xyz;
+        let e1 = v1_pos - v0_pos;
+        let e2 = v2_pos - v0_pos;
         let h = cross(r_local.direction, e2);
         let a = dot(e1, h);
         let f = 1.0 / a;
-        let s = r_local.origin - v0.pos.xyz;
+        let s = r_local.origin - v0_pos;
         let u = f * dot(s, h);
         let q = cross(s, e1);
         let v = f * dot(r_local.direction, q);
         let w = 1.0 - u - v;
 
-        let ln = normalize(v0.normal.xyz * w + v1.normal.xyz * u + v2.normal.xyz * v);
+        // Load Normals
+        let n0 = get_normal(i0);
+        let n1 = get_normal(i1);
+        let n2 = get_normal(i2);
+
+        let ln = normalize(n0 * w + n1 * u + n2 * v);
         let wn = normalize((vec4(ln, 0.0) * inv).xyz);
 
         var n = wn;
@@ -307,7 +319,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         n = select(-n, n, front);
 
         // Interpolate UV
-        let tex_uv = v0.uv * w + v1.uv * u + v2.uv * v;
+        let uv0 = get_uv(i0);
+        let uv1 = get_uv(i1);
+        let uv2 = get_uv(i2);
+
+        let tex_uv = uv0 * w + uv1 * u + uv2 * v;
 
         // Attributes
         let attr = attributes[tri_idx];
@@ -339,7 +355,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         ray = Ray(ray.origin + hit.t * ray.direction + scat * 1e-4, scat);
         let tex_idx = attr.data1.y;
         var tex_color = vec3(1.0);
-        if (tex_idx > -0.5) {
+        if tex_idx > -0.5 {
             tex_color = textureSampleLevel(tex, smp, tex_uv, i32(tex_idx), 0.0).rgb;
         }
         let final_albedo = albedo * tex_color;
