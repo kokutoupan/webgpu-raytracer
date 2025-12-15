@@ -434,7 +434,7 @@ class Si {
     if (!navigator.gpu) throw new Error("WebGPU not supported.");
     const t = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
     if (!t) throw new Error("No adapter");
-    console.log("Max Storage Buffers Per Shader Stage:", t.limits.maxStorageBuffersPerShaderStage), this.device = await t.requestDevice({ requiredLimits: { maxStorageBuffersPerShaderStage: 16 } }), this.context = this.canvas.getContext("webgpu"), this.context.configure({ device: this.device, format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT }), this.sceneUniformBuffer = this.device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }), this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", addressModeU: "repeat", addressModeV: "repeat" }), this.createDefaultTexture(), this.texture = this.defaultTexture;
+    console.log("Max Storage Buffers Per Shader Stage:", t.limits.maxStorageBuffersPerShaderStage), this.device = await t.requestDevice({ requiredLimits: { maxStorageBuffersPerShaderStage: 10 } }), this.context = this.canvas.getContext("webgpu"), this.context.configure({ device: this.device, format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT }), this.sceneUniformBuffer = this.device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }), this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", addressModeU: "repeat", addressModeV: "repeat" }), this.createDefaultTexture(), this.texture = this.defaultTexture;
   }
   createDefaultTexture() {
     const t = new Uint8Array([255, 255, 255, 255]);

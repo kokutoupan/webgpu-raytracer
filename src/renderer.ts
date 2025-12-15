@@ -47,7 +47,7 @@ export class WebGPURenderer {
     console.log('Max Storage Buffers Per Shader Stage:', adapter.limits.maxStorageBuffersPerShaderStage);
     this.device = await adapter.requestDevice({
       requiredLimits: {
-        maxStorageBuffersPerShaderStage: 16, 
+        maxStorageBuffersPerShaderStage: 10, 
       }
     });
     this.context = this.canvas.getContext("webgpu") as GPUCanvasContext;
