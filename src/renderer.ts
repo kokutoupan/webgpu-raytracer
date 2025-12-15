@@ -25,6 +25,10 @@ export class WebGPURenderer {
   tlasBuffer!: GPUBuffer;
   blasBuffer!: GPUBuffer;
   instanceBuffer!: GPUBuffer;
+  uvBuffer!: GPUBuffer; // 追加
+  texture!: GPUTexture; // 追加
+  defaultTexture!: GPUTexture; // 白テクスチャ保持用
+  sampler!: GPUSampler; // 追加
 
   private bufferSize = 0;
   private canvas: HTMLCanvasElement;
@@ -37,7 +41,15 @@ export class WebGPURenderer {
     if (!navigator.gpu) throw new Error("WebGPU not supported.");
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
     if (!adapter) throw new Error("No adapter");
-    this.device = await adapter.requestDevice();
+    // ★修正: ストレージバッファの制限をデフォルトの8から引き上げる
+    // (adapter.limits.maxStorageBuffersPerShaderStage でデバイスの上限を確認できますが、
+    //  最近のPCなら16程度は余裕でサポートしています)
+    console.log('Max Storage Buffers Per Shader Stage:', adapter.limits.maxStorageBuffersPerShaderStage);
+    this.device = await adapter.requestDevice({
+      requiredLimits: {
+        maxStorageBuffersPerShaderStage: 16, // 8 -> 16 に増やす
+      }
+    });
     this.context = this.canvas.getContext("webgpu") as GPUCanvasContext;
 
     this.context.configure({
@@ -49,6 +61,36 @@ export class WebGPURenderer {
     // 初期バッファ作成
     this.frameUniformBuffer = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.cameraUniformBuffer = this.device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+    // ★追加: サンプラーの作成 (共通)
+    this.sampler = this.device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+      mipmapFilter: 'linear',
+      addressModeU: 'repeat',
+      addressModeV: 'repeat',
+    });
+
+    // ★追加: デフォルトの白テクスチャを作成してセット
+    this.createDefaultTexture();
+    this.texture = this.defaultTexture;
+  }
+
+  // ★追加: 1x1の白いテクスチャを作る
+  createDefaultTexture() {
+    const data = new Uint8Array([255, 255, 255, 255]); // RGBA: White
+    this.defaultTexture = this.device.createTexture({
+      size: [1, 1, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+    });
+
+    this.device.queue.writeTexture(
+      { texture: this.defaultTexture, origin: [0, 0, 0] },
+      data,
+      { bytesPerRow: 256, rowsPerImage: 1 },
+      [1, 1]
+    );
   }
 
   buildPipeline(depth: number, spp: number) {
@@ -91,15 +133,88 @@ export class WebGPURenderer {
     this.device.queue.writeBuffer(this.accumulateBuffer, 0, new Float32Array(this.bufferSize / 4));
   }
 
+
+  async loadTexture(blob: Blob) {
+    const img = await createImageBitmap(blob, { resizeWidth: 1024, resizeHeight: 1024 });
+    // Single texture fallback (array of 1)
+    if (this.texture) this.texture.destroy();
+    this.texture = this.device.createTexture({
+      size: [1024, 1024, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    this.device.queue.copyExternalImageToTexture(
+      { source: img },
+      { texture: this.texture, origin: [0, 0, 0] },
+      [1024, 1024]
+    );
+  }
+
+  async loadTexturesFromWorld(bridge: any) {
+    const count = bridge.textureCount;
+    if (count === 0) {
+      this.createDefaultTexture(); // Use default 1x1
+      return;
+    }
+
+    console.log(`Loading ${count} textures...`);
+    const bitmaps: ImageBitmap[] = [];
+    for (let i = 0; i < count; i++) {
+      const data = bridge.getTexture(i);
+      if (data) {
+        const blob = new Blob([data]);
+        try {
+          const bmp = await createImageBitmap(blob, { resizeWidth: 1024, resizeHeight: 1024 });
+          bitmaps.push(bmp);
+        } catch (e) {
+          console.warn(`Failed to load texture ${i}`, e);
+          bitmaps.push(await this.createFallbackBitmap());
+        }
+      } else {
+        bitmaps.push(await this.createFallbackBitmap());
+      }
+    }
+
+    if (this.texture) this.texture.destroy();
+    this.texture = this.device.createTexture({
+      size: [1024, 1024, bitmaps.length],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    for (let i = 0; i < bitmaps.length; i++) {
+      this.device.queue.copyExternalImageToTexture(
+        { source: bitmaps[i] },
+        { texture: this.texture, origin: [0, 0, i] },
+        [1024, 1024]
+      );
+    }
+  }
+
+  async createFallbackBitmap() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024; canvas.height = 1024;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, 1024, 1024);
+    return await createImageBitmap(canvas);
+  }
+
   // バッファの更新・再生成ロジック
   updateGeometryBuffer(
-    type: 'tlas' | 'blas' | 'instance' | 'vertex' | 'normal' | 'index' | 'attr',
+    type: 'tlas' | 'blas' | 'instance' | 'vertex' | 'normal' | 'index' | 'attr' | 'uv', // ★ 'uv' を追加
     data: Float32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>
   ): boolean {
     // マッピング
     const map: Record<string, GPUBuffer> = {
-      tlas: this.tlasBuffer, blas: this.blasBuffer, instance: this.instanceBuffer,
-      vertex: this.vertexBuffer, normal: this.normalBuffer, index: this.indexBuffer, attr: this.attrBuffer
+      tlas: this.tlasBuffer,
+      blas: this.blasBuffer,
+      instance: this.instanceBuffer,
+      vertex: this.vertexBuffer,
+      normal: this.normalBuffer,
+      index: this.indexBuffer,
+      attr: this.attrBuffer,
+      uv: this.uvBuffer // ★ 追加
     };
     let currentBuf = map[type];
 
@@ -119,6 +234,7 @@ export class WebGPURenderer {
         case 'normal': this.normalBuffer = newBuf; break;
         case 'index': this.indexBuffer = newBuf; break;
         case 'attr': this.attrBuffer = newBuf; break;
+        case 'uv': this.uvBuffer = newBuf; break; // ★ 追加
       }
       return true; // BindGroupの再生成が必要
     } else {
@@ -139,7 +255,7 @@ export class WebGPURenderer {
   }
 
   recreateBindGroup() {
-    if (!this.renderTargetView || !this.accumulateBuffer || !this.vertexBuffer || !this.tlasBuffer) return;
+    if (!this.renderTargetView || !this.accumulateBuffer || !this.vertexBuffer || !this.tlasBuffer || !this.uvBuffer) return;
 
     this.bindGroup = this.device.createBindGroup({
       layout: this.bindGroupLayout,
@@ -155,6 +271,9 @@ export class WebGPURenderer {
         { binding: 8, resource: { buffer: this.normalBuffer } },
         { binding: 9, resource: { buffer: this.blasBuffer } },
         { binding: 10, resource: { buffer: this.instanceBuffer } },
+        { binding: 11, resource: { buffer: this.uvBuffer } },
+        { binding: 12, resource: this.texture.createView({ dimension: '2d-array' }) },
+        { binding: 13, resource: this.sampler },
       ],
     });
   }

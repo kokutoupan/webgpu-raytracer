@@ -1,79 +1,138 @@
 // src/scene/helpers.rs
 use crate::geometry::Geometry;
-use glam::{Vec3, vec3};
+use glam::{Vec3, vec2, vec3};
 use rand::Rng;
 
-// 乱数ヘルパー
-pub fn rnd() -> f32 {
-    rand::rng().random()
-}
-
-pub fn rnd_range(min: f32, max: f32) -> f32 {
-    rand::rng().random_range(min..max)
-}
-
-// 四角形(Quad)を追加
-// 2つの三角形としてGeometryに追加します
-#[allow(clippy::too_many_arguments)]
 pub fn add_quad(
     geom: &mut Geometry,
-    v0: Vec3,
-    v1: Vec3,
-    v2: Vec3,
-    v3: Vec3,
-    col: Vec3,
-    mat: u32,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    d: Vec3,
+    color: Vec3,
+    mat_type: u32,
     extra: f32,
+    texture_index: f32,
 ) {
-    geom.add_triangle(v0, v1, v2, col, mat, extra);
-    geom.add_triangle(v0, v2, v3, col, mat, extra);
+    let n = (b - a).cross(d - a).normalize();
+    // UV自動割当: a(0,0), b(1,0), c(1,1), d(0,1)
+    let i0 = geom.push_vertex(a, n, vec2(0., 0.));
+    let i1 = geom.push_vertex(b, n, vec2(1., 0.));
+    let i2 = geom.push_vertex(c, n, vec2(1., 1.));
+    let i3 = geom.push_vertex(d, n, vec2(0., 1.));
+
+    geom.indices.extend_from_slice(&[i0, i1, i2]);
+    geom.push_attributes(color, mat_type, extra, texture_index);
+
+    geom.indices.extend_from_slice(&[i0, i2, i3]);
+    geom.push_attributes(color, mat_type, extra, texture_index);
 }
 
-// 箱(Box)を作成して追加
-// 位置(pos)とY軸回転(rot_y)を適用します
 pub fn create_box(
     geom: &mut Geometry,
     size: Vec3,
-    pos: Vec3,
-    rot_y: f32,
-    col: Vec3,
-    mat: u32,
+    center: Vec3,
+    rot_y_deg: f32,
+    color: Vec3,
+    mat_type: u32,
     extra: f32,
+    texture_index: f32,
 ) {
-    let h = size * 0.5;
-    let (hx, hy, hz) = (h.x, h.y, h.z);
+    let rad = rot_y_deg.to_radians();
+    let cos_r = rad.cos();
+    let sin_r = rad.sin();
 
-    // ローカル座標での頂点
-    let raw_pts = [
-        vec3(-hx, -hy, hz),
-        vec3(hx, -hy, hz),
-        vec3(hx, hy, hz),
-        vec3(-hx, hy, hz),
-        vec3(-hx, -hy, -hz),
-        vec3(hx, -hy, -hz),
-        vec3(hx, hy, -hz),
-        vec3(-hx, hy, -hz),
-    ];
-
-    // 変換処理
-    let rad = rot_y.to_radians();
-    let sin = rad.sin();
-    let cos = rad.cos();
-
-    // 回転 + 移動
     let transform = |p: Vec3| -> Vec3 {
-        let rx = p.x * cos + p.z * sin;
-        let rz = -p.x * sin + p.z * cos;
-        vec3(rx, p.y, rz) + pos
+        let x = p.x * cos_r + p.z * sin_r;
+        let z = -p.x * sin_r + p.z * cos_r;
+        vec3(x, p.y, z) + center
     };
 
-    let p: Vec<Vec3> = raw_pts.iter().map(|&v| transform(v)).collect();
+    let dx = vec3(size.x / 2.0, 0.0, 0.0);
+    let dy = vec3(0.0, size.y / 2.0, 0.0);
+    let dz = vec3(0.0, 0.0, size.z / 2.0);
 
-    // 6面分のQuadを追加
-    add_quad(geom, p[0], p[1], p[2], p[3], col, mat, extra); // Front
-    add_quad(geom, p[5], p[4], p[7], p[6], col, mat, extra); // Back
-    add_quad(geom, p[4], p[0], p[3], p[7], col, mat, extra); // Left
-    add_quad(geom, p[1], p[5], p[6], p[2], col, mat, extra); // Right
-    add_quad(geom, p[3], p[2], p[6], p[7], col, mat, extra); // Top
-    add_quad(geom, p[0], p[4], p[5], p[1], col, mat, extra); // Bottom
+    // Front
+    add_quad(
+        geom,
+        transform(-dx - dy + dz),
+        transform(dx - dy + dz),
+        transform(dx + dy + dz),
+        transform(-dx + dy + dz),
+        color,
+        mat_type,
+        extra,
+        texture_index,
+    );
+    // Back
+    add_quad(
+        geom,
+        transform(dx - dy - dz),
+        transform(-dx - dy - dz),
+        transform(-dx + dy - dz),
+        transform(dx + dy - dz),
+        color,
+        mat_type,
+        extra,
+        texture_index,
+    );
+    // Top
+    add_quad(
+        geom,
+        transform(-dx + dy + dz),
+        transform(dx + dy + dz),
+        transform(dx + dy - dz),
+        transform(-dx + dy - dz),
+        color,
+        mat_type,
+        extra,
+        texture_index,
+    );
+    // Bottom
+    add_quad(
+        geom,
+        transform(-dx - dy - dz),
+        transform(dx - dy - dz),
+        transform(dx - dy + dz),
+        transform(-dx - dy + dz),
+        color,
+        mat_type,
+        extra,
+        texture_index,
+    );
+    // Right
+    add_quad(
+        geom,
+        transform(dx - dy + dz),
+        transform(dx - dy - dz),
+        transform(dx + dy - dz),
+        transform(dx + dy + dz),
+        color,
+        mat_type,
+        extra,
+        texture_index,
+    );
+    // Left
+    add_quad(
+        geom,
+        transform(-dx - dy - dz),
+        transform(-dx - dy + dz),
+        transform(-dx + dy + dz),
+        transform(-dx + dy - dz),
+        color,
+        mat_type,
+        extra,
+        texture_index,
+    );
+}
+
+// Random helpers
+pub fn rnd() -> f32 {
+    let mut rng = rand::rng();
+    rng.random::<f32>()
+}
+
+pub fn rnd_range(min: f32, max: f32) -> f32 {
+    let mut rng = rand::rng();
+    rng.random_range(min..max)
 }

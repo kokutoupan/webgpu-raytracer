@@ -1,10 +1,10 @@
 // src/lib.rs
 use crate::bvh::{Instance, tlas::TLASBuilder};
 use crate::mesh::Mesh;
-use crate::scene::animation::{Animation, ChannelOutputs};
-use crate::scene::{Node, SceneData};
-use glam::{Mat4, Quat, Vec3};
-use std::collections::HashMap;
+use crate::render_buffers::RenderBuffers;
+use crate::scene::SceneData;
+use glam::{Mat4, Vec3};
+// use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
 pub mod bvh;
@@ -16,8 +16,6 @@ pub mod rebuilder;
 pub mod render_buffers;
 pub mod scene;
 
-use crate::render_buffers::RenderBuffers;
-
 #[wasm_bindgen(start)]
 pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
@@ -25,7 +23,7 @@ pub fn init_panic_hook() {
 
 #[wasm_bindgen]
 pub struct World {
-    // 分離したバッファ
+    // 分離したバッファ (Vertices, Normals, UVs, Indices...)
     buffers: RenderBuffers,
 
     // シーンデータ (Nodes, Skins, Animations, Geometries)
@@ -35,6 +33,9 @@ pub struct World {
     blas_root_offsets: Vec<u32>,
     instance_blas_aabbs: Vec<crate::primitives::AABB>,
     raw_instances: Vec<Instance>,
+    
+    // Animation State
+    active_anim_index: usize,
 }
 
 #[wasm_bindgen]
@@ -48,6 +49,7 @@ impl World {
         let loaded_mesh = mesh_obj_source.map(|source| Mesh::new(&source));
         let has_glb = glb_data.is_some();
 
+        // シーンデータのロード (factory経由)
         let mut scene_data: SceneData =
             scene::get_scene_data(scene_name, loaded_mesh.as_ref(), has_glb);
 
@@ -58,10 +60,12 @@ impl World {
                 &mut scene_data.nodes,
                 &mut scene_data.skins,
                 &mut scene_data.animations,
+                &mut scene_data.textures,
                 &data,
             );
         }
 
+        // 初期インスタンスリストの作成
         let mut raw_instances = Vec::new();
         let mut instance_blas_aabbs = Vec::new();
 
@@ -88,10 +92,34 @@ impl World {
             blas_root_offsets: Vec::new(),
             instance_blas_aabbs,
             raw_instances,
+            active_anim_index: 0,
         };
 
+        // 初回計算
         world.update(0.0);
         world
+    }
+
+    // --- Animation Control ---
+    
+    pub fn get_animation_count(&self) -> usize {
+        self.scene.animations.len()
+    }
+
+    pub fn get_animation_name(&self, index: usize) -> String {
+        if index < self.scene.animations.len() {
+            self.scene.animations[index].name.clone()
+        } else {
+            "".to_string()
+        }
+    }
+
+    pub fn set_animation(&mut self, index: usize) {
+        if index < self.scene.animations.len() {
+            self.active_anim_index = index;
+            // Immediate reset/apply could be done here if needed, 
+            // but update() loop handles it.
+        }
     }
 
     pub fn load_animation_glb(&mut self, glb_data: &[u8]) {
@@ -100,6 +128,7 @@ impl World {
         let mut temp_nodes = Vec::new();
         let mut temp_skins = Vec::new();
         let mut new_anims = Vec::new();
+        let mut new_textures = Vec::new();
 
         if loader::load_gltf(
             &mut temp_geoms,
@@ -107,6 +136,7 @@ impl World {
             &mut temp_nodes,
             &mut temp_skins,
             &mut new_anims,
+            &mut new_textures,
             glb_data,
         )
         .is_ok()
@@ -118,9 +148,25 @@ impl World {
     pub fn update(&mut self, time: f32) {
         // 1. Animation
         if !self.scene.animations.is_empty() {
-            let anim_idx = 0;
+            let anim_idx = if self.active_anim_index < self.scene.animations.len() {
+                self.active_anim_index
+            } else {
+                0
+            };
+            
             let anim = &self.scene.animations[anim_idx];
-            let t = time % anim.duration;
+            let duration = anim.duration;
+
+            if time == 0.0 {
+                 let msg = format!(">> Playing Anim [{}]: '{}'", anim_idx, anim.name);
+                 web_sys::console::log_1(&msg.into());
+            }
+
+            let t = if duration > 0.001 {
+                time % duration
+            } else {
+                0.0
+            };
             self.apply_animation(anim_idx, t);
         }
 
@@ -136,7 +182,7 @@ impl World {
             self.scene.nodes[i].global_transform = globals[i];
         }
 
-        // 3. Rebuild Geometry
+        // 3. Rebuild Geometry (Skinning & BLAS)
         rebuilder::build_blas_and_vertices(
             &self.scene.geometries,
             &self.scene.skins,
@@ -147,6 +193,7 @@ impl World {
 
         // 4. Update Instances
         for (i, inst) in self.raw_instances.iter_mut().enumerate() {
+            // 背景(0番目)以外にモデルスケールなどを適用する簡易ロジック
             if i > 0 {
                 let model_scale = 1.0;
                 let model_transform = Mat4::from_scale(Vec3::splat(model_scale));
@@ -226,6 +273,14 @@ impl World {
         self.buffers.normals.len()
     }
 
+    // ★追加: UVポインタ
+    pub fn uvs_ptr(&self) -> *const f32 {
+        self.buffers.uvs.as_ptr()
+    }
+    pub fn uvs_len(&self) -> usize {
+        self.buffers.uvs.len()
+    }
+
     pub fn indices_ptr(&self) -> *const u32 {
         self.buffers.indices.as_ptr()
     }
@@ -251,6 +306,27 @@ impl World {
         self.buffers.camera_data = self.scene.camera.create_buffer(width / height).to_vec();
     }
 
+    // --- Texture Access ---
+    pub fn get_texture_count(&self) -> usize {
+        self.scene.textures.len()
+    }
+
+    pub fn get_texture_ptr(&self, index: usize) -> *const u8 {
+        if index < self.scene.textures.len() {
+            self.scene.textures[index].as_ptr()
+        } else {
+            std::ptr::null()
+        }
+    }
+
+    pub fn get_texture_size(&self, index: usize) -> usize {
+        if index < self.scene.textures.len() {
+            self.scene.textures[index].len()
+        } else {
+            0
+        }
+    }
+
     // --- Internal Helpers ---
 
     fn update_node_global(&self, node_idx: usize, parent_mat: Mat4, globals: &mut Vec<Mat4>) {
@@ -265,57 +341,22 @@ impl World {
     }
 
     fn apply_animation(&mut self, anim_idx: usize, time: f32) {
+        use crate::scene::animation::ChannelOutputs;
+
         let anim = &self.scene.animations[anim_idx];
-        let mut node_name_map = HashMap::new();
-        for (i, node) in self.scene.nodes.iter().enumerate() {
-            node_name_map.insert(node.name.clone(), i);
-        }
 
         for channel in &anim.channels {
-            let target_name = &channel.target_node_name;
-
-            let mut node_idx_opt = node_name_map.get(target_name);
-            if node_idx_opt.is_none() {
-                // Name resolving logic
-                let stripped = target_name
-                    .replace("mixamorig:", "")
-                    .replace("mixamorig", "");
-                if let Some(idx) = node_name_map.get(&stripped) {
-                    node_idx_opt = Some(idx);
-                } else if let Some(idx) = node_name_map.get(&format!("J_Bip_C_{}", stripped)) {
-                    node_idx_opt = Some(idx);
-                } else if let Some(rest) = stripped.strip_prefix("Left") {
-                    // Left prefix logic
-                    let vrm_l = format!("J_Bip_L_{}", rest);
-                    node_idx_opt = node_name_map.get(&vrm_l);
-                    if node_idx_opt.is_none() && rest == "Arm" {
-                        node_idx_opt = node_name_map.get("J_Bip_L_UpperArm");
-                    }
-                    if node_idx_opt.is_none() && rest == "ForeArm" {
-                        node_idx_opt = node_name_map.get("J_Bip_L_LowerArm");
-                    }
-                    if node_idx_opt.is_none() && rest == "UpLeg" {
-                        node_idx_opt = node_name_map.get("J_Bip_L_UpperLeg");
-                    }
-                } else if let Some(rest) = stripped.strip_prefix("Right") {
-                    // Right prefix logic (ここがWarning箇所)
-                    let vrm_r = format!("J_Bip_R_{}", rest);
-                    node_idx_opt = node_name_map.get(&vrm_r);
-                    if node_idx_opt.is_none() && rest == "Arm" {
-                        node_idx_opt = node_name_map.get("J_Bip_R_UpperArm");
-                    }
-                    if node_idx_opt.is_none() && rest == "ForeArm" {
-                        node_idx_opt = node_name_map.get("J_Bip_R_LowerArm");
-                    }
-                    if node_idx_opt.is_none() && rest == "UpLeg" {
-                        node_idx_opt = node_name_map.get("J_Bip_R_UpperLeg");
-                    }
-                }
+            // Use index directly
+            let node_idx = channel.target_node_index;
+            if node_idx >= self.scene.nodes.len() {
+                continue;
             }
 
-            let node_idx = match node_idx_opt {
-                Some(&idx) => idx,
-                None => continue,
+            // Loop time
+            let time = if anim.duration > 0.0 {
+                time % anim.duration
+            } else {
+                time
             };
 
             let inputs = &channel.inputs;
@@ -364,28 +405,45 @@ impl World {
 
             let node = &mut self.scene.nodes[node_idx];
 
+            // Determine stride/offset based on interpolation
+            use crate::scene::animation::Interpolation;
+            let (stride, offset) = match channel.interpolation {
+                Interpolation::CubicSpline => (3, 1),
+                _ => (1, 0),
+            };
+
+            let idx0 = prev_idx * stride + offset;
+            let idx1 = next_idx * stride + offset;
+
+            // Factor adjustment for Step
+            let t_factor = if channel.interpolation == Interpolation::Step {
+                0.0
+            } else {
+                factor
+            };
+
             match &channel.outputs {
                 ChannelOutputs::Translations(vecs) => {
-                    // ★修正: if条件を結合
-                    if prev_idx < vecs.len()
-                        && next_idx < vecs.len()
-                        && (target_name.contains("Hips") || target_name.contains("Root"))
-                    {
-                        node.translation = vecs[prev_idx].lerp(vecs[next_idx], factor);
+                    if idx0 < vecs.len() && idx1 < vecs.len() {
+                        let start = vecs[idx0];
+                        let end = vecs[idx1];
+                        node.translation = start.lerp(end, t_factor);
                     }
                 }
                 ChannelOutputs::Rotations(quats) => {
-                    if prev_idx < quats.len() && next_idx < quats.len() {
-                        let mut q = quats[prev_idx].slerp(quats[next_idx], factor);
-                        if target_name.contains("UpLeg") || target_name.contains("UpperLeg") {
-                            q = q * Quat::from_rotation_x(std::f32::consts::PI);
-                        }
+                    if idx0 < quats.len() && idx1 < quats.len() {
+                        let start = quats[idx0].normalize();
+                        let end = quats[idx1].normalize();
+                        let q = start.slerp(end, t_factor);
+                        // Removed hacks for Head/Legs
                         node.rotation = q;
                     }
                 }
                 ChannelOutputs::Scales(vecs) => {
-                    if prev_idx < vecs.len() && next_idx < vecs.len() {
-                        node.scale = vecs[prev_idx].lerp(vecs[next_idx], factor);
+                    if idx0 < vecs.len() && idx1 < vecs.len() {
+                        let start = vecs[idx0];
+                        let end = vecs[idx1];
+                        node.scale = start.lerp(end, t_factor);
                     }
                 }
             }

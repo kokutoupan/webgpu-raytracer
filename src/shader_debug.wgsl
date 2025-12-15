@@ -1,5 +1,5 @@
 // =========================================================
-//   WebGPU Ray Tracer (TLAS & BLAS)
+//   WebGPU Ray Tracer (TLAS & BLAS) - DEBUG MODE
 // =========================================================
 
 const PI = 3.141592653589793;
@@ -22,6 +22,11 @@ const SPP = 1u;
 @group(0) @binding(8) var<storage, read> normals: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read> blas_nodes: array<BVHNode>;
 @group(0) @binding(10) var<storage, read> instances: array<Instance>;
+
+// Bindings 追加 (shader.wgslと同期)
+@group(0) @binding(11) var<storage, read> uvs: array<vec2<f32>>;
+@group(0) @binding(12) var tex: texture_2d_array<f32>;
+@group(0) @binding(13) var smp: sampler;
 
 struct FrameInfo {
     frame_count: u32
@@ -128,12 +133,12 @@ fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: 
     return -1.0;
 }
 
-// BLAS Intersection Logic Update
+// BLAS Intersection Logic Update (Synced with shader.wgsl)
 fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 64>; // Stack increased to 64
     var stackptr = 0u;
 
     // Push Root Node (Global Index)
@@ -165,7 +170,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
             // Internal Node
             // node.left_first is RELATIVE to the start of this BLAS.
             // We must add node_offset to get the Global Index.
-            let l = u32(node.left_first) + node_offset; // ★Fix: Add offset
+            let l = u32(node.left_first) + node_offset; // Fix: Add offset
             let r_node_idx = l + 1u;
 
             let nl = blas_nodes[l];
@@ -190,7 +195,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if arrayLength(&tlas_nodes) == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 64>; // Stack increased to 64
     var stackptr = 0u;
 
     if intersect_aabb(tlas_nodes[0].min_b, tlas_nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {
@@ -243,16 +248,15 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 
 fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     var ray = r_in;
-    var throughput = vec3<f32>(1.0);
+    // デバッグ用: ステップ数のみを返すためthroughputなどは不要ですが、
+    // ray_colorのシグネチャはmainから呼ばれる形で合わせます。
 
-    for (var depth = 0u; depth < MAX_DEPTH; depth++) {
-        let hit = intersect_tlas(ray, T_MIN, T_MAX);
-        if hit.inst_idx < 0 { return vec3<f32>(0.0); }
+    let hit = intersect_tlas(ray, T_MIN, T_MAX);
 
     // 全くトラバースしなかった場合（背景）
-        if hit.steps == 0u {
-            return vec3<f32>(0.0);
-        }
+    if hit.steps == 0u {
+        return vec3<f32>(0.0);
+    }
 
     // --- ヒートマップ表示 ---
     // ステップ数を色に変換して負荷を可視化します。
@@ -260,90 +264,28 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     
     // 基準値: この値以上で最大色（赤）になる
     // シーンの複雑さに応じて調整してください (例: 20〜100)
-        let max_steps = 16.0;
+    let max_steps = 100.0; // 少しレンジを広げました
 
-        let intensity = clamp(f32(hit.steps) / max_steps, 0.0, 1.0);
+    let intensity = clamp(f32(hit.steps) / max_steps, 0.0, 1.0);
     
     // 青 -> シアン -> 緑 -> 黄 -> 赤 のグラデーション
     // 簡易版: 青(低負荷) -> 赤(高負荷)
-        let r = intensity;
-        let g = 1.0 - abs(intensity - 0.5) * 2.0; // 中間で緑っぽく
-        let b = 1.0 - intensity;
+    let r = intensity;
+    let g = 1.0 - abs(intensity - 0.5) * 2.0; // 中間で緑っぽく
+    let b = 1.0 - intensity;
 
     // もしヒットしていれば少し明るく、ミスなら少し暗くして区別をつける
-        let brightness = select(0.5, 1.0, hit.inst_idx >= 0);
+    let brightness = select(0.5, 1.0, hit.inst_idx >= 0);
 
-        return vec3<f32>(r, g * 0.5, b) * brightness;
+    // Dummy usage to keep unused bindings active (prevents bind group layout mismatch)
+    let d1 = f32(arrayLength(&attributes));
+    let d2 = f32(arrayLength(&normals));
+    let d3 = f32(arrayLength(&uvs));
+    let d4 = f32(textureDimensions(tex).x);
+    let d5 = textureSampleLevel(tex, smp, vec2(0.), 0, 0.).x;
+    let dummy = (d1 + d2 + d3 + d4 + d5) * 0.0000001;
 
-        let inst = instances[u32(hit.inst_idx)];
-        let tri_idx = u32(hit.tri_idx); 
-        // Note: tri_idx is global triangle index (offset baked in Rust)
-
-        let i0 = indices[tri_idx * 3u];
-        let i1 = indices[tri_idx * 3u + 1u];
-        let i2 = indices[tri_idx * 3u + 2u];
-
-        // Normal Interpolation
-        let inv = get_inv_transform(inst);
-        let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
-
-        let e1 = vertices[i1].xyz - vertices[i0].xyz;
-        let e2 = vertices[i2].xyz - vertices[i0].xyz;
-        let h = cross(r_local.direction, e2);
-        let a = dot(e1, h);
-        let f = 1.0 / a;
-        let s = r_local.origin - vertices[i0].xyz;
-        let u = f * dot(s, h);
-        let q = cross(s, e1);
-        let v = f * dot(r_local.direction, q);
-        let w = 1.0 - u - v;
-
-        let ln = normalize(normals[i0].xyz * w + normals[i1].xyz * u + normals[i2].xyz * v);
-        let wn = normalize((vec4(ln, 0.0) * inv).xyz);
-
-        var n = wn;
-        let front = dot(ray.direction, n) < 0.0;
-        n = select(-n, n, front);
-
-        // Attributes
-        let attr = attributes[tri_idx];
-        let albedo = attr.data0.rgb;
-        
-        // ★ 修正箇所: 変数名を 'type' から 'mat_type' に変更
-        let mat_type = bitcast<u32>(attr.data0.w); // f32 -> u32
-
-        if mat_type == 3u { return select(vec3(0.), throughput * albedo, front); }
-
-        var scat = vec3(0.);
-        if mat_type == 0u {
-            scat = n + random_unit_vector(rng);
-            if length(scat) < 0.001 { scat = n; }
-        } else if mat_type == 1u {
-            scat = reflect(ray.direction, n) + attr.data1.x * random_unit_vector(rng);
-            if dot(scat, n) <= 0. { return vec3(0.); }
-        } else {
-            let ir = attr.data1.x;
-            let ratio = select(ir, 1.0 / ir, front);
-            let unit = normalize(ray.direction);
-            let cos_t = min(dot(-unit, n), 1.0);
-            let sin_t = sqrt(1.0 - cos_t * cos_t);
-            if ratio * sin_t > 1.0 || reflectance(cos_t, ratio) > rand_pcg(rng) {
-                scat = reflect(unit, n);
-            } else {
-                scat = ratio * (unit + cos_t * n) - sqrt(abs(1.0 - (1.0 - cos_t * cos_t) * ratio * ratio)) * n;
-            }
-        }
-
-        ray = Ray(ray.origin + hit.t * ray.direction + scat * 1e-4, scat);
-        throughput *= albedo;
-
-        if depth > 2u {
-            let p = max(throughput.r, max(throughput.g, throughput.b));
-            if rand_pcg(rng) > p { break; }
-            throughput /= p;
-        }
-    }
-    return vec3(0.);
+    return vec3<f32>(r, g * 0.5, b) * brightness + dummy;
 }
 
 @compute @workgroup_size(8, 8)

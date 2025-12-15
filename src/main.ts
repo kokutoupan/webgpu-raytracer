@@ -10,13 +10,12 @@ const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
 const inputFile = document.getElementById('obj-file') as HTMLInputElement;
 if (inputFile) inputFile.accept = ".obj,.glb,.vrm";
-const inputAnimFile = document.getElementById('anim-file') as HTMLInputElement;
-if (inputAnimFile) inputAnimFile.accept = ".glb,.gltf";
 
 const inputDepth = document.getElementById('max-depth') as HTMLInputElement;
 const inputSPP = document.getElementById('spp-frame') as HTMLInputElement;
 const btnRecompile = document.getElementById('recompile-btn') as HTMLButtonElement;
 const inputUpdateInterval = document.getElementById('update-interval') as HTMLInputElement;
+const animSelect = document.getElementById('anim-select') as HTMLSelectElement;
 
 // --- Stats UI ---
 const statsDiv = document.createElement("div");
@@ -71,7 +70,7 @@ async function main() {
     totalFrameCount = 0;
   };
 
-  const loadScene = (name: string, autoStart = true) => {
+  const loadScene = async (name: string, autoStart = true) => {
     isRendering = false;
     console.log(`Loading Scene: ${name}...`);
 
@@ -86,9 +85,13 @@ async function main() {
     worldBridge.loadScene(name, objSource, glbData);
     worldBridge.printStats();
 
+    // ★追加: テクスチャ転送 (非同期)
+    await renderer.loadTexturesFromWorld(worldBridge);
+
     // Initial Buffer Upload
     renderer.updateGeometryBuffer('vertex', worldBridge.vertices);
     renderer.updateGeometryBuffer('normal', worldBridge.normals);
+    renderer.updateGeometryBuffer('uv', worldBridge.uvs);
     renderer.updateGeometryBuffer('index', worldBridge.indices);
     renderer.updateGeometryBuffer('attr', worldBridge.attributes);
     renderer.updateGeometryBuffer('tlas', worldBridge.tlas);
@@ -96,6 +99,7 @@ async function main() {
     renderer.updateGeometryBuffer('instance', worldBridge.instances);
 
     updateResolution(); // Camera update & BindGroup creation included
+    updateAnimList(); // ★ Populate animation list
 
     if (autoStart) {
       isRendering = true;
@@ -116,7 +120,7 @@ async function main() {
 
     // アニメーション更新 (インターバル毎)
     if (updateInterval > 0 && frameCount >= updateInterval) {
-      worldBridge.update(totalFrameCount / updateInterval / 30);
+      worldBridge.update(totalFrameCount / updateInterval / 60);
 
       // 変更があったバッファのみ更新 (戻り値がtrueならBindGroup再生成が必要)
       let needsRebind = false;
@@ -182,17 +186,34 @@ async function main() {
       currentFileType = 'glb';
     }
     sceneSelect.value = "viewer";
-    loadScene("viewer", false);
+    loadScene("viewer", false); // Auto-start rendering is false
   });
+  // --- Animation Selection ---
+  const updateAnimList = () => {
+    const list = worldBridge.getAnimationList();
+    animSelect.innerHTML = "";
+    if (list.length === 0) {
+      const opt = document.createElement("option");
+      opt.text = "No Anim";
+      animSelect.add(opt);
+      animSelect.disabled = true;
+      return;
+    }
+    animSelect.disabled = false;
+    list.forEach((name, i) => {
+      const opt = document.createElement("option");
+      opt.text = `[${i}] ${name}`;
+      opt.value = i.toString();
+      animSelect.add(opt);
+    });
+    // Default to 0? Or keep current?
+    // User requested switching. Default 0 is fine.
+    animSelect.value = "0";
+  };
 
-  inputAnimFile.addEventListener("change", async (e) => {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    if (!f) return;
-    console.log(`Loading Motion: ${f.name}...`);
-    const buffer = await f.arrayBuffer();
-    worldBridge.loadAnimation(new Uint8Array(buffer));
-    console.log("Motion Loaded!");
-    (e.target as HTMLInputElement).value = "";
+  animSelect.addEventListener("change", () => {
+    const idx = parseInt(animSelect.value, 10);
+    worldBridge.setAnimation(idx);
   });
 
   // Start

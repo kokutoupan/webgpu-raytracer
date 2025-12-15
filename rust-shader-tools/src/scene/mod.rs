@@ -29,4 +29,5 @@ pub struct SceneData {
     pub nodes: Vec<Node>,
     pub skins: Vec<Skin>,
     pub animations: Vec<animation::Animation>,
+    pub textures: Vec<Vec<u8>>, // Extracted image data (png/jpg bytes)
 }

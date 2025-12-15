@@ -34,6 +34,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
         white,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -44,6 +45,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
         white,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -54,6 +56,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
         white,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -64,6 +67,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
         green,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -74,6 +78,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
         red,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
 
     // Light
@@ -86,6 +91,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
         light,
         mat_type::LIGHT,
         0.,
+        -1.0,
     );
 
     // Objects or Default Boxes
@@ -108,7 +114,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
 
         return SceneData {
             camera: CameraConfig {
-                lookfrom: vec3(0., 1., -2.4),
+                lookfrom: vec3(0., 1., -1.0),
                 lookat: vec3(0., 1., 0.),
                 vup: vec3(0., 1., 0.),
                 vfov: 60.,
@@ -120,6 +126,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
             nodes: Vec::new(),
             skins: Vec::new(),
             animations: Vec::new(),
+            textures: Vec::new(),
         };
     } else {
         // Default Boxes
@@ -131,6 +138,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
             white,
             mat_type::LAMBERTIAN,
             0.,
+            -1.0,
         );
         helpers::create_box(
             &mut geom,
@@ -140,6 +148,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
             white,
             mat_type::LAMBERTIAN,
             0.,
+            -1.0,
         );
     }
 
@@ -157,6 +166,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
         nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
+        textures: Vec::new(),
     }
 }
 
@@ -170,6 +180,7 @@ pub fn create_random_spheres() -> SceneData {
         vec3(0.5, 0.5, 0.5),
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     geom.add_sphere(
         vec3(-50., 50., -50.),
@@ -177,6 +188,7 @@ pub fn create_random_spheres() -> SceneData {
         vec3(3., 2.7, 2.7),
         mat_type::LIGHT,
         0.,
+        -1.0,
     );
 
     for a in -11..11 {
@@ -194,7 +206,7 @@ pub fn create_random_spheres() -> SceneData {
                         helpers::rnd().powi(2),
                         helpers::rnd().powi(2),
                     );
-                    geom.add_sphere(center, 0.2, col, mat_type::LAMBERTIAN, 0.);
+                    geom.add_sphere(center, 0.2, col, mat_type::LAMBERTIAN, 0., -1.0);
                 } else if choose_mat < 0.95 {
                     let col = vec3(
                         helpers::rnd_range(0.5, 1.),
@@ -207,9 +219,10 @@ pub fn create_random_spheres() -> SceneData {
                         col,
                         mat_type::METAL,
                         helpers::rnd_range(0., 0.5),
+                        -1.0,
                     );
                 } else {
-                    geom.add_sphere(center, 0.2, vec3(1., 1., 1.), mat_type::DIELECTRIC, 1.5);
+                    geom.add_sphere(center, 0.2, vec3(1., 1., 1.), mat_type::DIELECTRIC, 1.5, -1.0);
                 }
             }
         }
@@ -221,6 +234,7 @@ pub fn create_random_spheres() -> SceneData {
         vec3(1., 1., 1.),
         mat_type::DIELECTRIC,
         1.5,
+        -1.0,
     );
     geom.add_sphere(
         vec3(-4., 1., 0.),
@@ -228,6 +242,7 @@ pub fn create_random_spheres() -> SceneData {
         vec3(0.4, 0.2, 0.1),
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     geom.add_sphere(
         vec3(4., 1., 0.),
@@ -235,6 +250,7 @@ pub fn create_random_spheres() -> SceneData {
         vec3(0.7, 0.6, 0.5),
         mat_type::METAL,
         0.,
+        -1.0,
     );
 
     SceneData {
@@ -251,6 +267,7 @@ pub fn create_random_spheres() -> SceneData {
         nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
+        textures: Vec::new(),
     }
 }
 
@@ -266,6 +283,7 @@ pub fn create_mixed_scene() -> SceneData {
         vec3(0.1, 0.1, 0.1),
         mat_type::METAL,
         0.05,
+        -1.0,
     );
 
     let warm = vec3(40., 30., 10.);
@@ -279,6 +297,7 @@ pub fn create_mixed_scene() -> SceneData {
         warm,
         mat_type::LIGHT,
         0.,
+        -1.0,
     );
 
     let cool = vec3(5., 10., 20.);
@@ -292,6 +311,7 @@ pub fn create_mixed_scene() -> SceneData {
         cool,
         mat_type::LIGHT,
         0.,
+        -1.0,
     );
 
     helpers::create_box(
@@ -302,6 +322,7 @@ pub fn create_mixed_scene() -> SceneData {
         vec3(0.8, 0.6, 0.2),
         mat_type::METAL,
         0.1,
+        -1.0,
     );
     geom.add_sphere(
         vec3(0., 1.8, 0.),
@@ -309,6 +330,7 @@ pub fn create_mixed_scene() -> SceneData {
         vec3(1., 1., 1.),
         mat_type::DIELECTRIC,
         1.5,
+        -1.0,
     );
     geom.add_sphere(
         vec3(0., 1.8, 0.),
@@ -316,6 +338,7 @@ pub fn create_mixed_scene() -> SceneData {
         vec3(1., 1., 1.),
         mat_type::DIELECTRIC,
         1.0,
+        -1.0,
     );
 
     helpers::create_box(
@@ -326,6 +349,7 @@ pub fn create_mixed_scene() -> SceneData {
         vec3(0.9, 0.1, 0.1),
         mat_type::METAL,
         0.2,
+        -1.0,
     );
 
     for i in 0..12 {
@@ -338,7 +362,7 @@ pub fn create_mixed_scene() -> SceneData {
         );
 
         if i % 2 == 0 {
-            geom.add_sphere(pos, 0.4, vec3(0.8, 0.8, 0.8), mat_type::METAL, 0.);
+            geom.add_sphere(pos, 0.4, vec3(0.8, 0.8, 0.8), mat_type::METAL, 0., -1.0);
         } else {
             let col = vec3(0.5 + 0.5 * fi.cos(), 0.5 + 0.5 * fi.sin(), 0.8);
             helpers::create_box(
@@ -349,6 +373,7 @@ pub fn create_mixed_scene() -> SceneData {
                 col,
                 mat_type::LAMBERTIAN,
                 0.,
+                -1.0,
             );
         }
     }
@@ -361,6 +386,7 @@ pub fn create_mixed_scene() -> SceneData {
         vec3(0.2, 0.2, 0.3),
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::create_box(
         &mut geom,
@@ -370,6 +396,7 @@ pub fn create_mixed_scene() -> SceneData {
         vec3(0.2, 0.2, 0.3),
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
 
     SceneData {
@@ -386,6 +413,7 @@ pub fn create_mixed_scene() -> SceneData {
         nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
+        textures: Vec::new(),
     }
 }
 
@@ -410,6 +438,7 @@ pub fn create_cornell_box_special() -> SceneData {
         white,
         mat_type::METAL,
         0.1,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -420,6 +449,7 @@ pub fn create_cornell_box_special() -> SceneData {
         white,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -430,6 +460,7 @@ pub fn create_cornell_box_special() -> SceneData {
         white,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -440,6 +471,7 @@ pub fn create_cornell_box_special() -> SceneData {
         green,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -450,6 +482,7 @@ pub fn create_cornell_box_special() -> SceneData {
         red,
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     helpers::add_quad(
         &mut geom,
@@ -460,6 +493,7 @@ pub fn create_cornell_box_special() -> SceneData {
         light,
         mat_type::LIGHT,
         0.,
+        -1.0,
     );
 
     let tall_pos = v(366., 165., 383.);
@@ -471,6 +505,7 @@ pub fn create_cornell_box_special() -> SceneData {
         vec3(0.95, 0.95, 0.95),
         mat_type::DIELECTRIC,
         1.5,
+        -1.0,
     );
     let short_pos = v(183., 82.5, 209.);
     helpers::create_box(
@@ -481,6 +516,7 @@ pub fn create_cornell_box_special() -> SceneData {
         white,
         mat_type::METAL,
         0.2,
+        -1.0,
     );
     geom.add_sphere(
         tall_pos,
@@ -488,6 +524,7 @@ pub fn create_cornell_box_special() -> SceneData {
         vec3(0.1, 0.1, 10.),
         mat_type::LIGHT,
         0.,
+        -1.0,
     );
 
     SceneData {
@@ -504,6 +541,7 @@ pub fn create_cornell_box_special() -> SceneData {
         nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
+        textures: Vec::new(),
     }
 }
 
@@ -520,6 +558,7 @@ pub fn create_mesh_scene() -> SceneData {
         vec3(0.5, 0.5, 0.5),
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     geom.add_mesh_instance(
         &mesh,
@@ -529,6 +568,7 @@ pub fn create_mesh_scene() -> SceneData {
         vec3(0.8, 0.2, 0.2),
         mat_type::METAL,
         0.2,
+        -1.0,
     );
     geom.add_mesh_instance(
         &mesh,
@@ -538,6 +578,7 @@ pub fn create_mesh_scene() -> SceneData {
         vec3(1., 1., 1.),
         mat_type::DIELECTRIC,
         1.5,
+        -1.0,
     );
 
     for i in 0..5 {
@@ -550,6 +591,7 @@ pub fn create_mesh_scene() -> SceneData {
             vec3(0.2, 0.4, 0.8),
             mat_type::LAMBERTIAN,
             0.,
+            -1.0,
         );
     }
 
@@ -559,6 +601,7 @@ pub fn create_mesh_scene() -> SceneData {
         vec3(10., 10., 10.),
         mat_type::LIGHT,
         0.,
+        -1.0,
     );
 
     SceneData {
@@ -575,6 +618,7 @@ pub fn create_mesh_scene() -> SceneData {
         nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
+        textures: Vec::new(),
     }
 }
 
@@ -588,6 +632,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
         vec3(0.2, 0.2, 0.2),
         mat_type::LAMBERTIAN,
         0.,
+        -1.0,
     );
     geom_env.add_sphere(
         vec3(5., 10., 5.),
@@ -595,8 +640,9 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
         vec3(15., 15., 15.),
         mat_type::LIGHT,
         0.,
+        -1.0,
     );
-    geom_env.add_sphere(vec3(-5., 5., 5.), 1., vec3(3., 3., 5.), mat_type::LIGHT, 0.);
+    geom_env.add_sphere(vec3(-5., 5., 5.), 1., vec3(3., 3., 5.), mat_type::LIGHT, 0., -1.0);
 
     // Geometry 1: Model
     let mut geom_model = Geometry::new();
@@ -611,6 +657,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
             vec3(0.8, 0.8, 0.8),
             mat_type::LAMBERTIAN,
             0.,
+            -1.0,
         );
     } else if should_add_dummy {
         geom_model.add_sphere(
@@ -619,6 +666,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
             vec3(1., 0., 1.),
             mat_type::LAMBERTIAN,
             0.,
+            -1.0,
         );
     }
 
@@ -639,10 +687,10 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
 
     SceneData {
         camera: CameraConfig {
-            lookfrom: vec3(0., 3., -3.),
+            lookfrom: vec3(0., 3., 6.),
             lookat: vec3(0., 1., 0.),
             vup: vec3(0., 1., 0.),
-            vfov: 35.,
+            vfov: 20.,
             defocus_angle: 0.,
             focus_dist: 6.,
         },
@@ -651,5 +699,6 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
         nodes: Vec::new(),
         skins: Vec::new(),
         animations: Vec::new(),
+        textures: Vec::new(),
     }
 }

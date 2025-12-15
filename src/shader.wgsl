@@ -23,6 +23,11 @@ const SPP = 1u;
 @group(0) @binding(9) var<storage, read> blas_nodes: array<BVHNode>;
 @group(0) @binding(10) var<storage, read> instances: array<Instance>;
 
+// Bindings 追加
+@group(0) @binding(11) var<storage, read> uvs: array<vec2<f32>>;
+@group(0) @binding(12) var tex: texture_2d_array<f32>;
+@group(0) @binding(13) var smp: sampler;
+
 struct FrameInfo {
     frame_count: u32
 }
@@ -132,7 +137,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
     // Push Root Node (Global Index)
@@ -188,7 +193,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if arrayLength(&tlas_nodes) == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
     if intersect_aabb(tlas_nodes[0].min_b, tlas_nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {
@@ -276,6 +281,13 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let front = dot(ray.direction, n) < 0.0;
         n = select(-n, n, front);
 
+
+        // Intersection Interpolation
+        let t0_uv = uvs[i0];
+        let t1_uv = uvs[i1];
+        let t2_uv = uvs[i2];
+        let uv = t0_uv * w + t1_uv * u + t2_uv * v;
+
         // Attributes
         let attr = attributes[tri_idx];
         let albedo = attr.data0.rgb;
@@ -306,7 +318,14 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         }
 
         ray = Ray(ray.origin + hit.t * ray.direction + scat * 1e-4, scat);
-        throughput *= albedo;
+        let tex_idx = attr.data1.y;
+        var tex_color = vec3(1.0);
+        if (tex_idx > -0.5) {
+            tex_color = textureSampleLevel(tex, smp, uv, i32(tex_idx), 0.0).rgb;
+        }
+        let final_albedo = albedo * tex_color;
+
+        throughput *= final_albedo;
 
         if depth > 2u {
             let p = max(throughput.r, max(throughput.g, throughput.b));
