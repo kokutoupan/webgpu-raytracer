@@ -195,8 +195,9 @@ impl World {
         for (i, inst) in self.raw_instances.iter_mut().enumerate() {
             // 背景(0番目)以外にモデルスケールなどを適用する簡易ロジック
             if i > 0 {
-                let model_scale = 1.0;
-                let model_transform = Mat4::from_scale(Vec3::splat(model_scale));
+                let model_scale = 0.7;
+                let rotation = Mat4::from_rotation_y(std::f32::consts::PI);
+                let model_transform = rotation * Mat4::from_scale(Vec3::splat(model_scale));
                 inst.transform = model_transform;
                 inst.inverse_transform = model_transform.inverse();
             }

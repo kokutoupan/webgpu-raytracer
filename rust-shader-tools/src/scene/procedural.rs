@@ -623,28 +623,97 @@ pub fn create_mesh_scene() -> SceneData {
 }
 
 // --- 6. Viewer Scene ---
+// --- 6. Viewer Scene (Modified Cornell Box) ---
 pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneData {
-    // Geometry 0: Environment
+    // Geometry 0: Environment (Cornell Box without Small Box)
     let mut geom_env = Geometry::new();
-    geom_env.add_sphere(
-        vec3(0., -1000., 0.),
-        1000.,
-        vec3(0.2, 0.2, 0.2),
+    let white = vec3(0.73, 0.73, 0.73);
+    let red = vec3(0.65, 0.05, 0.05);
+    let green = vec3(0.12, 0.45, 0.15);
+    let light = vec3(20.0, 20.0, 20.0);
+
+    let s = 555.0;
+    // Map 0..555 to -1..1 (XZ) and 0..2 (Y)
+    let v = |x: f32, y: f32, z: f32| vec3(x / s * 2. - 1., y / s * 2., z / s * 2. - 1.);
+    // let sz = |x: f32, y: f32, z: f32| vec3(x / s * 2., y / s * 2., z / s * 2.); // Unused
+
+
+    // Floor
+    helpers::add_quad(
+        &mut geom_env,
+        v(0., 0., 0.),
+        v(555., 0., 0.),
+        v(555., 0., 555.),
+        v(0., 0., 555.),
+        white,
+        mat_type::METAL,
+        0.1,
+        -1.0,
+    );
+    // Ceiling
+    helpers::add_quad(
+        &mut geom_env,
+        v(0., 555., 0.),
+        v(0., 555., 555.),
+        v(555., 555., 555.),
+        v(555., 555., 0.),
+        white,
         mat_type::LAMBERTIAN,
         0.,
         -1.0,
     );
-    geom_env.add_sphere(
-        vec3(5., 10., 5.),
-        3.,
-        vec3(15., 15., 15.),
+    // Back Wall
+    helpers::add_quad(
+        &mut geom_env,
+        v(0., 0., 555.),
+        v(555., 0., 555.),
+        v(555., 555., 555.),
+        v(0., 555., 555.),
+        white,
+        mat_type::LAMBERTIAN,
+        0.,
+        -1.0,
+    );
+    // Right Wall (Green)
+    helpers::add_quad(
+        &mut geom_env,
+        v(0., 0., 0.),
+        v(0., 555., 0.),
+        v(0., 555., 555.),
+        v(0., 0., 555.),
+        green,
+        mat_type::LAMBERTIAN,
+        0.,
+        -1.0,
+    );
+    // Left Wall (Red)
+    helpers::add_quad(
+        &mut geom_env,
+        v(555., 0., 0.),
+        v(555., 0., 555.),
+        v(555., 555., 555.),
+        v(555., 555., 0.),
+        red,
+        mat_type::LAMBERTIAN,
+        0.,
+        -1.0,
+    );
+    // Light
+    helpers::add_quad(
+        &mut geom_env,
+        v(213., 554., 227.),
+        v(343., 554., 227.),
+        v(343., 554., 332.),
+        v(213., 554., 332.),
+        light,
         mat_type::LIGHT,
         0.,
         -1.0,
     );
-    geom_env.add_sphere(vec3(-5., 5., 5.), 1., vec3(3., 3., 5.), mat_type::LIGHT, 0., -1.0);
 
-    // Geometry 1: Model
+    // Geometry 1: Model (if OBJ loaded or placeholder if neither)
+    // NOTE: GLB models are appended as separate geometries in loader.rs, 
+    // but here we can define a placeholder or OBJ mesh.
     let mut geom_model = Geometry::new();
     let should_add_dummy = mesh.is_none() && !has_glb;
 
@@ -659,10 +728,13 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
             0.,
             -1.0,
         );
-    } else if should_add_dummy {
+    } 
+    // If GLB is coming, we don't add dummy.
+    // Logic: if !has_glb && mesh.is_none, add dummy.
+    else if should_add_dummy {
         geom_model.add_sphere(
-            vec3(0., 1., 0.),
-            1.,
+            vec3(0., 1., 0.), // Center of floor
+            0.5,
             vec3(1., 0., 1.),
             mat_type::LAMBERTIAN,
             0.,
@@ -674,25 +746,24 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
     let mut instances = Vec::new();
     instances.push(SceneInstance {
         transform: Mat4::IDENTITY,
-        geometry_index: 0,
+        geometry_index: 0, // Environment
     });
 
-    // Model Instance (if geometry exists)
     if !geom_model.vertices.is_empty() {
         instances.push(SceneInstance {
             transform: Mat4::IDENTITY,
-            geometry_index: 1,
+            geometry_index: 1, // OBJ Model
         });
     }
 
     SceneData {
         camera: CameraConfig {
-            lookfrom: vec3(0., 3., 6.),
+            lookfrom: vec3(0., 1., -3.9), // Camera inside box
             lookat: vec3(0., 1., 0.),
             vup: vec3(0., 1., 0.),
-            vfov: 20.,
+            vfov: 40.,
             defocus_angle: 0.,
-            focus_dist: 6.,
+            focus_dist: 3.9,
         },
         geometries: vec![geom_env, geom_model],
         instances,
