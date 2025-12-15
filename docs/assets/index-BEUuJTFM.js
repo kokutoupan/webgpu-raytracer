@@ -745,7 +745,7 @@ function Li(e, t) {
 }
 async function Zt(e) {
   if (c !== void 0) return c;
-  typeof e < "u" && (Object.getPrototypeOf(e) === Object.prototype ? { module_or_path: e } = e : console.warn("using deprecated parameters for the initialization function; pass a single object instead")), typeof e > "u" && (e = new URL("/webgpu-raytracer/assets/rust_shader_tools_bg-DSXiDK5e.wasm", import.meta.url));
+  typeof e < "u" && (Object.getPrototypeOf(e) === Object.prototype ? { module_or_path: e } = e : console.warn("using deprecated parameters for the initialization function; pass a single object instead")), typeof e > "u" && (e = new URL("/webgpu-raytracer/assets/rust_shader_tools_bg-CC5HVMsp.wasm", import.meta.url));
   const t = Wi();
   (typeof e == "string" || typeof Request == "function" && e instanceof Request || typeof URL == "function" && e instanceof URL) && (e = fetch(e));
   const { instance: r, module: n } = await zi(await e, t);

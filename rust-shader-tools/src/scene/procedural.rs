@@ -222,7 +222,14 @@ pub fn create_random_spheres() -> SceneData {
                         -1.0,
                     );
                 } else {
-                    geom.add_sphere(center, 0.2, vec3(1., 1., 1.), mat_type::DIELECTRIC, 1.5, -1.0);
+                    geom.add_sphere(
+                        center,
+                        0.2,
+                        vec3(1., 1., 1.),
+                        mat_type::DIELECTRIC,
+                        1.5,
+                        -1.0,
+                    );
                 }
             }
         }
@@ -637,7 +644,6 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
     let v = |x: f32, y: f32, z: f32| vec3(x / s * 2. - 1., y / s * 2., z / s * 2. - 1.);
     // let sz = |x: f32, y: f32, z: f32| vec3(x / s * 2., y / s * 2., z / s * 2.); // Unused
 
-
     // Floor
     helpers::add_quad(
         &mut geom_env,
@@ -711,8 +717,18 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
         -1.0,
     );
 
+    // Front Light
+    geom_env.add_sphere(
+        vec3(0., 3., -4.5),
+        1.0,
+        vec3(5., 5., 5.),
+        mat_type::LIGHT,
+        0.,
+        -1.0,
+    );
+
     // Geometry 1: Model (if OBJ loaded or placeholder if neither)
-    // NOTE: GLB models are appended as separate geometries in loader.rs, 
+    // NOTE: GLB models are appended as separate geometries in loader.rs,
     // but here we can define a placeholder or OBJ mesh.
     let mut geom_model = Geometry::new();
     let should_add_dummy = mesh.is_none() && !has_glb;
@@ -728,7 +744,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
             0.,
             -1.0,
         );
-    } 
+    }
     // If GLB is coming, we don't add dummy.
     // Logic: if !has_glb && mesh.is_none, add dummy.
     else if should_add_dummy {
