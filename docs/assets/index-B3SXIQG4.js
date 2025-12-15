@@ -506,7 +506,7 @@ class Si {
   updateCombinedBVH(t, r) {
     const n = t.byteLength, s = r.byteLength, o = n + s;
     let h = false;
-    return (!this.nodesBuffer || this.nodesBuffer.size < o) && (h = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, o, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, t), this.device.queue.writeBuffer(this.nodesBuffer, n, r), this.blasOffset = t.length / 8, console.log(`BVH Updated: TLAS=${t.length / 8} nodes, BLAS=${r.length / 8} nodes. Offset=${this.blasOffset}`), h;
+    return (!this.nodesBuffer || this.nodesBuffer.size < o) && (h = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, o, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, t), this.device.queue.writeBuffer(this.nodesBuffer, n, r), this.blasOffset = t.length / 8, h;
   }
   updateSceneUniforms(t, r) {
     if (!this.sceneUniformBuffer) return;
@@ -533,12 +533,12 @@ function Ei(e) {
 function Ci(e, t) {
   return e = e >>> 0, ne().subarray(e / 1, e / 1 + t);
 }
-let $ = null;
+let H = null;
 function Gt() {
-  return ($ === null || $.buffer.detached === true || $.buffer.detached === void 0 && $.buffer !== c.memory.buffer) && ($ = new DataView(c.memory.buffer)), $;
+  return (H === null || H.buffer.detached === true || H.buffer.detached === void 0 && H.buffer !== c.memory.buffer) && (H = new DataView(c.memory.buffer)), H;
 }
 function Ge(e, t) {
-  return e = e >>> 0, Ai(e, t);
+  return e = e >>> 0, Ui(e, t);
 }
 let be = null;
 function ne() {
@@ -552,10 +552,10 @@ function Mi(e, t) {
     c.__wbindgen_exn_store(n);
   }
 }
-function $t(e) {
+function Ht(e) {
   return e == null;
 }
-function Ht(e, t) {
+function $t(e, t) {
   const r = t(e.length * 1, 1) >>> 0;
   return ne().set(e, r / 1), F = e.length, r;
 }
@@ -579,12 +579,12 @@ function ct(e, t, r) {
   }
   return F = h, s;
 }
-let $e = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
-$e.decode();
+let He = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
+He.decode();
 const Ii = 2146435072;
 let lt = 0;
-function Ai(e, t) {
-  return lt += t, lt >= Ii && ($e = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true }), $e.decode(), lt = t), $e.decode(ne().subarray(e, e + t));
+function Ui(e, t) {
+  return lt += t, lt >= Ii && (He = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true }), He.decode(), lt = t), He.decode(ne().subarray(e, e + t));
 }
 const Te = new TextEncoder();
 "encodeInto" in Te || (Te.encodeInto = function(e, t) {
@@ -663,7 +663,7 @@ class ht {
     }
   }
   load_animation_glb(t) {
-    const r = Ht(t, c.__wbindgen_malloc), n = F;
+    const r = $t(t, c.__wbindgen_malloc), n = F;
     c.world_load_animation_glb(this.__wbg_ptr, r, n);
   }
   get_animation_count() {
@@ -671,7 +671,7 @@ class ht {
   }
   constructor(t, r, n) {
     const s = ct(t, c.__wbindgen_malloc, c.__wbindgen_realloc), o = F;
-    var h = $t(r) ? 0 : ct(r, c.__wbindgen_malloc, c.__wbindgen_realloc), m = F, g = $t(n) ? 0 : Ht(n, c.__wbindgen_malloc), p = F;
+    var h = Ht(r) ? 0 : ct(r, c.__wbindgen_malloc, c.__wbindgen_realloc), m = F, g = Ht(n) ? 0 : $t(n, c.__wbindgen_malloc), p = F;
     const y = c.world_new(s, o, h, m, g, p);
     return this.__wbg_ptr = y >>> 0, qt.register(this, this.__wbg_ptr, this), this;
   }
@@ -698,13 +698,13 @@ class ht {
   }
 }
 Symbol.dispose && (ht.prototype[Symbol.dispose] = ht.prototype.free);
-const Ui = /* @__PURE__ */ new Set(["basic", "cors", "default"]);
+const Ai = /* @__PURE__ */ new Set(["basic", "cors", "default"]);
 async function zi(e, t) {
   if (typeof Response == "function" && e instanceof Response) {
     if (typeof WebAssembly.instantiateStreaming == "function") try {
       return await WebAssembly.instantiateStreaming(e, t);
     } catch (n) {
-      if (e.ok && Ui.has(e.type) && e.headers.get("Content-Type") !== "application/wasm") console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", n);
+      if (e.ok && Ai.has(e.type) && e.headers.get("Content-Type") !== "application/wasm") console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", n);
       else throw n;
     }
     const r = await e.arrayBuffer();
@@ -744,7 +744,7 @@ function Wi() {
   }, e;
 }
 function Li(e, t) {
-  return c = e.exports, Qt.__wbindgen_wasm_module = t, $ = null, be = null, c.__wbindgen_start(), c;
+  return c = e.exports, Qt.__wbindgen_wasm_module = t, H = null, be = null, c.__wbindgen_start(), c;
 }
 async function Qt(e) {
   if (c !== void 0) return c;
@@ -893,9 +893,9 @@ var Tt = (e, t, r) => {
     if (t !== void 0 && typeof t != "object") throw new TypeError("FileSystemWritableFileStreamTarget's options, when provided, must be an object.");
     if (t && t.chunkSize !== void 0 && (!Number.isInteger(t.chunkSize) || t.chunkSize <= 0)) throw new TypeError("options.chunkSize, when provided, must be a positive integer");
   }
-}, V, w, ut, ii, ft, ri, _t, ni, He, mt, wt, si, ai = class {
+}, V, w, ut, ii, ft, ri, _t, ni, $e, mt, wt, si, ai = class {
   constructor() {
-    a(this, ut), a(this, ft), a(this, _t), a(this, He), a(this, wt), this.pos = 0, a(this, V, new Uint8Array(8)), a(this, w, new DataView(i(this, V).buffer)), this.offsets = /* @__PURE__ */ new WeakMap(), this.dataOffsets = /* @__PURE__ */ new WeakMap();
+    a(this, ut), a(this, ft), a(this, _t), a(this, $e), a(this, wt), this.pos = 0, a(this, V, new Uint8Array(8)), a(this, w, new DataView(i(this, V).buffer)), this.offsets = /* @__PURE__ */ new WeakMap(), this.dataOffsets = /* @__PURE__ */ new WeakMap();
   }
   seek(e) {
     this.pos = e;
@@ -929,7 +929,7 @@ var Tt = (e, t, r) => {
   writeEBML(e) {
     if (e !== null) if (e instanceof Uint8Array) this.write(e);
     else if (Array.isArray(e)) for (let t of e) this.writeEBML(t);
-    else if (this.offsets.set(e, this.pos), d(this, He, mt).call(this, e.id), Array.isArray(e.data)) {
+    else if (this.offsets.set(e, this.pos), d(this, $e, mt).call(this, e.id), Array.isArray(e.data)) {
       let t = this.pos, r = e.size === -1 ? 1 : e.size ?? 4;
       e.size === -1 ? d(this, ut, ii).call(this, 255) : this.seek(this.pos + r);
       let n = this.pos;
@@ -939,7 +939,7 @@ var Tt = (e, t, r) => {
       }
     } else if (typeof e.data == "number") {
       let t = e.size ?? Jt(e.data);
-      this.writeEBMLVarInt(t), d(this, He, mt).call(this, e.data, t);
+      this.writeEBMLVarInt(t), d(this, $e, mt).call(this, e.data, t);
     } else typeof e.data == "string" ? (this.writeEBMLVarInt(e.data.length), d(this, wt, si).call(this, e.data)) : e.data instanceof Uint8Array ? (this.writeEBMLVarInt(e.data.byteLength, e.size), this.write(e.data)) : e.data instanceof Zt ? (this.writeEBMLVarInt(4), d(this, ft, ri).call(this, e.data.value)) : e.data instanceof Bt && (this.writeEBMLVarInt(8), d(this, _t, ni).call(this, e.data.value));
   }
 };
@@ -957,7 +957,7 @@ _t = /* @__PURE__ */ new WeakSet();
 ni = function(e) {
   i(this, w).setFloat64(0, e, false), this.write(i(this, V));
 };
-He = /* @__PURE__ */ new WeakSet();
+$e = /* @__PURE__ */ new WeakSet();
 mt = function(e, t = Jt(e)) {
   let r = 0;
   switch (t) {
@@ -983,12 +983,12 @@ wt = /* @__PURE__ */ new WeakSet();
 si = function(e) {
   this.write(new Uint8Array(e.split("").map((t) => t.charCodeAt(0))));
 };
-var qe, K, Ue, je, pt, Di = class extends ai {
+var qe, K, Ae, je, pt, Di = class extends ai {
   constructor(e) {
-    super(), a(this, je), a(this, qe, void 0), a(this, K, new ArrayBuffer(2 ** 16)), a(this, Ue, new Uint8Array(i(this, K))), _(this, qe, e);
+    super(), a(this, je), a(this, qe, void 0), a(this, K, new ArrayBuffer(2 ** 16)), a(this, Ae, new Uint8Array(i(this, K))), _(this, qe, e);
   }
   write(e) {
-    d(this, je, pt).call(this, this.pos + e.byteLength), i(this, Ue).set(e, this.pos), this.pos += e.byteLength;
+    d(this, je, pt).call(this, this.pos + e.byteLength), i(this, Ae).set(e, this.pos), this.pos += e.byteLength;
   }
   finalize() {
     d(this, je, pt).call(this, this.pos), i(this, qe).buffer = i(this, K).slice(0, this.pos);
@@ -996,18 +996,18 @@ var qe, K, Ue, je, pt, Di = class extends ai {
 };
 qe = /* @__PURE__ */ new WeakMap();
 K = /* @__PURE__ */ new WeakMap();
-Ue = /* @__PURE__ */ new WeakMap();
+Ae = /* @__PURE__ */ new WeakMap();
 je = /* @__PURE__ */ new WeakSet();
 pt = function(e) {
   let t = i(this, K).byteLength;
   for (; t < e; ) t *= 2;
   if (t === i(this, K).byteLength) return;
   let r = new ArrayBuffer(t), n = new Uint8Array(r);
-  n.set(i(this, Ue), 0), _(this, K, r), _(this, Ue, n);
+  n.set(i(this, Ae), 0), _(this, K, r), _(this, Ae, n);
 };
-var ee, S, E, H, Fe = class extends ai {
+var ee, S, E, $, Fe = class extends ai {
   constructor(e) {
-    super(), this.target = e, a(this, ee, false), a(this, S, void 0), a(this, E, void 0), a(this, H, void 0);
+    super(), this.target = e, a(this, ee, false), a(this, S, void 0), a(this, E, void 0), a(this, $, void 0);
   }
   write(e) {
     if (!i(this, ee)) return;
@@ -1022,21 +1022,21 @@ var ee, S, E, H, Fe = class extends ai {
       let s = new Uint8Array(n);
       s.set(i(this, S), 0), _(this, S, s);
     }
-    i(this, S).set(e, t - i(this, E)), _(this, H, Math.max(i(this, H), t + e.byteLength));
+    i(this, S).set(e, t - i(this, E)), _(this, $, Math.max(i(this, $), t + e.byteLength));
   }
   startTrackingWrites() {
-    _(this, ee, true), _(this, S, new Uint8Array(2 ** 10)), _(this, E, this.pos), _(this, H, this.pos);
+    _(this, ee, true), _(this, S, new Uint8Array(2 ** 10)), _(this, E, this.pos), _(this, $, this.pos);
   }
   getTrackedWrites() {
     if (!i(this, ee)) throw new Error("Can't get tracked writes since nothing was tracked.");
-    let t = { data: i(this, S).subarray(0, i(this, H) - i(this, E)), start: i(this, E), end: i(this, H) };
+    let t = { data: i(this, S).subarray(0, i(this, $) - i(this, E)), start: i(this, E), end: i(this, $) };
     return _(this, S, void 0), _(this, ee, false), t;
   }
 };
 ee = /* @__PURE__ */ new WeakMap();
 S = /* @__PURE__ */ new WeakMap();
 E = /* @__PURE__ */ new WeakMap();
-H = /* @__PURE__ */ new WeakMap();
+$ = /* @__PURE__ */ new WeakMap();
 var Ni = 2 ** 24, Oi = 2, q, se, Be, ve, z, x, Qe, gt, St, oi, Et, di, Se, Ze, Ct = class extends Fe {
   constructor(e, t) {
     var _a, _b;
@@ -1121,9 +1121,9 @@ var Gi = class extends Ct {
     var _a;
     super(new ti({ onData: (r, n) => e.stream.write({ type: "write", data: r, position: n }), chunked: true, chunkSize: (_a = e.options) == null ? void 0 : _a.chunkSize }), t);
   }
-}, ue = 1, ze = 2, Je = 3, $i = 1, Hi = 2, qi = 17, ji = 2 ** 15, Ee = 2 ** 13, jt = "https://github.com/Vanilagy/webm-muxer", li = 6, ci = 5, Yi = ["strict", "offset", "permissive"], f, l, We, Le, U, fe, te, Q, _e, D, ae, oe, M, Ve, de, R, P, j, Ce, Me, le, ce, et, Re, Ie, bt, hi, vt, ui, Mt, fi, It, _i, At, mi, Ut, wi, zt, pi, nt, Wt, st, Lt, Rt, gi, Y, ie, X, re, yt, bi, xt, vi, ye, Ye, xe, Xe, Pt, yi, C, A, he, Pe, Ae, tt, Ft, xi, it, Vt, ke, Ke, Xi = class {
+}, ue = 1, ze = 2, Je = 3, Hi = 1, $i = 2, qi = 17, ji = 2 ** 15, Ee = 2 ** 13, jt = "https://github.com/Vanilagy/webm-muxer", li = 6, ci = 5, Yi = ["strict", "offset", "permissive"], f, l, We, Le, A, fe, te, Q, _e, D, ae, oe, M, Ve, de, R, P, j, Ce, Me, le, ce, et, Re, Ie, bt, hi, vt, ui, Mt, fi, It, _i, Ut, mi, At, wi, zt, pi, nt, Wt, st, Lt, Rt, gi, Y, ie, X, re, yt, bi, xt, vi, ye, Ye, xe, Xe, Pt, yi, C, U, he, Pe, Ue, tt, Ft, xi, it, Vt, ke, Ke, Xi = class {
   constructor(e) {
-    a(this, bt), a(this, vt), a(this, Mt), a(this, It), a(this, At), a(this, Ut), a(this, zt), a(this, nt), a(this, st), a(this, Rt), a(this, Y), a(this, X), a(this, yt), a(this, xt), a(this, ye), a(this, xe), a(this, Pt), a(this, C), a(this, he), a(this, Ae), a(this, Ft), a(this, it), a(this, ke), a(this, f, void 0), a(this, l, void 0), a(this, We, void 0), a(this, Le, void 0), a(this, U, void 0), a(this, fe, void 0), a(this, te, void 0), a(this, Q, void 0), a(this, _e, void 0), a(this, D, void 0), a(this, ae, void 0), a(this, oe, void 0), a(this, M, void 0), a(this, Ve, void 0), a(this, de, 0), a(this, R, []), a(this, P, []), a(this, j, []), a(this, Ce, void 0), a(this, Me, void 0), a(this, le, -1), a(this, ce, -1), a(this, et, -1), a(this, Re, void 0), a(this, Ie, false), d(this, bt, hi).call(this, e), _(this, f, { type: "webm", firstTimestampBehavior: "strict", ...e }), this.target = e.target;
+    a(this, bt), a(this, vt), a(this, Mt), a(this, It), a(this, Ut), a(this, At), a(this, zt), a(this, nt), a(this, st), a(this, Rt), a(this, Y), a(this, X), a(this, yt), a(this, xt), a(this, ye), a(this, xe), a(this, Pt), a(this, C), a(this, he), a(this, Ue), a(this, Ft), a(this, it), a(this, ke), a(this, f, void 0), a(this, l, void 0), a(this, We, void 0), a(this, Le, void 0), a(this, A, void 0), a(this, fe, void 0), a(this, te, void 0), a(this, Q, void 0), a(this, _e, void 0), a(this, D, void 0), a(this, ae, void 0), a(this, oe, void 0), a(this, M, void 0), a(this, Ve, void 0), a(this, de, 0), a(this, R, []), a(this, P, []), a(this, j, []), a(this, Ce, void 0), a(this, Me, void 0), a(this, le, -1), a(this, ce, -1), a(this, et, -1), a(this, Re, void 0), a(this, Ie, false), d(this, bt, hi).call(this, e), _(this, f, { type: "webm", firstTimestampBehavior: "strict", ...e }), this.target = e.target;
     let t = !!i(this, f).streaming;
     if (e.target instanceof ei) _(this, l, new Di(e.target));
     else if (e.target instanceof ti) _(this, l, new Ct(e.target, t));
@@ -1148,9 +1148,9 @@ var Gi = class extends Ct {
     let s = d(this, xe, Xe).call(this, e, t, r, ue);
     for (i(this, f).video.codec === "V_VP9" && d(this, xt, vi).call(this, s), _(this, le, s.timestamp); i(this, P).length > 0 && i(this, P)[0].timestamp <= s.timestamp; ) {
       let o = i(this, P).shift();
-      d(this, C, A).call(this, o, false);
+      d(this, C, U).call(this, o, false);
     }
-    !i(this, f).audio || s.timestamp <= i(this, ce) ? d(this, C, A).call(this, s, true) : i(this, R).push(s), d(this, ye, Ye).call(this), d(this, Y, ie).call(this);
+    !i(this, f).audio || s.timestamp <= i(this, ce) ? d(this, C, U).call(this, s, true) : i(this, R).push(s), d(this, ye, Ye).call(this), d(this, Y, ie).call(this);
   }
   addAudioChunk(e, t, r) {
     if (!(e instanceof EncodedAudioChunk)) throw new TypeError("addAudioChunk's first argument (chunk) must be of type EncodedAudioChunk.");
@@ -1165,13 +1165,13 @@ var Gi = class extends Ct {
     if (!Number.isFinite(r) || r < 0) throw new TypeError("addAudioChunkRaw's third argument (timestamp) must be a non-negative real number.");
     if (n && typeof n != "object") throw new TypeError("addAudioChunkRaw's fourth argument (meta), when provided, must be an object.");
     if (d(this, ke, Ke).call(this), !i(this, f).audio) throw new Error("No audio track declared.");
-    i(this, Me) === void 0 && _(this, Me, r), (n == null ? void 0 : n.decoderConfig) && (i(this, f).streaming ? _(this, D, d(this, he, Pe).call(this, n.decoderConfig.description)) : d(this, Ae, tt).call(this, i(this, D), n.decoderConfig.description));
+    i(this, Me) === void 0 && _(this, Me, r), (n == null ? void 0 : n.decoderConfig) && (i(this, f).streaming ? _(this, D, d(this, he, Pe).call(this, n.decoderConfig.description)) : d(this, Ue, tt).call(this, i(this, D), n.decoderConfig.description));
     let s = d(this, xe, Xe).call(this, e, t, r, ze);
     for (_(this, ce, s.timestamp); i(this, R).length > 0 && i(this, R)[0].timestamp <= s.timestamp; ) {
       let o = i(this, R).shift();
-      d(this, C, A).call(this, o, true);
+      d(this, C, U).call(this, o, true);
     }
-    !i(this, f).video || s.timestamp <= i(this, le) ? d(this, C, A).call(this, s, !i(this, f).video) : i(this, P).push(s), d(this, ye, Ye).call(this), d(this, Y, ie).call(this);
+    !i(this, f).video || s.timestamp <= i(this, le) ? d(this, C, U).call(this, s, !i(this, f).video) : i(this, P).push(s), d(this, ye, Ye).call(this), d(this, Y, ie).call(this);
   }
   addSubtitleChunk(e, t, r) {
     if (typeof e != "object" || !e) throw new TypeError("addSubtitleChunk's first argument (chunk) must be an object.");
@@ -1181,18 +1181,18 @@ var Gi = class extends Ct {
     if (e.additions && !(e.additions instanceof Uint8Array)) throw new TypeError("additions, when present, must be an instance of Uint8Array.");
     if (typeof t != "object") throw new TypeError("addSubtitleChunk's second argument (meta) must be an object.");
     if (d(this, ke, Ke).call(this), !i(this, f).subtitles) throw new Error("No subtitle track declared.");
-    (t == null ? void 0 : t.decoderConfig) && (i(this, f).streaming ? _(this, ae, d(this, he, Pe).call(this, t.decoderConfig.description)) : d(this, Ae, tt).call(this, i(this, ae), t.decoderConfig.description));
+    (t == null ? void 0 : t.decoderConfig) && (i(this, f).streaming ? _(this, ae, d(this, he, Pe).call(this, t.decoderConfig.description)) : d(this, Ue, tt).call(this, i(this, ae), t.decoderConfig.description));
     let n = d(this, xe, Xe).call(this, e.body, "key", r ?? e.timestamp, Je, e.duration, e.additions);
     _(this, et, n.timestamp), i(this, j).push(n), d(this, ye, Ye).call(this), d(this, Y, ie).call(this);
   }
   finalize() {
     if (i(this, Ie)) throw new Error("Cannot finalize a muxer more than once.");
-    for (; i(this, R).length > 0; ) d(this, C, A).call(this, i(this, R).shift(), true);
-    for (; i(this, P).length > 0; ) d(this, C, A).call(this, i(this, P).shift(), true);
-    for (; i(this, j).length > 0 && i(this, j)[0].timestamp <= i(this, de); ) d(this, C, A).call(this, i(this, j).shift(), false);
+    for (; i(this, R).length > 0; ) d(this, C, U).call(this, i(this, R).shift(), true);
+    for (; i(this, P).length > 0; ) d(this, C, U).call(this, i(this, P).shift(), true);
+    for (; i(this, j).length > 0 && i(this, j)[0].timestamp <= i(this, de); ) d(this, C, U).call(this, i(this, j).shift(), false);
     if (i(this, M) && d(this, it, Vt).call(this), i(this, l).writeEBML(i(this, oe)), !i(this, f).streaming) {
       let e = i(this, l).pos, t = i(this, l).pos - i(this, X, re);
-      i(this, l).seek(i(this, l).offsets.get(i(this, We)) + 4), i(this, l).writeEBMLVarInt(t, li), i(this, te).data = new Bt(i(this, de)), i(this, l).seek(i(this, l).offsets.get(i(this, te))), i(this, l).writeEBML(i(this, te)), i(this, U).data[0].data[1].data = i(this, l).offsets.get(i(this, oe)) - i(this, X, re), i(this, U).data[1].data[1].data = i(this, l).offsets.get(i(this, Le)) - i(this, X, re), i(this, U).data[2].data[1].data = i(this, l).offsets.get(i(this, fe)) - i(this, X, re), i(this, l).seek(i(this, l).offsets.get(i(this, U))), i(this, l).writeEBML(i(this, U)), i(this, l).seek(e);
+      i(this, l).seek(i(this, l).offsets.get(i(this, We)) + 4), i(this, l).writeEBMLVarInt(t, li), i(this, te).data = new Bt(i(this, de)), i(this, l).seek(i(this, l).offsets.get(i(this, te))), i(this, l).writeEBML(i(this, te)), i(this, A).data[0].data[1].data = i(this, l).offsets.get(i(this, oe)) - i(this, X, re), i(this, A).data[1].data[1].data = i(this, l).offsets.get(i(this, Le)) - i(this, X, re), i(this, A).data[2].data[1].data = i(this, l).offsets.get(i(this, fe)) - i(this, X, re), i(this, l).seek(i(this, l).offsets.get(i(this, A))), i(this, l).writeEBML(i(this, A)), i(this, l).seek(e);
     }
     d(this, Y, ie).call(this), i(this, l).finalize(), _(this, Ie, true);
   }
@@ -1201,7 +1201,7 @@ f = /* @__PURE__ */ new WeakMap();
 l = /* @__PURE__ */ new WeakMap();
 We = /* @__PURE__ */ new WeakMap();
 Le = /* @__PURE__ */ new WeakMap();
-U = /* @__PURE__ */ new WeakMap();
+A = /* @__PURE__ */ new WeakMap();
 fe = /* @__PURE__ */ new WeakMap();
 te = /* @__PURE__ */ new WeakMap();
 Q = /* @__PURE__ */ new WeakMap();
@@ -1246,7 +1246,7 @@ hi = function(e) {
 };
 vt = /* @__PURE__ */ new WeakSet();
 ui = function() {
-  i(this, l) instanceof Fe && i(this, l).target.options.onHeader && i(this, l).startTrackingWrites(), d(this, Mt, fi).call(this), i(this, f).streaming || d(this, Ut, wi).call(this), d(this, zt, pi).call(this), d(this, It, _i).call(this), d(this, At, mi).call(this), i(this, f).streaming || (d(this, nt, Wt).call(this), d(this, st, Lt).call(this)), d(this, Rt, gi).call(this), d(this, Y, ie).call(this);
+  i(this, l) instanceof Fe && i(this, l).target.options.onHeader && i(this, l).startTrackingWrites(), d(this, Mt, fi).call(this), i(this, f).streaming || d(this, At, wi).call(this), d(this, zt, pi).call(this), d(this, It, _i).call(this), d(this, Ut, mi).call(this), i(this, f).streaming || (d(this, nt, Wt).call(this), d(this, st, Lt).call(this)), d(this, Rt, gi).call(this), d(this, Y, ie).call(this);
 };
 Mt = /* @__PURE__ */ new WeakSet();
 fi = function() {
@@ -1257,14 +1257,14 @@ It = /* @__PURE__ */ new WeakSet();
 _i = function() {
   _(this, _e, { id: 236, size: 4, data: new Uint8Array(Ee) }), _(this, D, { id: 236, size: 4, data: new Uint8Array(Ee) }), _(this, ae, { id: 236, size: 4, data: new Uint8Array(Ee) });
 };
-At = /* @__PURE__ */ new WeakSet();
+Ut = /* @__PURE__ */ new WeakSet();
 mi = function() {
   _(this, Q, { id: 21936, data: [{ id: 21937, data: 2 }, { id: 21946, data: 2 }, { id: 21947, data: 2 }, { id: 21945, data: 0 }] });
 };
-Ut = /* @__PURE__ */ new WeakSet();
+At = /* @__PURE__ */ new WeakSet();
 wi = function() {
   const e = new Uint8Array([28, 83, 187, 107]), t = new Uint8Array([21, 73, 169, 102]), r = new Uint8Array([22, 84, 174, 107]);
-  _(this, U, { id: 290298740, data: [{ id: 19899, data: [{ id: 21419, data: e }, { id: 21420, size: 5, data: 0 }] }, { id: 19899, data: [{ id: 21419, data: t }, { id: 21420, size: 5, data: 0 }] }, { id: 19899, data: [{ id: 21419, data: r }, { id: 21420, size: 5, data: 0 }] }] });
+  _(this, A, { id: 290298740, data: [{ id: 19899, data: [{ id: 21419, data: e }, { id: 21420, size: 5, data: 0 }] }, { id: 19899, data: [{ id: 21419, data: t }, { id: 21420, size: 5, data: 0 }] }, { id: 19899, data: [{ id: 21419, data: r }, { id: 21420, size: 5, data: 0 }] }] });
 };
 zt = /* @__PURE__ */ new WeakSet();
 pi = function() {
@@ -1276,11 +1276,11 @@ pi = function() {
 nt = /* @__PURE__ */ new WeakSet();
 Wt = function() {
   let e = { id: 374648427, data: [] };
-  _(this, fe, e), i(this, f).video && e.data.push({ id: 174, data: [{ id: 215, data: ue }, { id: 29637, data: ue }, { id: 131, data: $i }, { id: 134, data: i(this, f).video.codec }, i(this, _e), i(this, f).video.frameRate ? { id: 2352003, data: 1e9 / i(this, f).video.frameRate } : null, { id: 224, data: [{ id: 176, data: i(this, f).video.width }, { id: 186, data: i(this, f).video.height }, i(this, f).video.alpha ? { id: 21440, data: 1 } : null, i(this, Q)] }] }), i(this, f).audio && (_(this, D, i(this, f).streaming ? i(this, D) || null : { id: 236, size: 4, data: new Uint8Array(Ee) }), e.data.push({ id: 174, data: [{ id: 215, data: ze }, { id: 29637, data: ze }, { id: 131, data: Hi }, { id: 134, data: i(this, f).audio.codec }, i(this, D), { id: 225, data: [{ id: 181, data: new Zt(i(this, f).audio.sampleRate) }, { id: 159, data: i(this, f).audio.numberOfChannels }, i(this, f).audio.bitDepth ? { id: 25188, data: i(this, f).audio.bitDepth } : null] }] })), i(this, f).subtitles && e.data.push({ id: 174, data: [{ id: 215, data: Je }, { id: 29637, data: Je }, { id: 131, data: qi }, { id: 134, data: i(this, f).subtitles.codec }, i(this, ae)] });
+  _(this, fe, e), i(this, f).video && e.data.push({ id: 174, data: [{ id: 215, data: ue }, { id: 29637, data: ue }, { id: 131, data: Hi }, { id: 134, data: i(this, f).video.codec }, i(this, _e), i(this, f).video.frameRate ? { id: 2352003, data: 1e9 / i(this, f).video.frameRate } : null, { id: 224, data: [{ id: 176, data: i(this, f).video.width }, { id: 186, data: i(this, f).video.height }, i(this, f).video.alpha ? { id: 21440, data: 1 } : null, i(this, Q)] }] }), i(this, f).audio && (_(this, D, i(this, f).streaming ? i(this, D) || null : { id: 236, size: 4, data: new Uint8Array(Ee) }), e.data.push({ id: 174, data: [{ id: 215, data: ze }, { id: 29637, data: ze }, { id: 131, data: $i }, { id: 134, data: i(this, f).audio.codec }, i(this, D), { id: 225, data: [{ id: 181, data: new Zt(i(this, f).audio.sampleRate) }, { id: 159, data: i(this, f).audio.numberOfChannels }, i(this, f).audio.bitDepth ? { id: 25188, data: i(this, f).audio.bitDepth } : null] }] })), i(this, f).subtitles && e.data.push({ id: 174, data: [{ id: 215, data: Je }, { id: 29637, data: Je }, { id: 131, data: qi }, { id: 134, data: i(this, f).subtitles.codec }, i(this, ae)] });
 };
 st = /* @__PURE__ */ new WeakSet();
 Lt = function() {
-  let e = { id: 408125543, size: i(this, f).streaming ? -1 : li, data: [i(this, f).streaming ? null : i(this, U), i(this, Le), i(this, fe)] };
+  let e = { id: 408125543, size: i(this, f).streaming ? -1 : li, data: [i(this, f).streaming ? null : i(this, A), i(this, Le), i(this, fe)] };
   if (_(this, We, e), i(this, l).writeEBML(e), i(this, l) instanceof Fe && i(this, l).target.options.onHeader) {
     let { data: t, start: r } = i(this, l).getTrackedWrites();
     i(this, l).target.options.onHeader(t, r);
@@ -1308,7 +1308,7 @@ bi = function(e) {
         i(this, l).seek(i(this, l).offsets.get(i(this, Q))), i(this, l).writeEBML(i(this, Q)), i(this, l).seek(r);
       }
     }
-    e.decoderConfig.description && (i(this, f).streaming ? _(this, _e, d(this, he, Pe).call(this, e.decoderConfig.description)) : d(this, Ae, tt).call(this, i(this, _e), e.decoderConfig.description));
+    e.decoderConfig.description && (i(this, f).streaming ? _(this, _e, d(this, he, Pe).call(this, e.decoderConfig.description)) : d(this, Ue, tt).call(this, i(this, _e), e.decoderConfig.description));
   }
 };
 xt = /* @__PURE__ */ new WeakSet();
@@ -1333,7 +1333,7 @@ vi = function(e) {
 ye = /* @__PURE__ */ new WeakSet();
 Ye = function() {
   let e = Math.min(i(this, f).video ? i(this, le) : 1 / 0, i(this, f).audio ? i(this, ce) : 1 / 0), t = i(this, j);
-  for (; t.length > 0 && t[0].timestamp <= e; ) d(this, C, A).call(this, t.shift(), !i(this, f).video && !i(this, f).audio);
+  for (; t.length > 0 && t[0].timestamp <= e; ) d(this, C, U).call(this, t.shift(), !i(this, f).video && !i(this, f).audio);
 };
 xe = /* @__PURE__ */ new WeakSet();
 Xe = function(e, t, r, n, s, o) {
@@ -1357,7 +1357,7 @@ If you want to allow non-zero first timestamps, set firstTimestampBehavior: 'per
   return e;
 };
 C = /* @__PURE__ */ new WeakSet();
-A = function(e, t) {
+U = function(e, t) {
   i(this, f).streaming && !i(this, fe) && (d(this, nt, Wt).call(this), d(this, st, Lt).call(this));
   let r = Math.floor(e.timestamp / 1e3), n = r - i(this, Ve), s = t && e.type === "key" && n >= 1e3, o = n >= ji;
   if ((!i(this, M) || s || o) && (d(this, Ft, xi).call(this, r), n = 0), n < 0) return;
@@ -1376,7 +1376,7 @@ he = /* @__PURE__ */ new WeakSet();
 Pe = function(e) {
   return { id: 25506, size: 4, data: new Uint8Array(e) };
 };
-Ae = /* @__PURE__ */ new WeakSet();
+Ue = /* @__PURE__ */ new WeakSet();
 tt = function(e, t) {
   let r = i(this, l).pos;
   i(this, l).seek(i(this, l).offsets.get(e));
