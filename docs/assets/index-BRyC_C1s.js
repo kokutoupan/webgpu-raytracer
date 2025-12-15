@@ -4,22 +4,22 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
 (function() {
   const e = document.createElement("link").relList;
   if (e && e.supports && e.supports("modulepreload")) return;
-  for (const r of document.querySelectorAll('link[rel="modulepreload"]')) s(r);
+  for (const r of document.querySelectorAll('link[rel="modulepreload"]')) i(r);
   new MutationObserver((r) => {
-    for (const o of r) if (o.type === "childList") for (const a of o.addedNodes) a.tagName === "LINK" && a.rel === "modulepreload" && s(a);
+    for (const o of r) if (o.type === "childList") for (const a of o.addedNodes) a.tagName === "LINK" && a.rel === "modulepreload" && i(a);
   }).observe(document, { childList: true, subtree: true });
   function n(r) {
     const o = {};
     return r.integrity && (o.integrity = r.integrity), r.referrerPolicy && (o.referrerPolicy = r.referrerPolicy), r.crossOrigin === "use-credentials" ? o.credentials = "include" : r.crossOrigin === "anonymous" ? o.credentials = "omit" : o.credentials = "same-origin", o;
   }
-  function s(r) {
+  function i(r) {
     if (r.ep) return;
     r.ep = true;
     const o = n(r);
     fetch(r.href, o);
   }
 })();
-const O = `// =========================================================
+const W = `// =========================================================
 //   WebGPU Ray Tracer (TLAS & BLAS)
 // =========================================================
 
@@ -43,6 +43,11 @@ const SPP = 1u;
 @group(0) @binding(8) var<storage, read> normals: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read> blas_nodes: array<BVHNode>;
 @group(0) @binding(10) var<storage, read> instances: array<Instance>;
+
+// Bindings \u8FFD\u52A0
+@group(0) @binding(11) var<storage, read> uvs: array<vec2<f32>>;
+@group(0) @binding(12) var tex: texture_2d_array<f32>;
+@group(0) @binding(13) var smp: sampler;
 
 struct FrameInfo {
     frame_count: u32
@@ -153,7 +158,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
     // Push Root Node (Global Index)
@@ -209,7 +214,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if arrayLength(&tlas_nodes) == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
     if intersect_aabb(tlas_nodes[0].min_b, tlas_nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {
@@ -297,6 +302,13 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let front = dot(ray.direction, n) < 0.0;
         n = select(-n, n, front);
 
+
+        // Intersection Interpolation
+        let t0_uv = uvs[i0];
+        let t1_uv = uvs[i1];
+        let t2_uv = uvs[i2];
+        let uv = t0_uv * w + t1_uv * u + t2_uv * v;
+
         // Attributes
         let attr = attributes[tri_idx];
         let albedo = attr.data0.rgb;
@@ -327,7 +339,14 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         }
 
         ray = Ray(ray.origin + hit.t * ray.direction + scat * 1e-4, scat);
-        throughput *= albedo;
+        let tex_idx = attr.data1.y;
+        var tex_color = vec3(1.0);
+        if (tex_idx > -0.5) {
+            tex_color = textureSampleLevel(tex, smp, uv, i32(tex_idx), 0.0).rgb;
+        }
+        let final_albedo = albedo * tex_color;
+
+        throughput *= final_albedo;
 
         if depth > 2u {
             let p = max(throughput.r, max(throughput.g, throughput.b));
@@ -368,7 +387,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(outputTex, vec2<i32>(id.xy), vec4(out, 1.));
 }
 `;
-class W {
+class O {
   constructor(e) {
     __publicField(this, "device");
     __publicField(this, "context");
@@ -387,6 +406,10 @@ class W {
     __publicField(this, "tlasBuffer");
     __publicField(this, "blasBuffer");
     __publicField(this, "instanceBuffer");
+    __publicField(this, "uvBuffer");
+    __publicField(this, "texture");
+    __publicField(this, "defaultTexture");
+    __publicField(this, "sampler");
     __publicField(this, "bufferSize", 0);
     __publicField(this, "canvas");
     this.canvas = e;
@@ -395,12 +418,16 @@ class W {
     if (!navigator.gpu) throw new Error("WebGPU not supported.");
     const e = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
     if (!e) throw new Error("No adapter");
-    this.device = await e.requestDevice(), this.context = this.canvas.getContext("webgpu"), this.context.configure({ device: this.device, format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT }), this.frameUniformBuffer = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }), this.cameraUniformBuffer = this.device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    console.log("Max Storage Buffers Per Shader Stage:", e.limits.maxStorageBuffersPerShaderStage), this.device = await e.requestDevice({ requiredLimits: { maxStorageBuffersPerShaderStage: 16 } }), this.context = this.canvas.getContext("webgpu"), this.context.configure({ device: this.device, format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT }), this.frameUniformBuffer = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }), this.cameraUniformBuffer = this.device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }), this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", addressModeU: "repeat", addressModeV: "repeat" }), this.createDefaultTexture(), this.texture = this.defaultTexture;
+  }
+  createDefaultTexture() {
+    const e = new Uint8Array([255, 255, 255, 255]);
+    this.defaultTexture = this.device.createTexture({ size: [1, 1, 1], format: "rgba8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST }), this.device.queue.writeTexture({ texture: this.defaultTexture, origin: [0, 0, 0] }, e, { bytesPerRow: 256, rowsPerImage: 1 }, [1, 1]);
   }
   buildPipeline(e, n) {
-    let s = O;
-    s = s.replace(/const\s+MAX_DEPTH\s*=\s*\d+u;/, `const MAX_DEPTH = ${e}u;`), s = s.replace(/const\s+SPP\s*=\s*\d+u;/, `const SPP = ${n}u;`);
-    const r = this.device.createShaderModule({ label: "RayTracing", code: s });
+    let i = W;
+    i = i.replace(/const\s+MAX_DEPTH\s*=\s*\d+u;/, `const MAX_DEPTH = ${e}u;`), i = i.replace(/const\s+SPP\s*=\s*\d+u;/, `const SPP = ${n}u;`);
+    const r = this.device.createShaderModule({ label: "RayTracing", code: i });
     this.pipeline = this.device.createComputePipeline({ label: "Main Pipeline", layout: "auto", compute: { module: r, entryPoint: "main" } }), this.bindGroupLayout = this.pipeline.getBindGroupLayout(0);
   }
   updateScreenSize(e, n) {
@@ -409,8 +436,41 @@ class W {
   resetAccumulation() {
     this.accumulateBuffer && this.device.queue.writeBuffer(this.accumulateBuffer, 0, new Float32Array(this.bufferSize / 4));
   }
+  async loadTexture(e) {
+    const n = await createImageBitmap(e, { resizeWidth: 1024, resizeHeight: 1024 });
+    this.texture && this.texture.destroy(), this.texture = this.device.createTexture({ size: [1024, 1024, 1], format: "rgba8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT }), this.device.queue.copyExternalImageToTexture({ source: n }, { texture: this.texture, origin: [0, 0, 0] }, [1024, 1024]);
+  }
+  async loadTexturesFromWorld(e) {
+    const n = e.textureCount;
+    if (n === 0) {
+      this.createDefaultTexture();
+      return;
+    }
+    console.log(`Loading ${n} textures...`);
+    const i = [];
+    for (let r = 0; r < n; r++) {
+      const o = e.getTexture(r);
+      if (o) {
+        const a = new Blob([o]);
+        try {
+          const u = await createImageBitmap(a, { resizeWidth: 1024, resizeHeight: 1024 });
+          i.push(u);
+        } catch (u) {
+          console.warn(`Failed to load texture ${r}`, u), i.push(await this.createFallbackBitmap());
+        }
+      } else i.push(await this.createFallbackBitmap());
+    }
+    this.texture && this.texture.destroy(), this.texture = this.device.createTexture({ size: [1024, 1024, i.length], format: "rgba8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+    for (let r = 0; r < i.length; r++) this.device.queue.copyExternalImageToTexture({ source: i[r] }, { texture: this.texture, origin: [0, 0, r] }, [1024, 1024]);
+  }
+  async createFallbackBitmap() {
+    const e = document.createElement("canvas");
+    e.width = 1024, e.height = 1024;
+    const n = e.getContext("2d");
+    return n.fillStyle = "white", n.fillRect(0, 0, 1024, 1024), await createImageBitmap(e);
+  }
   updateGeometryBuffer(e, n) {
-    let r = { tlas: this.tlasBuffer, blas: this.blasBuffer, instance: this.instanceBuffer, vertex: this.vertexBuffer, normal: this.normalBuffer, index: this.indexBuffer, attr: this.attrBuffer }[e];
+    let r = { tlas: this.tlasBuffer, blas: this.blasBuffer, instance: this.instanceBuffer, vertex: this.vertexBuffer, normal: this.normalBuffer, index: this.indexBuffer, attr: this.attrBuffer, uv: this.uvBuffer }[e];
     if (!r || r.size < n.byteLength) {
       r && r.destroy();
       const o = Math.max(n.byteLength, 4), a = this.device.createBuffer({ size: o, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -436,6 +496,9 @@ class W {
         case "attr":
           this.attrBuffer = a;
           break;
+        case "uv":
+          this.uvBuffer = a;
+          break;
       }
       return true;
     } else return n.byteLength > 0 && this.device.queue.writeBuffer(r, 0, n), false;
@@ -447,166 +510,196 @@ class W {
     this.device.queue.writeBuffer(this.frameUniformBuffer, 0, new Uint32Array([e]));
   }
   recreateBindGroup() {
-    !this.renderTargetView || !this.accumulateBuffer || !this.vertexBuffer || !this.tlasBuffer || (this.bindGroup = this.device.createBindGroup({ layout: this.bindGroupLayout, entries: [{ binding: 0, resource: this.renderTargetView }, { binding: 1, resource: { buffer: this.accumulateBuffer } }, { binding: 2, resource: { buffer: this.frameUniformBuffer } }, { binding: 3, resource: { buffer: this.cameraUniformBuffer } }, { binding: 4, resource: { buffer: this.vertexBuffer } }, { binding: 5, resource: { buffer: this.indexBuffer } }, { binding: 6, resource: { buffer: this.attrBuffer } }, { binding: 7, resource: { buffer: this.tlasBuffer } }, { binding: 8, resource: { buffer: this.normalBuffer } }, { binding: 9, resource: { buffer: this.blasBuffer } }, { binding: 10, resource: { buffer: this.instanceBuffer } }] }));
+    !this.renderTargetView || !this.accumulateBuffer || !this.vertexBuffer || !this.tlasBuffer || !this.uvBuffer || (this.bindGroup = this.device.createBindGroup({ layout: this.bindGroupLayout, entries: [{ binding: 0, resource: this.renderTargetView }, { binding: 1, resource: { buffer: this.accumulateBuffer } }, { binding: 2, resource: { buffer: this.frameUniformBuffer } }, { binding: 3, resource: { buffer: this.cameraUniformBuffer } }, { binding: 4, resource: { buffer: this.vertexBuffer } }, { binding: 5, resource: { buffer: this.indexBuffer } }, { binding: 6, resource: { buffer: this.attrBuffer } }, { binding: 7, resource: { buffer: this.tlasBuffer } }, { binding: 8, resource: { buffer: this.normalBuffer } }, { binding: 9, resource: { buffer: this.blasBuffer } }, { binding: 10, resource: { buffer: this.instanceBuffer } }, { binding: 11, resource: { buffer: this.uvBuffer } }, { binding: 12, resource: this.texture.createView({ dimension: "2d-array" }) }, { binding: 13, resource: this.sampler }] }));
   }
   render(e) {
     if (!this.bindGroup) return;
     this.updateFrameBuffer(e);
-    const n = Math.ceil(this.canvas.width / 8), s = Math.ceil(this.canvas.height / 8), r = this.device.createCommandEncoder(), o = r.beginComputePass();
-    o.setPipeline(this.pipeline), o.setBindGroup(0, this.bindGroup), o.dispatchWorkgroups(n, s), o.end(), r.copyTextureToTexture({ texture: this.renderTarget }, { texture: this.context.getCurrentTexture() }, { width: this.canvas.width, height: this.canvas.height, depthOrArrayLayers: 1 }), this.device.queue.submit([r.finish()]);
+    const n = Math.ceil(this.canvas.width / 8), i = Math.ceil(this.canvas.height / 8), r = this.device.createCommandEncoder(), o = r.beginComputePass();
+    o.setPipeline(this.pipeline), o.setBindGroup(0, this.bindGroup), o.dispatchWorkgroups(n, i), o.end(), r.copyTextureToTexture({ texture: this.renderTarget }, { texture: this.context.getCurrentTexture() }, { width: this.canvas.width, height: this.canvas.height, depthOrArrayLayers: 1 }), this.device.queue.submit([r.finish()]);
   }
 }
-let i;
-function N(t) {
-  const e = i.__externref_table_alloc();
-  return i.__wbindgen_externrefs.set(e, t), e;
-}
-function q(t, e) {
-  return t = t >>> 0, b().subarray(t / 1, t / 1 + e);
-}
-let p = null;
-function E() {
-  return (p === null || p.buffer.detached === true || p.buffer.detached === void 0 && p.buffer !== i.memory.buffer) && (p = new DataView(i.memory.buffer)), p;
-}
-function U(t, e) {
-  return t = t >>> 0, $(t, e);
-}
-let v = null;
-function b() {
-  return (v === null || v.byteLength === 0) && (v = new Uint8Array(i.memory.buffer)), v;
+let s;
+function q(t) {
+  const e = s.__externref_table_alloc();
+  return s.__wbindgen_externrefs.set(e, t), e;
 }
 function V(t, e) {
+  return t = t >>> 0, v().subarray(t / 1, t / 1 + e);
+}
+let h = null;
+function G() {
+  return (h === null || h.buffer.detached === true || h.buffer.detached === void 0 && h.buffer !== s.memory.buffer) && (h = new DataView(s.memory.buffer)), h;
+}
+function T(t, e) {
+  return t = t >>> 0, X(t, e);
+}
+let x = null;
+function v() {
+  return (x === null || x.byteLength === 0) && (x = new Uint8Array(s.memory.buffer)), x;
+}
+function H(t, e) {
   try {
     return t.apply(this, e);
   } catch (n) {
-    const s = N(n);
-    i.__wbindgen_exn_store(s);
+    const i = q(n);
+    s.__wbindgen_exn_store(i);
   }
 }
 function z(t) {
   return t == null;
 }
-function G(t, e) {
+function L(t, e) {
   const n = e(t.length * 1, 1) >>> 0;
-  return b().set(t, n / 1), m = t.length, n;
+  return v().set(t, n / 1), m = t.length, n;
 }
-function k(t, e, n) {
+function E(t, e, n) {
   if (n === void 0) {
-    const u = w.encode(t), d = e(u.length, 1) >>> 0;
-    return b().subarray(d, d + u.length).set(u), m = u.length, d;
+    const u = y.encode(t), f = e(u.length, 1) >>> 0;
+    return v().subarray(f, f + u.length).set(u), m = u.length, f;
   }
-  let s = t.length, r = e(s, 1) >>> 0;
-  const o = b();
+  let i = t.length, r = e(i, 1) >>> 0;
+  const o = v();
   let a = 0;
-  for (; a < s; a++) {
+  for (; a < i; a++) {
     const u = t.charCodeAt(a);
     if (u > 127) break;
     o[r + a] = u;
   }
-  if (a !== s) {
-    a !== 0 && (t = t.slice(a)), r = n(r, s, s = a + t.length * 3, 1) >>> 0;
-    const u = b().subarray(r + a, r + s), d = w.encodeInto(t, u);
-    a += d.written, r = n(r, s, a, 1) >>> 0;
+  if (a !== i) {
+    a !== 0 && (t = t.slice(a)), r = n(r, i, i = a + t.length * 3, 1) >>> 0;
+    const u = v().subarray(r + a, r + i), f = y.encodeInto(t, u);
+    a += f.written, r = n(r, i, a, 1) >>> 0;
   }
   return m = a, r;
 }
-let x = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
-x.decode();
-const H = 2146435072;
-let B = 0;
-function $(t, e) {
-  return B += e, B >= H && (x = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true }), x.decode(), B = e), x.decode(b().subarray(t, t + e));
+let S = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
+S.decode();
+const $ = 2146435072;
+let k = 0;
+function X(t, e) {
+  return k += e, k >= $ && (S = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true }), S.decode(), k = e), S.decode(v().subarray(t, t + e));
 }
-const w = new TextEncoder();
-"encodeInto" in w || (w.encodeInto = function(t, e) {
-  const n = w.encode(t);
+const y = new TextEncoder();
+"encodeInto" in y || (y.encodeInto = function(t, e) {
+  const n = y.encode(t);
   return e.set(n), { read: t.length, written: n.length };
 });
 let m = 0;
-typeof FinalizationRegistry > "u" || new FinalizationRegistry((t) => i.__wbg_renderbuffers_free(t >>> 0, 1));
-const L = typeof FinalizationRegistry > "u" ? { register: () => {
+typeof FinalizationRegistry > "u" || new FinalizationRegistry((t) => s.__wbg_renderbuffers_free(t >>> 0, 1));
+const F = typeof FinalizationRegistry > "u" ? { register: () => {
 }, unregister: () => {
-} } : new FinalizationRegistry((t) => i.__wbg_world_free(t >>> 0, 1));
-class S {
+} } : new FinalizationRegistry((t) => s.__wbg_world_free(t >>> 0, 1));
+class U {
   __destroy_into_raw() {
     const e = this.__wbg_ptr;
-    return this.__wbg_ptr = 0, L.unregister(this), e;
+    return this.__wbg_ptr = 0, F.unregister(this), e;
   }
   free() {
     const e = this.__destroy_into_raw();
-    i.__wbg_world_free(e, 0);
+    s.__wbg_world_free(e, 0);
   }
   camera_ptr() {
-    return i.world_camera_ptr(this.__wbg_ptr) >>> 0;
+    return s.world_camera_ptr(this.__wbg_ptr) >>> 0;
   }
   indices_len() {
-    return i.world_indices_len(this.__wbg_ptr) >>> 0;
+    return s.world_indices_len(this.__wbg_ptr) >>> 0;
   }
   indices_ptr() {
-    return i.world_indices_ptr(this.__wbg_ptr) >>> 0;
+    return s.world_indices_ptr(this.__wbg_ptr) >>> 0;
   }
   normals_len() {
-    return i.world_normals_len(this.__wbg_ptr) >>> 0;
+    return s.world_normals_len(this.__wbg_ptr) >>> 0;
   }
   normals_ptr() {
-    return i.world_normals_ptr(this.__wbg_ptr) >>> 0;
+    return s.world_normals_ptr(this.__wbg_ptr) >>> 0;
   }
   vertices_len() {
-    return i.world_vertices_len(this.__wbg_ptr) >>> 0;
+    return s.world_vertices_len(this.__wbg_ptr) >>> 0;
   }
   vertices_ptr() {
-    return i.world_vertices_ptr(this.__wbg_ptr) >>> 0;
+    return s.world_vertices_ptr(this.__wbg_ptr) >>> 0;
   }
   instances_len() {
-    return i.world_instances_len(this.__wbg_ptr) >>> 0;
+    return s.world_instances_len(this.__wbg_ptr) >>> 0;
   }
   instances_ptr() {
-    return i.world_instances_ptr(this.__wbg_ptr) >>> 0;
+    return s.world_instances_ptr(this.__wbg_ptr) >>> 0;
+  }
+  set_animation(e) {
+    s.world_set_animation(this.__wbg_ptr, e);
   }
   update_camera(e, n) {
-    i.world_update_camera(this.__wbg_ptr, e, n);
+    s.world_update_camera(this.__wbg_ptr, e, n);
   }
   attributes_len() {
-    return i.world_attributes_len(this.__wbg_ptr) >>> 0;
+    return s.world_attributes_len(this.__wbg_ptr) >>> 0;
   }
   attributes_ptr() {
-    return i.world_attributes_ptr(this.__wbg_ptr) >>> 0;
+    return s.world_attributes_ptr(this.__wbg_ptr) >>> 0;
+  }
+  get_texture_ptr(e) {
+    return s.world_get_texture_ptr(this.__wbg_ptr, e) >>> 0;
+  }
+  get_texture_size(e) {
+    return s.world_get_texture_size(this.__wbg_ptr, e) >>> 0;
+  }
+  get_texture_count() {
+    return s.world_get_texture_count(this.__wbg_ptr) >>> 0;
+  }
+  get_animation_name(e) {
+    let n, i;
+    try {
+      const r = s.world_get_animation_name(this.__wbg_ptr, e);
+      return n = r[0], i = r[1], T(r[0], r[1]);
+    } finally {
+      s.__wbindgen_free(n, i, 1);
+    }
   }
   load_animation_glb(e) {
-    const n = G(e, i.__wbindgen_malloc), s = m;
-    i.world_load_animation_glb(this.__wbg_ptr, n, s);
+    const n = L(e, s.__wbindgen_malloc), i = m;
+    s.world_load_animation_glb(this.__wbg_ptr, n, i);
   }
-  constructor(e, n, s) {
-    const r = k(e, i.__wbindgen_malloc, i.__wbindgen_realloc), o = m;
-    var a = z(n) ? 0 : k(n, i.__wbindgen_malloc, i.__wbindgen_realloc), u = m, d = z(s) ? 0 : G(s, i.__wbindgen_malloc), c = m;
-    const l = i.world_new(r, o, a, u, d, c);
-    return this.__wbg_ptr = l >>> 0, L.register(this, this.__wbg_ptr, this), this;
+  get_animation_count() {
+    return s.world_get_animation_count(this.__wbg_ptr) >>> 0;
+  }
+  constructor(e, n, i) {
+    const r = E(e, s.__wbindgen_malloc, s.__wbindgen_realloc), o = m;
+    var a = z(n) ? 0 : E(n, s.__wbindgen_malloc, s.__wbindgen_realloc), u = m, f = z(i) ? 0 : L(i, s.__wbindgen_malloc), P = m;
+    const c = s.world_new(r, o, a, u, f, P);
+    return this.__wbg_ptr = c >>> 0, F.register(this, this.__wbg_ptr, this), this;
   }
   update(e) {
-    i.world_update(this.__wbg_ptr, e);
+    s.world_update(this.__wbg_ptr, e);
+  }
+  uvs_len() {
+    return s.world_uvs_len(this.__wbg_ptr) >>> 0;
+  }
+  uvs_ptr() {
+    return s.world_uvs_ptr(this.__wbg_ptr) >>> 0;
   }
   blas_len() {
-    return i.world_blas_len(this.__wbg_ptr) >>> 0;
+    return s.world_blas_len(this.__wbg_ptr) >>> 0;
   }
   blas_ptr() {
-    return i.world_blas_ptr(this.__wbg_ptr) >>> 0;
+    return s.world_blas_ptr(this.__wbg_ptr) >>> 0;
   }
   tlas_len() {
-    return i.world_tlas_len(this.__wbg_ptr) >>> 0;
+    return s.world_tlas_len(this.__wbg_ptr) >>> 0;
   }
   tlas_ptr() {
-    return i.world_tlas_ptr(this.__wbg_ptr) >>> 0;
+    return s.world_tlas_ptr(this.__wbg_ptr) >>> 0;
   }
 }
-Symbol.dispose && (S.prototype[Symbol.dispose] = S.prototype.free);
-const j = /* @__PURE__ */ new Set(["basic", "cors", "default"]);
-async function X(t, e) {
+Symbol.dispose && (U.prototype[Symbol.dispose] = U.prototype.free);
+const Y = /* @__PURE__ */ new Set(["basic", "cors", "default"]);
+async function j(t, e) {
   if (typeof Response == "function" && t instanceof Response) {
     if (typeof WebAssembly.instantiateStreaming == "function") try {
       return await WebAssembly.instantiateStreaming(t, e);
-    } catch (s) {
-      if (t.ok && j.has(t.type) && t.headers.get("Content-Type") !== "application/wasm") console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", s);
-      else throw s;
+    } catch (i) {
+      if (t.ok && Y.has(t.type) && t.headers.get("Content-Type") !== "application/wasm") console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", i);
+      else throw i;
     }
     const n = await t.arrayBuffer();
     return await WebAssembly.instantiate(n, e);
@@ -615,41 +708,45 @@ async function X(t, e) {
     return n instanceof WebAssembly.Instance ? { instance: n, module: t } : n;
   }
 }
-function Y() {
+function K() {
   const t = {};
   return t.wbg = {}, t.wbg.__wbg___wbindgen_throw_dd24417ed36fc46e = function(e, n) {
-    throw new Error(U(e, n));
+    throw new Error(T(e, n));
   }, t.wbg.__wbg_error_7534b8e9a36f1ab4 = function(e, n) {
-    let s, r;
+    let i, r;
     try {
-      s = e, r = n, console.error(U(e, n));
+      i = e, r = n, console.error(T(e, n));
     } finally {
-      i.__wbindgen_free(s, r, 1);
+      s.__wbindgen_free(i, r, 1);
     }
   }, t.wbg.__wbg_getRandomValues_1c61fac11405ffdc = function() {
-    return V(function(e, n) {
-      globalThis.crypto.getRandomValues(q(e, n));
+    return H(function(e, n) {
+      globalThis.crypto.getRandomValues(V(e, n));
     }, arguments);
+  }, t.wbg.__wbg_log_1d990106d99dacb7 = function(e) {
+    console.log(e);
   }, t.wbg.__wbg_new_8a6f238a6ece86ea = function() {
     return new Error();
   }, t.wbg.__wbg_stack_0ed75d68575b0f3c = function(e, n) {
-    const s = n.stack, r = k(s, i.__wbindgen_malloc, i.__wbindgen_realloc), o = m;
-    E().setInt32(e + 4, o, true), E().setInt32(e + 0, r, true);
+    const i = n.stack, r = E(i, s.__wbindgen_malloc, s.__wbindgen_realloc), o = m;
+    G().setInt32(e + 4, o, true), G().setInt32(e + 0, r, true);
+  }, t.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(e, n) {
+    return T(e, n);
   }, t.wbg.__wbindgen_init_externref_table = function() {
-    const e = i.__wbindgen_externrefs, n = e.grow(4);
+    const e = s.__wbindgen_externrefs, n = e.grow(4);
     e.set(0, void 0), e.set(n + 0, void 0), e.set(n + 1, null), e.set(n + 2, true), e.set(n + 3, false);
   }, t;
 }
-function K(t, e) {
-  return i = t.exports, D.__wbindgen_wasm_module = e, p = null, v = null, i.__wbindgen_start(), i;
+function J(t, e) {
+  return s = t.exports, N.__wbindgen_wasm_module = e, h = null, x = null, s.__wbindgen_start(), s;
 }
-async function D(t) {
-  if (i !== void 0) return i;
-  typeof t < "u" && (Object.getPrototypeOf(t) === Object.prototype ? { module_or_path: t } = t : console.warn("using deprecated parameters for the initialization function; pass a single object instead")), typeof t > "u" && (t = new URL("/webgpu-raytracer/assets/rust_shader_tools_bg-BK2yN6Qq.wasm", import.meta.url));
-  const e = Y();
+async function N(t) {
+  if (s !== void 0) return s;
+  typeof t < "u" && (Object.getPrototypeOf(t) === Object.prototype ? { module_or_path: t } = t : console.warn("using deprecated parameters for the initialization function; pass a single object instead")), typeof t > "u" && (t = new URL("/webgpu-raytracer/assets/rust_shader_tools_bg-9hGyLcao.wasm", import.meta.url));
+  const e = K();
   (typeof t == "string" || typeof Request == "function" && t instanceof Request || typeof URL == "function" && t instanceof URL) && (t = fetch(t));
-  const { instance: n, module: s } = await X(await t, e);
-  return K(n, s);
+  const { instance: n, module: i } = await j(await t, e);
+  return J(n, i);
 }
 class Q {
   constructor() {
@@ -657,11 +754,11 @@ class Q {
     __publicField(this, "wasmMemory", null);
   }
   async initWasm() {
-    const e = await D();
+    const e = await N();
     this.wasmMemory = e.memory, console.log("Wasm initialized");
   }
-  loadScene(e, n, s) {
-    this.world && this.world.free(), this.world = new S(e, n, s);
+  loadScene(e, n, i) {
+    this.world && this.world.free(), this.world = new U(e, n, i);
   }
   update(e) {
     var _a;
@@ -675,6 +772,16 @@ class Q {
     var _a;
     (_a = this.world) == null ? void 0 : _a.load_animation_glb(e);
   }
+  getAnimationList() {
+    if (!this.world) return [];
+    const e = this.world.get_animation_count(), n = [];
+    for (let i = 0; i < e; i++) n.push(this.world.get_animation_name(i));
+    return n;
+  }
+  setAnimation(e) {
+    var _a;
+    (_a = this.world) == null ? void 0 : _a.set_animation(e);
+  }
   getF32(e, n) {
     return new Float32Array(this.wasmMemory.buffer, e, n);
   }
@@ -686,6 +793,9 @@ class Q {
   }
   get normals() {
     return this.getF32(this.world.normals_ptr(), this.world.normals_len());
+  }
+  get uvs() {
+    return this.getF32(this.world.uvs_ptr(), this.world.uvs_len());
   }
   get indices() {
     return this.getU32(this.world.indices_ptr(), this.world.indices_len());
@@ -705,6 +815,15 @@ class Q {
   get cameraData() {
     return this.getF32(this.world.camera_ptr(), 24);
   }
+  get textureCount() {
+    var _a;
+    return ((_a = this.world) == null ? void 0 : _a.get_texture_count()) || 0;
+  }
+  getTexture(e) {
+    if (!this.world) return null;
+    const n = this.world.get_texture_ptr(e), i = this.world.get_texture_size(e);
+    return !n || i === 0 ? null : new Uint8Array(this.wasmMemory.buffer, n, i).slice();
+  }
   get hasWorld() {
     return !!this.world;
   }
@@ -712,16 +831,14 @@ class Q {
     this.world && console.log(`Scene Stats: V=${this.vertices.length / 4}, Tri=${this.indices.length / 3}, BLAS=${this.blas.length / 8}, TLAS=${this.tlas.length / 8}`);
   }
 }
-const J = document.getElementById("gpu-canvas"), T = document.getElementById("render-btn"), F = document.getElementById("scene-select"), C = document.getElementById("res-width"), M = document.getElementById("res-height"), A = document.getElementById("obj-file");
+const Z = document.getElementById("gpu-canvas"), I = document.getElementById("render-btn"), C = document.getElementById("scene-select"), D = document.getElementById("res-width"), M = document.getElementById("res-height"), A = document.getElementById("obj-file");
 A && (A.accept = ".obj,.glb,.vrm");
-const P = document.getElementById("anim-file");
-P && (P.accept = ".glb,.gltf");
-const Z = document.getElementById("max-depth"), ee = document.getElementById("spp-frame"), te = document.getElementById("recompile-btn"), ne = document.getElementById("update-interval"), I = document.createElement("div");
-Object.assign(I.style, { position: "fixed", bottom: "10px", left: "10px", color: "#0f0", background: "rgba(0,0,0,0.7)", padding: "8px", fontFamily: "monospace", fontSize: "14px", pointerEvents: "none", zIndex: "9999", borderRadius: "4px" });
-document.body.appendChild(I);
-let g = 0, _ = false, h = null, y = null;
-async function re() {
-  const t = new W(J), e = new Q();
+const ee = document.getElementById("max-depth"), te = document.getElementById("spp-frame"), ne = document.getElementById("recompile-btn"), re = document.getElementById("update-interval"), _ = document.getElementById("anim-select"), R = document.createElement("div");
+Object.assign(R.style, { position: "fixed", bottom: "10px", left: "10px", color: "#0f0", background: "rgba(0,0,0,0.7)", padding: "8px", fontFamily: "monospace", fontSize: "14px", pointerEvents: "none", zIndex: "9999", borderRadius: "4px" });
+document.body.appendChild(R);
+let p = 0, g = false, w = null, B = null;
+async function ie() {
+  const t = new O(Z), e = new Q();
   let n = 0;
   try {
     await t.init(), await e.initWasm();
@@ -729,48 +846,57 @@ async function re() {
     alert("Initialization failed: " + c), console.error(c);
     return;
   }
-  const s = () => {
-    const c = parseInt(Z.value, 10) || 10, l = parseInt(ee.value, 10) || 1;
+  const i = () => {
+    const c = parseInt(ee.value, 10) || 10, l = parseInt(te.value, 10) || 1;
     t.buildPipeline(c, l);
   };
-  s();
+  i();
   const r = () => {
-    const c = parseInt(C.value, 10) || 720, l = parseInt(M.value, 10) || 480;
-    t.updateScreenSize(c, l), e.hasWorld && (e.updateCamera(c, l), t.updateCameraBuffer(e.cameraData)), t.recreateBindGroup(), t.resetAccumulation(), g = 0, n = 0;
-  }, o = (c, l = true) => {
-    _ = false, console.log(`Loading Scene: ${c}...`);
-    let f, R;
-    c === "viewer" && h && (y === "obj" ? f = h : y === "glb" && (R = new Uint8Array(h))), e.loadScene(c, f, R), e.printStats(), t.updateGeometryBuffer("vertex", e.vertices), t.updateGeometryBuffer("normal", e.normals), t.updateGeometryBuffer("index", e.indices), t.updateGeometryBuffer("attr", e.attributes), t.updateGeometryBuffer("tlas", e.tlas), t.updateGeometryBuffer("blas", e.blas), t.updateGeometryBuffer("instance", e.instances), r(), l && (_ = true, T.textContent = "Stop Rendering");
+    const c = parseInt(D.value, 10) || 720, l = parseInt(M.value, 10) || 480;
+    t.updateScreenSize(c, l), e.hasWorld && (e.updateCamera(c, l), t.updateCameraBuffer(e.cameraData)), t.recreateBindGroup(), t.resetAccumulation(), p = 0, n = 0;
+  }, o = async (c, l = true) => {
+    g = false, console.log(`Loading Scene: ${c}...`);
+    let d, b;
+    c === "viewer" && w && (B === "obj" ? d = w : B === "glb" && (b = new Uint8Array(w))), e.loadScene(c, d, b), e.printStats(), await t.loadTexturesFromWorld(e), t.updateGeometryBuffer("vertex", e.vertices), t.updateGeometryBuffer("normal", e.normals), t.updateGeometryBuffer("uv", e.uvs), t.updateGeometryBuffer("index", e.indices), t.updateGeometryBuffer("attr", e.attributes), t.updateGeometryBuffer("tlas", e.tlas), t.updateGeometryBuffer("blas", e.blas), t.updateGeometryBuffer("instance", e.instances), r(), P(), l && (g = true, I.textContent = "Stop Rendering");
   };
   let a = performance.now(), u = 0;
-  const d = () => {
-    if (requestAnimationFrame(d), !_ || !e.hasWorld) return;
-    let c = parseInt(ne.value, 10);
-    if ((isNaN(c) || c < 0) && (c = 0), c > 0 && g >= c) {
-      e.update(n / c / 30);
-      let f = false;
-      f || (f = t.updateGeometryBuffer("tlas", e.tlas)), f || (f = t.updateGeometryBuffer("blas", e.blas)), f || (f = t.updateGeometryBuffer("instance", e.instances)), f || (f = t.updateGeometryBuffer("vertex", e.vertices)), f || (f = t.updateGeometryBuffer("normal", e.normals)), f || (f = t.updateGeometryBuffer("index", e.indices)), f || (f = t.updateGeometryBuffer("attr", e.attributes)), f && t.recreateBindGroup(), t.resetAccumulation(), g = 0;
+  const f = () => {
+    if (requestAnimationFrame(f), !g || !e.hasWorld) return;
+    let c = parseInt(re.value, 10);
+    if ((isNaN(c) || c < 0) && (c = 0), c > 0 && p >= c) {
+      e.update(n / c / 60);
+      let d = false;
+      d || (d = t.updateGeometryBuffer("tlas", e.tlas)), d || (d = t.updateGeometryBuffer("blas", e.blas)), d || (d = t.updateGeometryBuffer("instance", e.instances)), d || (d = t.updateGeometryBuffer("vertex", e.vertices)), d || (d = t.updateGeometryBuffer("normal", e.normals)), d || (d = t.updateGeometryBuffer("index", e.indices)), d || (d = t.updateGeometryBuffer("attr", e.attributes)), d && t.recreateBindGroup(), t.resetAccumulation(), p = 0;
     }
-    g++, u++, n++, t.render(g);
+    p++, u++, n++, t.render(p);
     const l = performance.now();
-    l - a >= 1e3 && (I.textContent = `FPS: ${u} | ${(1e3 / u).toFixed(2)}ms | Frame: ${g}`, u = 0, a = l);
+    l - a >= 1e3 && (R.textContent = `FPS: ${u} | ${(1e3 / u).toFixed(2)}ms | Frame: ${p}`, u = 0, a = l);
   };
-  T.addEventListener("click", () => {
-    _ = !_, T.textContent = _ ? "Stop Rendering" : "Resume Rendering";
-  }), F.addEventListener("change", (c) => o(c.target.value, false)), C.addEventListener("change", r), M.addEventListener("change", r), te.addEventListener("click", () => {
-    _ = false, s(), t.recreateBindGroup(), t.resetAccumulation(), g = 0, _ = true;
+  I.addEventListener("click", () => {
+    g = !g, I.textContent = g ? "Stop Rendering" : "Resume Rendering";
+  }), C.addEventListener("change", (c) => o(c.target.value, false)), D.addEventListener("change", r), M.addEventListener("change", r), ne.addEventListener("click", () => {
+    g = false, i(), t.recreateBindGroup(), t.resetAccumulation(), p = 0, g = true;
   }), A.addEventListener("change", async (c) => {
     var _a, _b;
     const l = (_a = c.target.files) == null ? void 0 : _a[0];
     if (!l) return;
-    ((_b = l.name.split(".").pop()) == null ? void 0 : _b.toLowerCase()) === "obj" ? (h = await l.text(), y = "obj") : (h = await l.arrayBuffer(), y = "glb"), F.value = "viewer", o("viewer", false);
-  }), P.addEventListener("change", async (c) => {
-    var _a;
-    const l = (_a = c.target.files) == null ? void 0 : _a[0];
-    if (!l) return;
-    console.log(`Loading Motion: ${l.name}...`);
-    const f = await l.arrayBuffer();
-    e.loadAnimation(new Uint8Array(f)), console.log("Motion Loaded!"), c.target.value = "";
-  }), r(), o("cornell", false), requestAnimationFrame(d);
+    ((_b = l.name.split(".").pop()) == null ? void 0 : _b.toLowerCase()) === "obj" ? (w = await l.text(), B = "obj") : (w = await l.arrayBuffer(), B = "glb"), C.value = "viewer", o("viewer", false);
+  });
+  const P = () => {
+    const c = e.getAnimationList();
+    if (_.innerHTML = "", c.length === 0) {
+      const l = document.createElement("option");
+      l.text = "No Anim", _.add(l), _.disabled = true;
+      return;
+    }
+    _.disabled = false, c.forEach((l, d) => {
+      const b = document.createElement("option");
+      b.text = `[${d}] ${l}`, b.value = d.toString(), _.add(b);
+    }), _.value = "0";
+  };
+  _.addEventListener("change", () => {
+    const c = parseInt(_.value, 10);
+    e.setAnimation(c);
+  }), r(), o("cornell", false), requestAnimationFrame(f);
 }
-re().catch(console.error);
+ie().catch(console.error);
