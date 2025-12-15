@@ -93,15 +93,6 @@
       background: #F57C00;
     }
 
-    /* モーション用ボタン (紫) */
-    .file-btn.motion {
-      background: #9C27B0;
-    }
-
-    .file-btn.motion:hover {
-      background: #7B1FA2;
-    }
-
     select,
     input {
       background: #444;
@@ -148,35 +139,6 @@
       image-rendering: pixelated;
       box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
     }
-
-    @media (max-width: 600px) {
-      .controls {
-        padding: 8px 5px;
-        gap: 8px;
-      }
-
-      .title {
-        font-size: 0.9rem;
-        width: 100%;
-        text-align: center;
-        margin-bottom: 5px;
-      }
-
-      button,
-      select,
-      input {
-        font-size: 0.8rem;
-        padding: 6px 8px;
-      }
-
-      input[type="number"] {
-        width: 45px;
-      }
-
-      .group {
-        padding: 4px 6px;
-      }
-    }
   </style>
 </head>
 
@@ -196,7 +158,7 @@
     </div>
 
     <div class="group">
-      <label for="obj-file" class="file-btn">📂 Model (.glb/.obj)</label>
+      <label for="obj-file" class="file-btn">📂 Model</label>
       <input type="file" id="obj-file" accept=".obj,.glb,.vrm" style="display: none;">
     </div>
 
@@ -207,25 +169,41 @@
 
     <div class="group">
       <span class="label">Res:</span>
-      <input id="res-width" type="number" value="720" step="10" min="10">
+      <input id="res-width" type="number" value="720" step="10" min="10" style="width: 50px;">
       <span class="label">x</span>
-      <input id="res-height" type="number" value="480" step="10" min="10">
-    </div>
-
-    <div class="group">
-      <span class="label">Interval:</span>
-      <input id="update-interval" type="number" value="4" min="0" step="1">
+      <input id="res-height" type="number" value="480" step="10" min="10" style="width: 50px;">
     </div>
 
     <div class="group" style="border-color: #2196F3;">
-      <span class="label">Depth:</span>
-      <input id="max-depth" type="number" value="10" min="1" max="50">
-      <span class="label" style="margin-left:5px;">SPP:</span>
-      <input id="spp-frame" type="number" value="1" min="1" max="100">
+      <span class="label">RT Config:</span>
+      <span class="label">Depth</span>
+      <input id="max-depth" type="number" value="10" min="1" max="50" style="width: 40px;">
+      <span class="label">SPP</span>
+      <input id="spp-frame" type="number" value="1" min="1" max="100" style="width: 40px;">
       <button id="recompile-btn" title="Recompile Shader">Update</button>
     </div>
 
+    <div class="group" style="border-color: #E91E63;">
+      <span class="label">Rec:</span>
+      <input id="rec-fps" type="number" value="30" title="FPS" style="width: 40px;">
+      <span class="label">fps</span>
+      <input id="rec-duration" type="number" value="3" title="Duration (sec)" style="width: 40px;">
+      <span class="label">sec</span>
+      <span class="label" style="margin-left:5px;">SPP:</span>
+      <input id="rec-spp" type="number" value="64" title="Samples per Frame" style="width: 45px;">
+      <span class="label">Batch:</span>
+      <input id="rec-batch" type="number" value="4" title="Render Batch Size" style="width: 40px;">
+      
+      <button id="record-btn" style="background: #E91E63;">● Rec</button>
+    </div>
+    
+    <div class="group">
+      <span class="label">Intv:</span>
+      <input id="update-interval" type="number" value="4" min="0" step="1" style="width: 40px;">
+    </div>
+
     <button id="render-btn">Render Start</button>
+
   </div>
 
   <div class="canvas-wrapper">

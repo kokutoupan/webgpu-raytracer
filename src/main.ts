@@ -1,10 +1,11 @@
 // src/main.ts
 import { WebGPURenderer } from './renderer';
 import { WorldBridge } from './world-bridge';
+import * as WebMMuxer from 'webm-muxer'; // WebM (VP9)
 
 // --- DOM Elements ---
 const canvas = document.getElementById('gpu-canvas') as HTMLCanvasElement;
-const btn = document.getElementById('render-btn') as HTMLButtonElement;
+const btn = document.getElementById('render-btn') as HTMLButtonElement; // ★ここが重要
 const sceneSelect = document.getElementById('scene-select') as HTMLSelectElement;
 const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
@@ -16,6 +17,13 @@ const inputSPP = document.getElementById('spp-frame') as HTMLInputElement;
 const btnRecompile = document.getElementById('recompile-btn') as HTMLButtonElement;
 const inputUpdateInterval = document.getElementById('update-interval') as HTMLInputElement;
 const animSelect = document.getElementById('anim-select') as HTMLSelectElement;
+
+// 録画用UI
+const btnRecord = document.getElementById('record-btn') as HTMLButtonElement;
+const inputRecFps = document.getElementById('rec-fps') as HTMLInputElement;
+const inputRecDur = document.getElementById('rec-duration') as HTMLInputElement;
+const inputRecSPP = document.getElementById('rec-spp') as HTMLInputElement;
+const inputRecBatch = document.getElementById('rec-batch') as HTMLInputElement;
 
 // --- Stats UI ---
 const statsDiv = document.createElement("div");
@@ -29,6 +37,7 @@ document.body.appendChild(statsDiv);
 // --- Global State ---
 let frameCount = 0;
 let isRendering = false;
+let isRecording = false; // 録画中フラグ
 let currentFileData: string | ArrayBuffer | null = null;
 let currentFileType: 'obj' | 'glb' | null = null;
 
@@ -37,7 +46,6 @@ async function main() {
   const worldBridge = new WorldBridge();
 
   let totalFrameCount = 0;
-
 
   try {
     await renderer.init();
@@ -85,7 +93,6 @@ async function main() {
     worldBridge.loadScene(name, objSource, glbData);
     worldBridge.printStats();
 
-    // ★追加: テクスチャ転送 (非同期)
     await renderer.loadTexturesFromWorld(worldBridge);
 
     // Initial Buffer Upload
@@ -98,12 +105,137 @@ async function main() {
     renderer.updateGeometryBuffer('blas', worldBridge.blas);
     renderer.updateGeometryBuffer('instance', worldBridge.instances);
 
-    updateResolution(); // Camera update & BindGroup creation included
-    updateAnimList(); // ★ Populate animation list
+    updateResolution();
+    updateAnimList();
 
     if (autoStart) {
       isRendering = true;
-      btn.textContent = "Stop Rendering";
+      if (btn) btn.textContent = "Stop Rendering";
+    }
+  };
+
+  // 録画機能
+  const recordVideo = async () => {
+    if (isRecording) return;
+
+    isRendering = false;
+    isRecording = true;
+
+    btnRecord.textContent = "Initializing...";
+    btnRecord.disabled = true;
+    if (btn) btn.textContent = "Resume Rendering"; // 録画中は通常再生ボタンのテキストを戻す
+
+    const fps = parseInt(inputRecFps.value, 10) || 30;
+    const duration = parseInt(inputRecDur.value, 10) || 3;
+    const totalFrames = fps * duration;
+
+    // UIから設定を取得
+    const samplesPerFrame = parseInt(inputRecSPP.value, 10) || 64;
+    const batchSize = parseInt(inputRecBatch.value, 10) || 4;
+
+    console.log(`Starting recording: ${totalFrames} frames @ ${fps}fps (VP9)`);
+    console.log(`Quality: ${samplesPerFrame} SPP, Batch: ${batchSize}`);
+
+    // WebM Muxer Setup
+    const muxer = new WebMMuxer.Muxer({
+      target: new WebMMuxer.ArrayBufferTarget(),
+      video: {
+        codec: 'V_VP9',
+        width: canvas.width,
+        height: canvas.height,
+        frameRate: fps
+      }
+    });
+
+    const videoEncoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (e) => console.error("VideoEncoder Error:", e)
+    });
+
+    videoEncoder.configure({
+      codec: 'vp09.00.10.08', // VP9
+      width: canvas.width,
+      height: canvas.height,
+      bitrate: 12_000_000,
+    });
+
+    try {
+      for (let i = 0; i < totalFrames; i++) {
+        btnRecord.textContent = `Rec: ${i}/${totalFrames} (${Math.round(i / totalFrames * 100)}%)`;
+
+        await new Promise(r => setTimeout(r, 0));
+
+        // 1. 時間更新
+        const time = i / fps;
+        worldBridge.update(time);
+
+        // 2. ジオメトリ更新
+        let needsRebind = false;
+        needsRebind ||= renderer.updateGeometryBuffer('tlas', worldBridge.tlas);
+        needsRebind ||= renderer.updateGeometryBuffer('blas', worldBridge.blas);
+        needsRebind ||= renderer.updateGeometryBuffer('instance', worldBridge.instances);
+        needsRebind ||= renderer.updateGeometryBuffer('vertex', worldBridge.vertices);
+        needsRebind ||= renderer.updateGeometryBuffer('normal', worldBridge.normals);
+        needsRebind ||= renderer.updateGeometryBuffer('index', worldBridge.indices);
+        needsRebind ||= renderer.updateGeometryBuffer('attr', worldBridge.attributes);
+
+        if (needsRebind) renderer.recreateBindGroup();
+        renderer.resetAccumulation();
+
+        // 3. 分割レンダリング
+        let samplesDone = 0;
+        while (samplesDone < samplesPerFrame) {
+          const batch = Math.min(batchSize, samplesPerFrame - samplesDone);
+
+          for (let k = 0; k < batch; k++) {
+            renderer.render(samplesDone + k);
+          }
+          samplesDone += batch;
+
+          await renderer.device.queue.onSubmittedWorkDone();
+
+          // 次のバッチがある場合のみ待機 (黒画面対策)
+          if (samplesDone < samplesPerFrame) {
+            await new Promise(r => setTimeout(r, 0));
+          }
+        }
+
+        if (videoEncoder.encodeQueueSize > 5) {
+          await videoEncoder.flush();
+        }
+
+        const frame = new VideoFrame(canvas, {
+          timestamp: (i * 1000000) / fps,
+          duration: 1000000 / fps
+        });
+
+        videoEncoder.encode(frame, { keyFrame: i % fps === 0 });
+        frame.close();
+      }
+
+      btnRecord.textContent = "Finalizing...";
+      await videoEncoder.flush();
+      muxer.finalize();
+
+      const { buffer } = muxer.target;
+      const blob = new Blob([buffer], { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `raytrace_${Date.now()}.webm`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+    } catch (e) {
+      console.error("Recording failed:", e);
+      alert("Recording failed. See console.");
+    } finally {
+      isRecording = false;
+      isRendering = true;
+      btnRecord.textContent = "● Rec";
+      btnRecord.disabled = false;
+      if (btn) btn.textContent = "Stop Rendering";
+      requestAnimationFrame(renderFrame);
     }
   };
 
@@ -112,17 +244,17 @@ async function main() {
   let frameTimer = 0;
 
   const renderFrame = () => {
+    if (isRecording) return; // 録画中はスキップ
+
     requestAnimationFrame(renderFrame);
     if (!isRendering || !worldBridge.hasWorld) return;
 
     let updateInterval = parseInt(inputUpdateInterval.value, 10);
     if (isNaN(updateInterval) || updateInterval < 0) updateInterval = 0;
 
-    // アニメーション更新 (インターバル毎)
     if (updateInterval > 0 && frameCount >= updateInterval) {
       worldBridge.update(totalFrameCount / updateInterval / 60);
 
-      // 変更があったバッファのみ更新 (戻り値がtrueならBindGroup再生成が必要)
       let needsRebind = false;
       needsRebind ||= renderer.updateGeometryBuffer('tlas', worldBridge.tlas);
       needsRebind ||= renderer.updateGeometryBuffer('blas', worldBridge.blas);
@@ -145,7 +277,6 @@ async function main() {
 
     renderer.render(frameCount);
 
-    // Stats
     const now = performance.now();
     if (now - lastTime >= 1000) {
       statsDiv.textContent = `FPS: ${frameTimer} | ${(1000 / frameTimer).toFixed(2)}ms | Frame: ${frameCount}`;
@@ -155,13 +286,18 @@ async function main() {
   };
 
   // --- Event Listeners ---
-  btn.addEventListener("click", () => {
-    isRendering = !isRendering;
-    btn.textContent = isRendering ? "Stop Rendering" : "Resume Rendering";
-  });
+  if (btn) {
+    btn.addEventListener("click", () => {
+      isRendering = !isRendering;
+      btn.textContent = isRendering ? "Stop Rendering" : "Resume Rendering";
+    });
+  }
+
+  if (btnRecord) {
+    btnRecord.addEventListener("click", recordVideo);
+  }
 
   sceneSelect.addEventListener("change", (e) => loadScene((e.target as HTMLSelectElement).value, false));
-
   inputWidth.addEventListener("change", updateResolution);
   inputHeight.addEventListener("change", updateResolution);
 
@@ -186,9 +322,9 @@ async function main() {
       currentFileType = 'glb';
     }
     sceneSelect.value = "viewer";
-    loadScene("viewer", false); // Auto-start rendering is false
+    loadScene("viewer", false);
   });
-  // --- Animation Selection ---
+
   const updateAnimList = () => {
     const list = worldBridge.getAnimationList();
     animSelect.innerHTML = "";
@@ -206,8 +342,6 @@ async function main() {
       opt.value = i.toString();
       animSelect.add(opt);
     });
-    // Default to 0? Or keep current?
-    // User requested switching. Default 0 is fine.
     animSelect.value = "0";
   };
 
@@ -216,7 +350,6 @@ async function main() {
     worldBridge.setAnimation(idx);
   });
 
-  // Start
   updateResolution();
   loadScene("cornell", false);
   requestAnimationFrame(renderFrame);
