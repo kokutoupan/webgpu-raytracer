@@ -5,32 +5,11 @@
 const PI = 3.141592653589793;
 const T_MIN = 0.001;
 const T_MAX = 1e30;
-// これらはTypeScript側から置換されます
+// These are replaced by TypeScript
 const MAX_DEPTH = 10u;
 const SPP = 1u;
 
-// --- Bindings ---
-@group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
-@group(0) @binding(2) var<uniform> frame: FrameInfo;
-@group(0) @binding(3) var<uniform> camera: Camera;
-
-@group(0) @binding(4) var<storage, read> vertices: array<vec4<f32>>;
-@group(0) @binding(5) var<storage, read> indices: array<u32>;
-@group(0) @binding(6) var<storage, read> attributes: array<TriangleAttributes>;
-@group(0) @binding(7) var<storage, read> tlas_nodes: array<BVHNode>;
-@group(0) @binding(8) var<storage, read> normals: array<vec4<f32>>;
-@group(0) @binding(9) var<storage, read> blas_nodes: array<BVHNode>;
-@group(0) @binding(10) var<storage, read> instances: array<Instance>;
-
-// Bindings 追加
-@group(0) @binding(11) var<storage, read> uvs: array<vec2<f32>>;
-@group(0) @binding(12) var tex: texture_2d_array<f32>;
-@group(0) @binding(13) var smp: sampler;
-
-struct FrameInfo {
-    frame_count: u32
-}
+// --- Structs ---
 
 struct Camera {
     origin: vec3<f32>,
@@ -41,9 +20,25 @@ struct Camera {
     u: vec3<f32>,
     v: vec3<f32>
 }
-struct Ray {
-    origin: vec3<f32>,
-    direction: vec3<f32>
+
+struct SceneUniforms {
+    camera: Camera,
+    frame_count: u32,
+    blas_base_idx: u32, // Start index of BLAS nodes in 'nodes' array
+    pad1: u32,
+    pad2: u32
+}
+
+struct Vertex {
+    pos: vec4<f32>,
+    normal: vec4<f32>,
+    uv: vec2<f32>,
+    pad: vec2<f32> // Pad to 48 bytes (vec4 + vec4 + vec4)
+}
+
+struct TriangleAttributes {
+    data0: vec4<f32>,
+    data1: vec4<f32>
 }
 
 struct BVHNode {
@@ -68,21 +63,39 @@ struct Instance {
     padding: u32,
 }
 
-fn get_inv_transform(inst: Instance) -> mat4x4<f32> {
-    return mat4x4<f32>(inst.inv_0, inst.inv_1, inst.inv_2, inst.inv_3);
+// --- Bindings (Consolidated) ---
+
+@group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
+@group(0) @binding(2) var<uniform> scene: SceneUniforms;
+
+@group(0) @binding(3) var<storage, read> geometry: array<Vertex>; // Merged Verts/Normals/UVs
+@group(0) @binding(4) var<storage, read> indices: array<u32>;
+@group(0) @binding(5) var<storage, read> attributes: array<TriangleAttributes>;
+@group(0) @binding(6) var<storage, read> nodes: array<BVHNode>; // Merged TLAS/BLAS
+@group(0) @binding(7) var<storage, read> instances: array<Instance>;
+
+@group(0) @binding(8) var tex: texture_2d_array<f32>;
+@group(0) @binding(9) var smp: sampler;
+
+// --- Helpers ---
+
+struct Ray {
+    origin: vec3<f32>,
+    direction: vec3<f32>
 }
 
-struct TriangleAttributes {
-    data0: vec4<f32>,
-    data1: vec4<f32>
-}
 struct HitResult {
     t: f32,
     tri_idx: f32,
     inst_idx: i32
 }
 
-// --- Random & Physics ---
+fn get_inv_transform(inst: Instance) -> mat4x4<f32> {
+    return mat4x4<f32>(inst.inv_0, inst.inv_1, inst.inv_2, inst.inv_3);
+}
+
+// --- Random ---
 fn init_rng(pixel_idx: u32, frame: u32) -> u32 {
     var seed = pixel_idx + frame * 719393u;
     seed ^= 2747636419u; seed *= 2654435769u; seed ^= (seed >> 16u);
@@ -132,17 +145,16 @@ fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: 
     return -1.0;
 }
 
-// BLAS Intersection Logic Update
-fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32> {
+fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
     var stack: array<u32, 64>;
     var stackptr = 0u;
 
-    // Push Root Node (Global Index)
-    let root_idx = node_offset;
-    let root = blas_nodes[root_idx];
+    // Root Node (Global Index in 'nodes' array)
+    let root_idx = node_start_idx;
+    let root = nodes[root_idx];
 
     if intersect_aabb(root.min_b, root.max_b, r, inv_d, t_min, closest_t) < 1e30 {
         stack[stackptr] = root_idx;
@@ -151,8 +163,8 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
 
     while stackptr > 0u {
         stackptr--;
-        let idx = stack[stackptr]; // Global Node Index
-        let node = blas_nodes[idx];
+        let idx = stack[stackptr]; 
+        let node = nodes[idx];
         let count = u32(node.tri_count);
 
         if count > 0u {
@@ -161,26 +173,29 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
             for (var i = 0u; i < count; i++) {
                 let tri_id = first + i;
                 let b = tri_id * 3u;
-                // indices & vertices are global buffers, so simple access is correct
-                let t = hit_triangle_raw(vertices[indices[b]].xyz, vertices[indices[b + 1u]].xyz, vertices[indices[b + 2u]].xyz, r, t_min, closest_t);
+                
+                // Get vertices from geometry buffer
+                let v0 = geometry[indices[b]].pos.xyz;
+                let v1 = geometry[indices[b+1u]].pos.xyz;
+                let v2 = geometry[indices[b+2u]].pos.xyz;
+                
+                let t = hit_triangle_raw(v0, v1, v2, r, t_min, closest_t);
                 if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
             }
         } else {
             // Internal Node
             // node.left_first is RELATIVE to the start of this BLAS.
-            // We must add node_offset to get the Global Index.
-            let l = u32(node.left_first) + node_offset; // ★Fix: Add offset
+            let l = u32(node.left_first) + node_start_idx; 
             let r_node_idx = l + 1u;
 
-            let nl = blas_nodes[l];
-            let nr = blas_nodes[r_node_idx];
+            let nl = nodes[l];
+            let nr = nodes[r_node_idx];
 
             let dl = intersect_aabb(nl.min_b, nl.max_b, r, inv_d, t_min, closest_t);
             let dr = intersect_aabb(nr.min_b, nr.max_b, r, inv_d, t_min, closest_t);
 
             let hl = dl < 1e30; let hr = dr < 1e30;
             if hl && hr {
-                // Push further node first
                 if dl < dr { stack[stackptr] = r_node_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_node_idx; stackptr++; }
             } else if hl { stack[stackptr] = l; stackptr++; } else if hr { stack[stackptr] = r_node_idx; stackptr++; }
         }
@@ -190,29 +205,35 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
 
 fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     var res: HitResult; res.t = t_max; res.tri_idx = -1.0; res.inst_idx = -1;
-    if arrayLength(&tlas_nodes) == 0u { return res; }
+    // Need at least one node.
+    // Ideally we pass tlas_count, but checking arrayLength of storage buffer 'nodes' is not precise for sub-allocations.
+    // Assuming root is at 0.
+    // If scene.blas_base_idx == 0, then tlas is empty or something weird.
+    if scene.blas_base_idx == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
     var stack: array<u32, 64>;
     var stackptr = 0u;
 
-    if intersect_aabb(tlas_nodes[0].min_b, tlas_nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {
+    if intersect_aabb(nodes[0].min_b, nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {
         stack[stackptr] = 0u; stackptr++;
     }
 
     while stackptr > 0u {
         stackptr--;
         let idx = stack[stackptr];
-        let node = tlas_nodes[idx];
+        let node = nodes[idx];
 
         if node.tri_count > 0.5 { // Leaf (Instance)
             let inst_idx = u32(node.left_first);
             let inst = instances[inst_idx];
             let inv = get_inv_transform(inst);
             
-            // Transform ray to local space
             let r_local = Ray((inv * vec4(r.origin, 1.0)).xyz, (inv * vec4(r.direction, 0.0)).xyz);
-            let blas = intersect_blas(r_local, t_min, res.t, inst.blas_node_offset);
+            
+            // BLAS start = global BLAS base + instance specific offset
+            let blas_start = scene.blas_base_idx + inst.blas_node_offset;
+            let blas = intersect_blas(r_local, t_min, res.t, blas_start);
 
             if blas.y > -0.5 {
                 res.t = blas.x;
@@ -223,8 +244,8 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
             // Internal (TLAS)
             let l = u32(node.left_first);
             let r_idx = l + 1u;
-            let nl = tlas_nodes[l];
-            let nr = tlas_nodes[r_idx];
+            let nl = nodes[l];
+            let nr = nodes[r_idx];
             let dl = intersect_aabb(nl.min_b, nl.max_b, r, inv_d, t_min, res.t);
             let dr = intersect_aabb(nr.min_b, nr.max_b, r, inv_d, t_min, res.t);
             if dl < 1e30 && dr < 1e30 {
@@ -253,47 +274,45 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
         let inst = instances[u32(hit.inst_idx)];
         let tri_idx = u32(hit.tri_idx); 
-        // Note: tri_idx is global triangle index (offset baked in Rust)
 
         let i0 = indices[tri_idx * 3u];
         let i1 = indices[tri_idx * 3u + 1u];
         let i2 = indices[tri_idx * 3u + 2u];
 
+        // Retrieve properties from merged geometry buffer
+        let v0 = geometry[i0];
+        let v1 = geometry[i1];
+        let v2 = geometry[i2];
+
         // Normal Interpolation
         let inv = get_inv_transform(inst);
         let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
 
-        let e1 = vertices[i1].xyz - vertices[i0].xyz;
-        let e2 = vertices[i2].xyz - vertices[i0].xyz;
+        let e1 = v1.pos.xyz - v0.pos.xyz;
+        let e2 = v2.pos.xyz - v0.pos.xyz;
         let h = cross(r_local.direction, e2);
         let a = dot(e1, h);
         let f = 1.0 / a;
-        let s = r_local.origin - vertices[i0].xyz;
+        let s = r_local.origin - v0.pos.xyz;
         let u = f * dot(s, h);
         let q = cross(s, e1);
         let v = f * dot(r_local.direction, q);
         let w = 1.0 - u - v;
 
-        let ln = normalize(normals[i0].xyz * w + normals[i1].xyz * u + normals[i2].xyz * v);
+        let ln = normalize(v0.normal.xyz * w + v1.normal.xyz * u + v2.normal.xyz * v);
         let wn = normalize((vec4(ln, 0.0) * inv).xyz);
 
         var n = wn;
         let front = dot(ray.direction, n) < 0.0;
         n = select(-n, n, front);
 
-
-        // Intersection Interpolation
-        let t0_uv = uvs[i0];
-        let t1_uv = uvs[i1];
-        let t2_uv = uvs[i2];
-        let uv = t0_uv * w + t1_uv * u + t2_uv * v;
+        // Interpolate UV
+        let tex_uv = v0.uv * w + v1.uv * u + v2.uv * v;
 
         // Attributes
         let attr = attributes[tri_idx];
         let albedo = attr.data0.rgb;
-        
-        // ★ 修正箇所: 変数名を 'type' から 'mat_type' に変更
-        let mat_type = bitcast<u32>(attr.data0.w); // f32 -> u32
+        let mat_type = bitcast<u32>(attr.data0.w);
 
         if mat_type == 3u { return select(vec3(0.), throughput * albedo, front); }
 
@@ -321,7 +340,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let tex_idx = attr.data1.y;
         var tex_color = vec3(1.0);
         if (tex_idx > -0.5) {
-            tex_color = textureSampleLevel(tex, smp, uv, i32(tex_idx), 0.0).rgb;
+            tex_color = textureSampleLevel(tex, smp, tex_uv, i32(tex_idx), 0.0).rgb;
         }
         let final_albedo = albedo * tex_color;
 
@@ -341,24 +360,24 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(outputTex);
     if id.x >= dims.x || id.y >= dims.y { return; }
     let p_idx = id.y * dims.x + id.x;
-    var rng = init_rng(p_idx, frame.frame_count);
+    var rng = init_rng(p_idx, scene.frame_count);
 
     var col = vec3(0.);
     for (var s = 0u; s < SPP; s++) {
         var off = vec3(0.);
-        if camera.lens_radius > 0. {
-            let rd = camera.lens_radius * random_in_unit_disk(&rng);
-            off = camera.u * rd.x + camera.v * rd.y;
+        if scene.camera.lens_radius > 0. {
+            let rd = scene.camera.lens_radius * random_in_unit_disk(&rng);
+            off = scene.camera.u * rd.x + scene.camera.v * rd.y;
         }
         let u = (f32(id.x) + rand_pcg(&rng)) / f32(dims.x);
         let v = 1. - (f32(id.y) + rand_pcg(&rng)) / f32(dims.y);
-        let d = camera.lower_left_corner + u * camera.horizontal + v * camera.vertical - camera.origin - off;
-        col += ray_color(Ray(camera.origin + off, d), &rng);
+        let d = scene.camera.lower_left_corner + u * scene.camera.horizontal + v * scene.camera.vertical - scene.camera.origin - off;
+        col += ray_color(Ray(scene.camera.origin + off, d), &rng);
     }
     col /= f32(SPP);
 
     var acc = vec4(0.);
-    if frame.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
+    if scene.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
     let new_acc = acc + vec4(col, 1.0);
     accumulateBuffer[p_idx] = new_acc;
 
