@@ -201,8 +201,9 @@ export class WebGPURenderer {
   }
 
   // バッファの更新・再生成ロジック
+  // バッファの更新・再生成ロジック
   updateGeometryBuffer(
-    type: 'tlas' | 'blas' | 'instance' | 'vertex' | 'normal' | 'index' | 'attr' | 'uv', // ★ 'uv' を追加
+    type: 'tlas' | 'blas' | 'instance' | 'vertex' | 'normal' | 'index' | 'attr' | 'uv',
     data: Float32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>
   ): boolean {
     // マッピング
@@ -214,16 +215,36 @@ export class WebGPURenderer {
       normal: this.normalBuffer,
       index: this.indexBuffer,
       attr: this.attrBuffer,
-      uv: this.uvBuffer // ★ 追加
+      uv: this.uvBuffer
     };
     let currentBuf = map[type];
 
     // 新規作成が必要かチェック
+    // ★修正ポイント: 現在のサイズが足りない場合のみ再作成するが、
+    // その際「ギリギリ」ではなく「1.5倍」のサイズを確保して、次回の再作成を防ぐ。
     if (!currentBuf || currentBuf.size < data.byteLength) {
       if (currentBuf) currentBuf.destroy();
-      const size = Math.max(data.byteLength, 4); // 最低4バイト
-      const newBuf = this.device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-      this.device.queue.writeBuffer(newBuf, 0, data);
+
+      // 必要なサイズ計算
+      const neededSize = data.byteLength;
+
+      // 余裕を持たせる (1.5倍 + 4バイトアライメント)
+      // これによりアニメーションでデータ量が多少増減してもバッファ再利用率が上がる
+      let newSize = Math.ceil(neededSize * 1.5);
+
+      // 4の倍数に補正 (WebGPU要件)
+      newSize = (newSize + 3) & ~3;
+      newSize = Math.max(newSize, 4); // 最低4バイト
+
+      // console.log(`Buffer Realloc [${type}]: ${neededSize} -> ${newSize} bytes`); // デバッグ用
+
+      const newBuf = this.device.createBuffer({
+        size: newSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+      });
+
+      // データを書き込む (データの実サイズ分だけ)
+      this.device.queue.writeBuffer(newBuf, 0, data, 0, data.length);
 
       // クラスプロパティを更新
       switch (type) {
@@ -234,13 +255,14 @@ export class WebGPURenderer {
         case 'normal': this.normalBuffer = newBuf; break;
         case 'index': this.indexBuffer = newBuf; break;
         case 'attr': this.attrBuffer = newBuf; break;
-        case 'uv': this.uvBuffer = newBuf; break; // ★ 追加
+        case 'uv': this.uvBuffer = newBuf; break;
       }
       return true; // BindGroupの再生成が必要
     } else {
-      // サイズが足りれば書き込みのみ
+      // サイズが足りれば書き込みのみ（バッファの再利用）
       if (data.byteLength > 0) {
-        this.device.queue.writeBuffer(currentBuf, 0, data);
+        // 第3引数以降で範囲を指定し、正確に書き込む
+        this.device.queue.writeBuffer(currentBuf, 0, data, 0, data.length);
       }
       return false;
     }

@@ -14,5 +14,8 @@
     "vite": "^7.2.4",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.5.0"
+  },
+  "dependencies": {
+    "webm-muxer": "^5.1.4"
   }
 }
