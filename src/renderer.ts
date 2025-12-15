@@ -35,6 +35,7 @@ export class WebGPURenderer {
   
   // Cached for updating
   private blasOffset = 0;
+  private vertexCount = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -233,12 +234,13 @@ export class WebGPURenderer {
       n: Float32Array, 
       uv: Float32Array
   ): boolean {
-      const vertexCount = v.length / 4;
-      const strideFloats = 12; // 4+4+4 (vec4 pos, vec4 normal, vec2 uv+pad)
-      const totalBytes = vertexCount * strideFloats * 4;
+      const totalBytes = v.byteLength + n.byteLength + uv.byteLength;
 
       let needsRebind = false;
       if (!this.geometryBuffer || this.geometryBuffer.size < totalBytes) needsRebind = true;
+
+      const vertexCount = v.length / 4;
+      this.vertexCount = vertexCount;
 
       this.geometryBuffer = this.ensureBuffer(this.geometryBuffer, totalBytes, 'GeometryBuffer');
       
@@ -247,35 +249,28 @@ export class WebGPURenderer {
           console.warn(`UV buffer mismatch: V=${vertexCount}, UV=${uv.length/2}. Filling 0.`);
       }
 
-      // Interleaving
-      const interleaved = new Float32Array(vertexCount * strideFloats);
-      for(let i=0; i<vertexCount; i++) {
-          const dst = i * strideFloats;
-          // Pos (4)
-          interleaved[dst] = v[i*4];
-          interleaved[dst+1] = v[i*4+1];
-          interleaved[dst+2] = v[i*4+2];
-          interleaved[dst+3] = 1.0; 
+      // Fully Separated Layout helping buffer.set(): 
+      // [Positions (vec4)... | Normals (vec4)... | UVs (vec2)...]
+      // Note: Positions and Normals are assumed to be stride-4 input arrays (x,y,z,w)
+      // UVs are assumed to be stride-2 input arrays (u,v)
 
-          // Normal (4)
-          interleaved[dst+4] = n[i*4];
-          interleaved[dst+5] = n[i*4+1];
-          interleaved[dst+6] = n[i*4+2];
-          interleaved[dst+7] = 0.0;
-
-          // UV (2) + Pad (2)
-          if (hasUV) {
-            interleaved[dst+8] = uv[i*2];
-            interleaved[dst+9] = uv[i*2+1];
-          } else {
-            interleaved[dst+8] = 0.0;
-            interleaved[dst+9] = 0.0;
-          }
-          interleaved[dst+10] = 0.0;
-          interleaved[dst+11] = 0.0;
-      }
+      const posCount = v.length;
+      const normCount = n.length;
+      const uvCount = uv.length;
       
-      this.device.queue.writeBuffer(this.geometryBuffer, 0, interleaved);
+      const sizeFloats = posCount + normCount + uvCount;
+      const bufferData = new Float32Array(sizeFloats);
+      
+      // 1. Fill Positions
+      bufferData.set(v, 0);
+
+      // 2. Fill Normals
+      bufferData.set(n, posCount);
+
+      // 3. Fill UVs
+      bufferData.set(uv, posCount + normCount);
+      
+      this.device.queue.writeBuffer(this.geometryBuffer, 0, bufferData);
       return needsRebind;
   }
 
@@ -306,7 +301,7 @@ export class WebGPURenderer {
       if (!this.sceneUniformBuffer) return;
       this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, cameraData as any);
       
-      const mixed = new Uint32Array([frameCount, this.blasOffset]);
+      const mixed = new Uint32Array([frameCount, this.blasOffset, this.vertexCount, 0]);
       this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, mixed); 
   }
 
