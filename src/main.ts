@@ -1,381 +1,159 @@
-// src/main.ts
 import { WebGPURenderer } from "./renderer";
 import { WorldBridge } from "./world-bridge";
-import * as WebMMuxer from "webm-muxer"; // WebM (VP9)
-
-import { RtcClient } from "./network/RtcClient";
-import type { SignalingMessage, RenderConfig } from "./network/Protocol"; // 修正: typeを追加
-
-// --- DOM Elements ---
-const canvas = document.getElementById("gpu-canvas") as HTMLCanvasElement;
-const btn = document.getElementById("render-btn") as HTMLButtonElement;
-const sceneSelect = document.getElementById(
-  "scene-select"
-) as HTMLSelectElement;
-const inputWidth = document.getElementById("res-width") as HTMLInputElement;
-const inputHeight = document.getElementById("res-height") as HTMLInputElement;
-const inputFile = document.getElementById("obj-file") as HTMLInputElement;
-if (inputFile) inputFile.accept = ".obj,.glb,.vrm";
-
-const inputDepth = document.getElementById("max-depth") as HTMLInputElement;
-const inputSPP = document.getElementById("spp-frame") as HTMLInputElement;
-const btnRecompile = document.getElementById(
-  "recompile-btn"
-) as HTMLButtonElement;
-const inputUpdateInterval = document.getElementById(
-  "update-interval"
-) as HTMLInputElement;
-const animSelect = document.getElementById("anim-select") as HTMLSelectElement;
-
-// 録画用UI
-const btnRecord = document.getElementById("record-btn") as HTMLButtonElement;
-const inputRecFps = document.getElementById("rec-fps") as HTMLInputElement;
-const inputRecDur = document.getElementById("rec-duration") as HTMLInputElement;
-const inputRecSPP = document.getElementById("rec-spp") as HTMLInputElement;
-const inputRecBatch = document.getElementById("rec-batch") as HTMLInputElement;
-
-// --- Stats UI ---
-const statsDiv = document.createElement("div");
-Object.assign(statsDiv.style, {
-  position: "fixed",
-  bottom: "10px",
-  left: "10px",
-  color: "#0f0",
-  background: "rgba(0,0,0,0.7)",
-  padding: "8px",
-  fontFamily: "monospace",
-  fontSize: "14px",
-  pointerEvents: "none",
-  zIndex: "9999",
-  borderRadius: "4px",
-});
-document.body.appendChild(statsDiv);
+import { Config } from "./config";
+import { UIManager } from "./ui/UIManager";
+import { VideoRecorder } from "./recorder/VideoRecorder";
+import { SignalingClient } from "./network/SignalingClient";
 
 // --- Global State ---
-let frameCount = 0;
 let isRendering = false;
-let isRecording = false;
 let currentFileData: string | ArrayBuffer | null = null;
 let currentFileType: "obj" | "glb" | null = null;
 
-async function main() {
-  const renderer = new WebGPURenderer(canvas);
-  const worldBridge = new WorldBridge();
+// --- Modules ---
+const ui = new UIManager();
+const renderer = new WebGPURenderer(ui.canvas);
+const worldBridge = new WorldBridge();
+const recorder = new VideoRecorder(renderer, worldBridge, ui.canvas);
+const signaling = new SignalingClient();
 
-  let totalFrameCount = 0;
+// --- Main Application Loop ---
+let frameCount = 0;
+let totalFrameCount = 0;
+let frameTimer = 0;
+let lastTime = performance.now();
 
-  try {
-    await renderer.init();
-    await worldBridge.initWasm();
-  } catch (e) {
-    alert("Initialization failed: " + e);
-    console.error(e);
-    return;
+// --- Functions ---
+const rebuildPipeline = () => {
+  const depth = parseInt(ui.inputDepth.value, 10) || Config.defaultDepth;
+  const spp = parseInt(ui.inputSPP.value, 10) || Config.defaultSPP;
+  renderer.buildPipeline(depth, spp);
+};
+
+const updateResolution = () => {
+  const { width, height } = ui.getRenderConfig();
+  renderer.updateScreenSize(width, height);
+
+  if (worldBridge.hasWorld) {
+    worldBridge.updateCamera(width, height);
+    renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+  }
+  renderer.recreateBindGroup();
+  renderer.resetAccumulation();
+  frameCount = 0;
+  totalFrameCount = 0;
+};
+
+const loadScene = async (name: string, autoStart = true) => {
+  isRendering = false;
+  console.log(`Loading Scene: ${name}...`);
+
+  let objSource: string | undefined;
+  let glbData: Uint8Array | undefined;
+
+  if (name === "viewer" && currentFileData) {
+    if (currentFileType === "obj") objSource = currentFileData as string;
+    else if (currentFileType === "glb")
+      glbData = new Uint8Array(currentFileData as ArrayBuffer);
   }
 
-  // --- Initial Setup ---
-  const rebuildPipeline = () => {
-    const depth = parseInt(inputDepth.value, 10) || 10;
-    const spp = parseInt(inputSPP.value, 10) || 1;
-    renderer.buildPipeline(depth, spp);
-  };
-  rebuildPipeline();
+  worldBridge.loadScene(name, objSource, glbData);
+  worldBridge.printStats();
 
-  const updateResolution = () => {
-    const w = parseInt(inputWidth.value, 10) || 720;
-    const h = parseInt(inputHeight.value, 10) || 480;
-    renderer.updateScreenSize(w, h); // This also resets accumulation
+  await renderer.loadTexturesFromWorld(worldBridge);
+  await uploadSceneBuffers();
 
-    // Camera update is part of uniform update now, will happen in render loop or explicit call
-    if (worldBridge.hasWorld) {
-      worldBridge.updateCamera(w, h);
-      renderer.updateSceneUniforms(worldBridge.cameraData, 0);
-    }
-    renderer.recreateBindGroup();
-    renderer.resetAccumulation();
-    frameCount = 0;
-    totalFrameCount = 0;
-  };
+  updateResolution();
+  ui.updateAnimList(worldBridge.getAnimationList());
 
-  const loadScene = async (name: string, autoStart = true) => {
-    isRendering = false;
-    console.log(`Loading Scene: ${name}...`);
+  if (autoStart) {
+    isRendering = true;
+    ui.updateRenderButton(true);
+  }
+};
 
-    let objSource: string | undefined;
-    let glbData: Uint8Array | undefined;
+const uploadSceneBuffers = async () => {
+  renderer.updateCombinedGeometry(
+    worldBridge.vertices,
+    worldBridge.normals,
+    worldBridge.uvs
+  );
+  renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
+  renderer.updateBuffer("index", worldBridge.indices);
+  renderer.updateBuffer("attr", worldBridge.attributes);
+  renderer.updateBuffer("instance", worldBridge.instances);
+};
 
-    if (name === "viewer" && currentFileData) {
-      if (currentFileType === "obj") objSource = currentFileData as string;
-      else if (currentFileType === "glb")
-        glbData = new Uint8Array(currentFileData as ArrayBuffer);
-    }
+// --- Render Loop ---
+const renderFrame = () => {
+  if (recorder.recording) return;
 
-    worldBridge.loadScene(name, objSource, glbData);
-    worldBridge.printStats();
+  requestAnimationFrame(renderFrame);
+  if (!isRendering || !worldBridge.hasWorld) return;
 
-    await renderer.loadTexturesFromWorld(worldBridge);
+  let updateInterval = parseInt(ui.inputUpdateInterval.value, 10) || 0;
+  if (updateInterval < 0) updateInterval = 0;
 
-    // Initial Buffer Upload
-    renderer.updateCombinedGeometry(
+  if (updateInterval > 0 && frameCount >= updateInterval) {
+    worldBridge.update(totalFrameCount / updateInterval / 60);
+
+    let needsRebind = false;
+    needsRebind ||= renderer.updateCombinedBVH(
+      worldBridge.tlas,
+      worldBridge.blas
+    );
+    needsRebind ||= renderer.updateBuffer("instance", worldBridge.instances);
+    needsRebind ||= renderer.updateCombinedGeometry(
       worldBridge.vertices,
       worldBridge.normals,
       worldBridge.uvs
     );
-    renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
+    needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
+    needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
 
-    renderer.updateBuffer("index", worldBridge.indices);
-    renderer.updateBuffer("attr", worldBridge.attributes);
-    renderer.updateBuffer("instance", worldBridge.instances);
+    worldBridge.updateCamera(ui.canvas.width, ui.canvas.height);
+    renderer.updateSceneUniforms(worldBridge.cameraData, 0);
 
-    updateResolution(); // This triggers recreateBindGroup
-    updateAnimList();
-
-    if (autoStart) {
-      isRendering = true;
-      if (btn) btn.textContent = "Stop Rendering";
-    }
-  };
-
-  // 録画機能
-  const recordVideo = async () => {
-    if (isRecording) return;
-
-    isRendering = false;
-    isRecording = true;
-
-    btnRecord.textContent = "Initializing...";
-    btnRecord.disabled = true;
-    if (btn) btn.textContent = "Resume Rendering";
-
-    const fps = parseInt(inputRecFps.value, 10) || 30;
-    const duration = parseInt(inputRecDur.value, 10) || 3;
-    const totalFrames = fps * duration;
-
-    const samplesPerFrame = parseInt(inputRecSPP.value, 10) || 64;
-    const batchSize = parseInt(inputRecBatch.value, 10) || 4;
-
-    console.log(`Starting recording: ${totalFrames} frames @ ${fps}fps (VP9)`);
-
-    const muxer = new WebMMuxer.Muxer({
-      target: new WebMMuxer.ArrayBufferTarget(),
-      video: {
-        codec: "V_VP9",
-        width: canvas.width,
-        height: canvas.height,
-        frameRate: fps,
-      },
-    });
-
-    const videoEncoder = new VideoEncoder({
-      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error: (e) => console.error("VideoEncoder Error:", e),
-    });
-
-    videoEncoder.configure({
-      codec: "vp09.00.10.08",
-      width: canvas.width,
-      height: canvas.height,
-      bitrate: 12_000_000,
-    });
-
-    try {
-      for (let i = 0; i < totalFrames; i++) {
-        btnRecord.textContent = `Rec: ${i}/${totalFrames} (${Math.round(
-          (i / totalFrames) * 100
-        )}%)`;
-
-        await new Promise((r) => setTimeout(r, 0));
-
-        const time = i / fps;
-        worldBridge.update(time);
-
-        // 2. ジオメトリ更新
-        let needsRebind = false;
-        needsRebind ||= renderer.updateCombinedBVH(
-          worldBridge.tlas,
-          worldBridge.blas
-        );
-        needsRebind ||= renderer.updateBuffer(
-          "instance",
-          worldBridge.instances
-        );
-
-        // Skinning support: Vertices/Normals need update every frame
-        needsRebind ||= renderer.updateCombinedGeometry(
-          worldBridge.vertices,
-          worldBridge.normals,
-          worldBridge.uvs
-        );
-
-        // BVH Rebuild sorts triangles, so indices and attributes change order every frame!
-        needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
-        needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
-
-        worldBridge.updateCamera(canvas.width, canvas.height); // Ensure camera matches
-        renderer.updateSceneUniforms(worldBridge.cameraData, 0);
-
-        if (needsRebind) renderer.recreateBindGroup();
-        renderer.resetAccumulation();
-
-        // 3. 分割レンダリング
-        let samplesDone = 0;
-        while (samplesDone < samplesPerFrame) {
-          const batch = Math.min(batchSize, samplesPerFrame - samplesDone);
-          for (let k = 0; k < batch; k++) {
-            renderer.render(samplesDone + k);
-          }
-          samplesDone += batch;
-          await renderer.device.queue.onSubmittedWorkDone();
-          if (samplesDone < samplesPerFrame) {
-            await new Promise((r) => setTimeout(r, 0));
-          }
-        }
-
-        if (videoEncoder.encodeQueueSize > 5) {
-          await videoEncoder.flush();
-        }
-
-        const frame = new VideoFrame(canvas, {
-          timestamp: (i * 1000000) / fps,
-          duration: 1000000 / fps,
-        });
-
-        videoEncoder.encode(frame, { keyFrame: i % fps === 0 });
-        frame.close();
-      }
-
-      btnRecord.textContent = "Finalizing...";
-      await videoEncoder.flush();
-      muxer.finalize();
-
-      const { buffer } = muxer.target;
-      const blob = new Blob([buffer], { type: "video/webm" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `raytrace_${Date.now()}.webm`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error("Recording failed:", e);
-      alert("Recording failed. See console.");
-    } finally {
-      isRecording = false;
-      isRendering = true;
-      btnRecord.textContent = "● Rec";
-      btnRecord.disabled = false;
-      if (btn) btn.textContent = "Stop Rendering";
-      requestAnimationFrame(renderFrame);
-    }
-  };
-
-  // --- Render Loop ---
-  let lastTime = performance.now();
-  let frameTimer = 0;
-
-  const renderFrame = () => {
-    if (isRecording) return;
-
-    requestAnimationFrame(renderFrame);
-    if (!isRendering || !worldBridge.hasWorld) return;
-
-    let updateInterval = parseInt(inputUpdateInterval.value, 10);
-    if (isNaN(updateInterval) || updateInterval < 0) updateInterval = 0;
-
-    if (updateInterval > 0 && frameCount >= updateInterval) {
-      worldBridge.update(totalFrameCount / updateInterval / 60);
-
-      let needsRebind = false;
-      needsRebind ||= renderer.updateCombinedBVH(
-        worldBridge.tlas,
-        worldBridge.blas
-      );
-      needsRebind ||= renderer.updateBuffer("instance", worldBridge.instances);
-      needsRebind ||= renderer.updateCombinedGeometry(
-        worldBridge.vertices,
-        worldBridge.normals,
-        worldBridge.uvs
-      );
-
-      // BVH Rebuild sorts triangles, so indices and attributes change order every frame!
-      needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
-      needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
-
-      worldBridge.updateCamera(canvas.width, canvas.height);
-      renderer.updateSceneUniforms(worldBridge.cameraData, 0);
-
-      if (needsRebind) {
-        renderer.recreateBindGroup();
-      }
-      renderer.resetAccumulation();
-      frameCount = 0;
-    } else {
-      // Even if no update, we might want camera updates if we had controls (mouse orbit etc not impl yet but good practice)
-      // For now, static camera.
-    }
-
-    frameCount++;
-    frameTimer++;
-    totalFrameCount++;
-
-    // Update uniforms (camera, frame)
-    // Actually we should separate camera update from animation update
-    // But user controls camera implicitly via WASM update currently if WASM has camera controls?
-    // The WASM `update_camera` is mostly for aspect ratio.
-    // Let's ensure uniforms are up to date.
-    // Optimization: Only update if changed?
-    // Always updating is safer for now.
-
-    // We update sceneUniforms with frameCount. But wait, renderer.render() also updates frameCount in uniforms.
-    // renderer.updateSceneUniforms(worldBridge.cameraData, frameCount);
-    // The renderer.render() call handles frameCount partial update.
-    // But we need to ensure camera data is there.
-
-    // renderer.updateSceneUniforms should only be called if camera changes or BLAS offset changes.
-    // We already called it during update interval or load.
-
-    renderer.render(frameCount);
-
-    const now = performance.now();
-    if (now - lastTime >= 1000) {
-      statsDiv.textContent = `FPS: ${frameTimer} | ${(
-        1000 / frameTimer
-      ).toFixed(2)}ms | Frame: ${frameCount}`;
-      frameTimer = 0;
-      lastTime = now;
-    }
-  };
-
-  // --- Event Listeners ---
-  if (btn) {
-    btn.addEventListener("click", () => {
-      isRendering = !isRendering;
-      btn.textContent = isRendering ? "Stop Rendering" : "Resume Rendering";
-    });
+    if (needsRebind) renderer.recreateBindGroup();
+    renderer.resetAccumulation();
+    frameCount = 0;
   }
 
-  if (btnRecord) {
-    btnRecord.addEventListener("click", recordVideo);
+  frameCount++;
+  frameTimer++;
+  totalFrameCount++;
+
+  renderer.render(frameCount);
+
+  const now = performance.now();
+  if (now - lastTime >= 1000) {
+    ui.updateStats(frameTimer, 1000 / frameTimer, frameCount);
+    frameTimer = 0;
+    lastTime = now;
   }
+};
 
-  sceneSelect.addEventListener("change", (e) =>
-    loadScene((e.target as HTMLSelectElement).value, false)
-  );
-  inputWidth.addEventListener("change", updateResolution);
-  inputHeight.addEventListener("change", updateResolution);
-
-  btnRecompile.addEventListener("click", () => {
+// --- Event Binding ---
+const bindEvents = () => {
+  ui.onRenderStart = () => {
+    isRendering = true;
+  };
+  ui.onRenderStop = () => {
     isRendering = false;
-    rebuildPipeline();
+  };
+  ui.onSceneSelect = (name) => loadScene(name, false);
+  ui.onResolutionChange = updateResolution;
+
+  ui.onRecompile = (depth, spp) => {
+    isRendering = false;
+    renderer.buildPipeline(depth, spp);
     renderer.recreateBindGroup();
     renderer.resetAccumulation();
     frameCount = 0;
     isRendering = true;
-  });
+  };
 
-  inputFile.addEventListener("change", async (e) => {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    if (!f) return;
+  ui.onFileSelect = async (f) => {
     const ext = f.name.split(".").pop()?.toLowerCase();
     if (ext === "obj") {
       currentFileData = await f.text();
@@ -384,272 +162,104 @@ async function main() {
       currentFileData = await f.arrayBuffer();
       currentFileType = "glb";
     }
-    sceneSelect.value = "viewer";
+    ui.sceneSelect.value = "viewer";
     loadScene("viewer", false);
-  });
-
-  document.addEventListener("remote-scene-load", (e: Event) => {
-    const detail = (e as CustomEvent).detail;
-    if (detail.mode === "viewer") {
-      console.log("Loading received scene...", detail.anim);
-      loadScene("viewer", false);
-
-      // Apply Animation if provided
-      if (typeof detail.anim === "number") {
-        // Wait a bit for WASM to populate animations?
-        // loadScene updates animList synchronously via updateAnimList() call at the end.
-        // So we can set it immediately.
-        animSelect.value = detail.anim.toString();
-        // Trigger change to update WASM
-        worldBridge.setAnimation(detail.anim);
-      }
-    }
-  });
-
-  const updateAnimList = () => {
-    const list = worldBridge.getAnimationList();
-    animSelect.innerHTML = "";
-    if (list.length === 0) {
-      const opt = document.createElement("option");
-      opt.text = "No Anim";
-      animSelect.add(opt);
-      animSelect.disabled = true;
-      return;
-    }
-    animSelect.disabled = false;
-    list.forEach((name, i) => {
-      const opt = document.createElement("option");
-      opt.text = `[${i}] ${name}`;
-      opt.value = i.toString();
-      animSelect.add(opt);
-    });
-    animSelect.value = "0";
   };
 
-  animSelect.addEventListener("change", () => {
-    const idx = parseInt(animSelect.value, 10);
-    worldBridge.setAnimation(idx);
-  });
+  ui.onAnimSelect = (idx) => worldBridge.setAnimation(idx);
 
+  ui.onRecordStart = async () => {
+    if (recorder.recording) return;
+    isRendering = false;
+    ui.setRecordingState(true);
+
+    const config = ui.getRenderConfig();
+    try {
+      await recorder.record(
+        config,
+        (f, t) =>
+          ui.setRecordingState(
+            true,
+            `Rec: ${f}/${t} (${Math.round((f / t) * 100)}%)`
+          ),
+        (url) => {
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `raytrace_${Date.now()}.webm`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+      );
+    } catch (e) {
+      alert("Recording failed.");
+    } finally {
+      ui.setRecordingState(false);
+      isRendering = true;
+      ui.updateRenderButton(true);
+      requestAnimationFrame(renderFrame);
+    }
+  };
+
+  // Network Events
+  ui.onConnectHost = () => signaling.connect("host");
+  ui.onConnectWorker = () => signaling.connect("worker");
+
+  ui.onSendScene = async () => {
+    if (!currentFileData || !currentFileType) {
+      alert("No scene loaded!");
+      return;
+    }
+    ui.setSendSceneText("Sending...");
+    ui.setSendSceneEnabled(false);
+
+    const config = ui.getRenderConfig();
+    await signaling.broadcastScene(currentFileData, currentFileType, config);
+
+    ui.setSendSceneText("Send Scene");
+    ui.setSendSceneEnabled(true);
+  };
+
+  // Signaling Callbacks
+  signaling.onStatusChange = (msg) => ui.setStatus(`Status: ${msg}`);
+  signaling.onWorkerJoined = (_id) => ui.setSendSceneEnabled(true);
+
+  signaling.onSceneReceived = async (data, config) => {
+    console.log("Scene received successfully.");
+
+    // Update UI
+    ui.setRenderConfig(config);
+
+    // Load Scene
+    currentFileType = config.fileType;
+    if (config.fileType === "obj") currentFileData = data as string;
+    else currentFileData = data as ArrayBuffer;
+
+    ui.sceneSelect.value = "viewer";
+    await loadScene("viewer", false);
+
+    if (config.anim !== undefined) {
+      ui.animSelect.value = config.anim.toString();
+      worldBridge.setAnimation(config.anim);
+    }
+  };
+};
+
+// --- Entry Point ---
+async function bootstrap() {
+  try {
+    await renderer.init();
+    await worldBridge.initWasm();
+  } catch (e) {
+    alert("Init failed: " + e);
+    return;
+  }
+
+  bindEvents();
+  rebuildPipeline();
   updateResolution();
+
   loadScene("cornell", false);
   requestAnimationFrame(renderFrame);
 }
 
-main().catch(console.error);
-
-// --- Global State ---
-let ws: WebSocket | null = null;
-let myRole: "host" | "worker" | null = null;
-const workers = new Map<string, RtcClient>();
-let hostClient: RtcClient | null = null;
-
-const btnHost = document.getElementById("btn-host") as HTMLButtonElement;
-const btnWorker = document.getElementById("btn-worker") as HTMLButtonElement;
-const btnSendScene = document.getElementById(
-  "btn-send-scene"
-) as HTMLButtonElement;
-const statusDiv = document.getElementById("status") as HTMLDivElement;
-
-function connectSignaling(role: "host" | "worker") {
-  if (ws) return;
-
-  myRole = role;
-  statusDiv.textContent = `Status: Connecting as ${role.toUpperCase()}...`;
-
-  ws = new WebSocket("ws://localhost:8080");
-
-  ws.onopen = () => {
-    console.log("WS Connected");
-    statusDiv.textContent = `Status: Waiting for Peer (${role.toUpperCase()})`;
-
-    if (role === "host") {
-      sendSignal({ type: "register_host" });
-    } else {
-      sendSignal({ type: "register_worker" });
-    }
-
-    btnHost.disabled = true;
-    btnWorker.disabled = true;
-  };
-
-  ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data) as SignalingMessage;
-    handleSignalingMessage(msg);
-  };
-
-  ws.onclose = () => {
-    statusDiv.textContent = "Status: Disconnected";
-    ws = null;
-  };
-}
-
-async function handleSignalingMessage(msg: SignalingMessage) {
-  if (myRole === "host") {
-    switch (msg.type) {
-      case "worker_joined":
-        console.log(`Worker joined: ${msg.workerId}`);
-        const client = new RtcClient(msg.workerId, sendSignal);
-        workers.set(msg.workerId, client);
-
-        client.onDataChannelOpen = async () => {
-          console.log(
-            `[Host] DataChannel open for ${msg.workerId}. Sending HELLO.`
-          );
-          client.sendData({ type: "HELLO", msg: "Hello from Host!" });
-          btnSendScene.disabled = false;
-        };
-
-        client.onAckReceived = (bytes) => {
-          console.log(`Worker ${msg.workerId} acknowledged ${bytes} bytes.`);
-          // TODO: Start distributed rendering coordination here
-        };
-
-        await client.startAsHost();
-        break;
-
-      case "answer":
-        if (msg.fromId) {
-          const w = workers.get(msg.fromId);
-          if (w) await w.handleAnswer(msg.sdp);
-        }
-        break;
-
-      case "candidate":
-        if (msg.fromId) {
-          const w = workers.get(msg.fromId);
-          if (w) await w.handleCandidate(msg.candidate);
-        }
-        break;
-      case "host_exists":
-        alert("A Host already exists. Please refresh the page.");
-        break;
-    }
-  } else if (myRole === "worker") {
-    switch (msg.type) {
-      case "offer":
-        if (msg.fromId) {
-          console.log("Received Offer from Host");
-          hostClient = new RtcClient(msg.fromId, sendSignal);
-          await hostClient.handleOffer(msg.sdp);
-          statusDiv.textContent = "Status: Connected to Host!";
-
-          hostClient.onDataChannelOpen = () => {
-            console.log("[Worker] DataChannel open. Sending HELLO.");
-            hostClient?.sendData({ type: "HELLO", msg: "Hello from Worker!" });
-          };
-
-          hostClient.onSceneReceived = async (data, config) => {
-            console.log("Scene Received from Host!", config);
-
-            // 1. Update UI
-            inputWidth.value = config.width.toString();
-            inputHeight.value = config.height.toString();
-            inputRecFps.value = config.fps.toString();
-            inputRecDur.value = config.duration.toString();
-            inputRecSPP.value = config.spp.toString();
-            inputRecBatch.value = config.batch.toString();
-
-            // Update Animation Selection (if available in list)
-            if (config.anim !== undefined) {
-              // We need to wait for scene load to populate anim list?
-              // The dispatched event triggers load, which triggers updateAnimList.
-              // We should store the desired anim index and apply it after load.
-            }
-
-            // 2. Load Scene
-            currentFileType = config.fileType;
-
-            if (config.fileType === "obj") {
-              currentFileData = data as string;
-            } else {
-              currentFileData = data as ArrayBuffer; // Keep raw buffer
-            }
-
-            // Load into WorldBridge
-            // Note: 'viewer' scene expects currentFileData to be set if we reload it
-            // But here we call loadScene manually with data
-
-            // Reuse loadScene logic but inject data?
-            // Ideally we should refactor loadScene to take optional data args, which we did partially.
-            // But existing loadScene uses currentFileData global if name=='viewer'.
-            // So we set globals above.
-
-            // Force 'viewer' mode or whatever logic handles raw data
-            // The host likely sent the raw scene file, so we treat it as 'viewer' scene (loaded file)
-            sceneSelect.value = "viewer";
-
-            // We need to access logic inside main()... but handleSignalingMessage is outside.
-            // We need to expose loadScene or move handleSignalingMessage inside main().
-            // OR trigger an event.
-            // Since this is a simple script, we can dispatch a custom event or move logic.
-            // Let's Dispatch Event to trigger load in main loop context if needed,
-            // OR just call a global function if we expose it.
-            // Refactoring main() to return controls is cleaner.
-
-            // For now, let's dispatch an event on document
-            const event = new CustomEvent("remote-scene-load", {
-              detail: { mode: "viewer", anim: config.anim },
-            });
-            document.dispatchEvent(event);
-
-            // 3. Send ACK
-            hostClient?.sendAck(
-              typeof data === "string" ? data.length : data.byteLength
-            );
-          };
-        }
-        break;
-
-      case "candidate":
-        if (hostClient) {
-          await hostClient.handleCandidate(msg.candidate);
-        }
-        break;
-    }
-  }
-}
-
-function sendSignal(msg: SignalingMessage) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
-}
-
-btnSendScene?.addEventListener("click", async () => {
-  if (!currentFileData || !currentFileType) {
-    alert("No scene loaded to send!");
-    return;
-  }
-  btnSendScene.disabled = true;
-  btnSendScene.textContent = "Sending...";
-
-  const config = getRenderConfig();
-  console.log("Broadcasting scene to all workers...");
-
-  const promises = Array.from(workers.values()).map((w) =>
-    w.sendScene(currentFileData!, currentFileType!, config)
-  );
-
-  await Promise.all(promises);
-
-  console.log("Broadcast complete.");
-  btnSendScene.textContent = "Send Scene";
-  btnSendScene.disabled = false;
-});
-
-btnHost?.addEventListener("click", () => connectSignaling("host"));
-btnWorker?.addEventListener("click", () => connectSignaling("worker"));
-
-// --- Helper for Render Config ---
-function getRenderConfig(): Omit<RenderConfig, "fileType"> {
-  return {
-    width: parseInt(inputWidth.value, 10) || 720,
-    height: parseInt(inputHeight.value, 10) || 480,
-    fps: parseInt(inputRecFps.value, 10) || 30,
-    duration: parseInt(inputRecDur.value, 10) || 3,
-    spp: parseInt(inputRecSPP.value, 10) || 64,
-    batch: parseInt(inputRecBatch.value, 10) || 4,
-    anim: parseInt(animSelect.value, 10) || 0,
-  };
-}
+bootstrap().catch(console.error);
