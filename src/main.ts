@@ -3,9 +3,13 @@ import { WebGPURenderer } from './renderer';
 import { WorldBridge } from './world-bridge';
 import * as WebMMuxer from 'webm-muxer'; // WebM (VP9)
 
+
+import { RtcClient } from './network/RtcClient';
+import type { SignalingMessage } from './network/Protocol'; // 修正: typeを追加
+
 // --- DOM Elements ---
 const canvas = document.getElementById('gpu-canvas') as HTMLCanvasElement;
-const btn = document.getElementById('render-btn') as HTMLButtonElement; 
+const btn = document.getElementById('render-btn') as HTMLButtonElement;
 const sceneSelect = document.getElementById('scene-select') as HTMLSelectElement;
 const inputWidth = document.getElementById('res-width') as HTMLInputElement;
 const inputHeight = document.getElementById('res-height') as HTMLInputElement;
@@ -37,7 +41,7 @@ document.body.appendChild(statsDiv);
 // --- Global State ---
 let frameCount = 0;
 let isRendering = false;
-let isRecording = false; 
+let isRecording = false;
 let currentFileData: string | ArrayBuffer | null = null;
 let currentFileType: 'obj' | 'glb' | null = null;
 
@@ -68,11 +72,11 @@ async function main() {
     const w = parseInt(inputWidth.value, 10) || 720;
     const h = parseInt(inputHeight.value, 10) || 480;
     renderer.updateScreenSize(w, h); // This also resets accumulation
-    
+
     // Camera update is part of uniform update now, will happen in render loop or explicit call
     if (worldBridge.hasWorld) {
-        worldBridge.updateCamera(w, h);
-        renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+      worldBridge.updateCamera(w, h);
+      renderer.updateSceneUniforms(worldBridge.cameraData, 0);
     }
     renderer.recreateBindGroup();
     renderer.resetAccumulation();
@@ -100,7 +104,7 @@ async function main() {
     // Initial Buffer Upload
     renderer.updateCombinedGeometry(worldBridge.vertices, worldBridge.normals, worldBridge.uvs);
     renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
-    
+
     renderer.updateBuffer('index', worldBridge.indices);
     renderer.updateBuffer('attr', worldBridge.attributes);
     renderer.updateBuffer('instance', worldBridge.instances);
@@ -123,7 +127,7 @@ async function main() {
 
     btnRecord.textContent = "Initializing...";
     btnRecord.disabled = true;
-    if (btn) btn.textContent = "Resume Rendering"; 
+    if (btn) btn.textContent = "Resume Rendering";
 
     const fps = parseInt(inputRecFps.value, 10) || 30;
     const duration = parseInt(inputRecDur.value, 10) || 3;
@@ -150,7 +154,7 @@ async function main() {
     });
 
     videoEncoder.configure({
-      codec: 'vp09.00.10.08', 
+      codec: 'vp09.00.10.08',
       width: canvas.width,
       height: canvas.height,
       bitrate: 12_000_000,
@@ -169,10 +173,10 @@ async function main() {
         let needsRebind = false;
         needsRebind ||= renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
         needsRebind ||= renderer.updateBuffer('instance', worldBridge.instances);
-        
+
         // Skinning support: Vertices/Normals need update every frame
         needsRebind ||= renderer.updateCombinedGeometry(worldBridge.vertices, worldBridge.normals, worldBridge.uvs);
-        
+
         // BVH Rebuild sorts triangles, so indices and attributes change order every frame!
         needsRebind ||= renderer.updateBuffer('index', worldBridge.indices);
         needsRebind ||= renderer.updateBuffer('attr', worldBridge.attributes);
@@ -188,7 +192,7 @@ async function main() {
         while (samplesDone < samplesPerFrame) {
           const batch = Math.min(batchSize, samplesPerFrame - samplesDone);
           for (let k = 0; k < batch; k++) {
-             renderer.render(samplesDone + k);
+            renderer.render(samplesDone + k);
           }
           samplesDone += batch;
           await renderer.device.queue.onSubmittedWorkDone();
@@ -241,7 +245,7 @@ async function main() {
   let frameTimer = 0;
 
   const renderFrame = () => {
-    if (isRecording) return; 
+    if (isRecording) return;
 
     requestAnimationFrame(renderFrame);
     if (!isRendering || !worldBridge.hasWorld) return;
@@ -256,11 +260,11 @@ async function main() {
       needsRebind ||= renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
       needsRebind ||= renderer.updateBuffer('instance', worldBridge.instances);
       needsRebind ||= renderer.updateCombinedGeometry(worldBridge.vertices, worldBridge.normals, worldBridge.uvs);
-      
+
       // BVH Rebuild sorts triangles, so indices and attributes change order every frame!
       needsRebind ||= renderer.updateBuffer('index', worldBridge.indices);
       needsRebind ||= renderer.updateBuffer('attr', worldBridge.attributes);
-      
+
       worldBridge.updateCamera(canvas.width, canvas.height);
       renderer.updateSceneUniforms(worldBridge.cameraData, 0);
 
@@ -268,16 +272,16 @@ async function main() {
         renderer.recreateBindGroup();
       }
       renderer.resetAccumulation();
-      frameCount = 0; 
+      frameCount = 0;
     } else {
-        // Even if no update, we might want camera updates if we had controls (mouse orbit etc not impl yet but good practice)
-        // For now, static camera.
+      // Even if no update, we might want camera updates if we had controls (mouse orbit etc not impl yet but good practice)
+      // For now, static camera.
     }
 
     frameCount++;
     frameTimer++;
     totalFrameCount++;
-    
+
     // Update uniforms (camera, frame)
     // Actually we should separate camera update from animation update
     // But user controls camera implicitly via WASM update currently if WASM has camera controls?
@@ -285,15 +289,15 @@ async function main() {
     // Let's ensure uniforms are up to date.
     // Optimization: Only update if changed? 
     // Always updating is safer for now.
-    
+
     // We update sceneUniforms with frameCount. But wait, renderer.render() also updates frameCount in uniforms.
     // renderer.updateSceneUniforms(worldBridge.cameraData, frameCount); 
     // The renderer.render() call handles frameCount partial update. 
     // But we need to ensure camera data is there.
-    
+
     // renderer.updateSceneUniforms should only be called if camera changes or BLAS offset changes.
     // We already called it during update interval or load.
-    
+
     renderer.render(frameCount);
 
     const now = performance.now();
@@ -375,3 +379,100 @@ async function main() {
 }
 
 main().catch(console.error);
+
+
+// --- Global State ---
+let ws: WebSocket | null = null;
+let myRole: 'host' | 'worker' | null = null;
+const workers = new Map<string, RtcClient>();
+let hostClient: RtcClient | null = null;
+
+const btnHost = document.getElementById('btn-host') as HTMLButtonElement;
+const btnWorker = document.getElementById('btn-worker') as HTMLButtonElement;
+const statusDiv = document.getElementById('status') as HTMLDivElement;
+
+function connectSignaling(role: 'host' | 'worker') {
+  if (ws) return;
+
+  myRole = role;
+  statusDiv.textContent = `Status: Connecting as ${role.toUpperCase()}...`;
+
+  ws = new WebSocket('ws://localhost:8080');
+
+  ws.onopen = () => {
+    console.log('WS Connected');
+    statusDiv.textContent = `Status: Waiting for Peer (${role.toUpperCase()})`;
+
+    if (role === 'host') {
+      sendSignal({ type: 'register_host' });
+    } else {
+      sendSignal({ type: 'register_worker' });
+    }
+
+    btnHost.disabled = true;
+    btnWorker.disabled = true;
+  };
+
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data) as SignalingMessage;
+    handleSignalingMessage(msg);
+  };
+
+  ws.onclose = () => {
+    statusDiv.textContent = 'Status: Disconnected';
+    ws = null;
+  };
+}
+
+async function handleSignalingMessage(msg: SignalingMessage) {
+  if (myRole === 'host') {
+    switch (msg.type) {
+      case 'worker_joined':
+        console.log(`Worker joined: ${msg.workerId}`);
+        const client = new RtcClient(msg.workerId, sendSignal);
+        workers.set(msg.workerId, client);
+        await client.startAsHost();
+        break;
+
+      case 'answer':
+        if (msg.fromId) {
+          const w = workers.get(msg.fromId);
+          if (w) await w.handleAnswer(msg.sdp);
+        }
+        break;
+
+      case 'candidate':
+        if (msg.fromId) {
+          const w = workers.get(msg.fromId);
+          if (w) await w.handleCandidate(msg.candidate);
+        }
+        break;
+    }
+  } else if (myRole === 'worker') {
+    switch (msg.type) {
+      case 'offer':
+        if (msg.fromId) {
+          console.log('Received Offer from Host');
+          hostClient = new RtcClient(msg.fromId, sendSignal);
+          await hostClient.handleOffer(msg.sdp);
+          statusDiv.textContent = 'Status: Connected to Host!';
+        }
+        break;
+
+      case 'candidate':
+        if (hostClient) {
+          await hostClient.handleCandidate(msg.candidate);
+        }
+        break;
+    }
+  }
+}
+
+function sendSignal(msg: SignalingMessage) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+btnHost?.addEventListener('click', () => connectSignaling('host'));
+btnWorker?.addEventListener('click', () => connectSignaling('worker'));

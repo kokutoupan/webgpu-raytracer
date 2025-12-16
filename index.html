@@ -146,6 +146,11 @@
   <div class="controls">
     <div class="title">WebGPU Tracer</div>
 
+    <div id="connection-ui" style="position:absolute; top:10px; right:10px; z-index: 100;">
+      <button id="btn-host">Start as Host</button>
+      <button id="btn-worker">Start as Worker</button>
+      <div id="status" style="color: white; background: rgba(0,0,0,0.5);">Status: Offline</div>
+  </div>
     <div>
       <select id="scene-select">
         <option value="cornell">Cornell Box</option>
