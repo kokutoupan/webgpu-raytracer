@@ -198,4 +198,15 @@ export class RtcClient {
   public sendAck(receivedBytes: number) {
     this.sendData({ type: "SCENE_ACK", receivedBytes });
   }
+
+  public close() {
+    if (this.dc) {
+      this.dc.close();
+      this.dc = null;
+    }
+    if (this.pc) {
+      this.pc.close();
+    }
+    console.log(`[RTC] Connection closed: ${this.remoteId}`);
+  }
 }

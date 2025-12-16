@@ -172,9 +172,35 @@ export class UIManager {
     this.statusDiv.textContent = msg;
   }
 
-  public setHostWorkerButtonsEnabled(enabled: boolean) {
-    this.btnHost.disabled = !enabled;
-    this.btnWorker.disabled = !enabled;
+  public setConnectionState(role: "host" | "worker" | null) {
+    if (role === "host") {
+      this.btnHost.textContent = "Disconnect";
+      this.btnHost.disabled = false;
+
+      this.btnWorker.textContent = "Worker";
+      this.btnWorker.disabled = true; // Can't be both
+
+      this.btnSendScene.style.display = "inline-block";
+      this.btnSendScene.disabled = true; // Wait for worker
+    } else if (role === "worker") {
+      this.btnHost.textContent = "Host";
+      this.btnHost.disabled = true;
+
+      this.btnWorker.textContent = "Disconnect";
+      this.btnWorker.disabled = false;
+
+      this.btnSendScene.style.display = "none";
+    } else {
+      // Disconnected
+      this.btnHost.textContent = "Host";
+      this.btnHost.disabled = false;
+
+      this.btnWorker.textContent = "Worker";
+      this.btnWorker.disabled = false;
+
+      this.btnSendScene.style.display = "none";
+      this.statusDiv.textContent = "Offline";
+    }
   }
 
   public setSendSceneEnabled(enabled: boolean) {
@@ -220,7 +246,7 @@ export class UIManager {
       width: parseInt(this.inputWidth.value, 10) || Config.defaultWidth,
       height: parseInt(this.inputHeight.value, 10) || Config.defaultHeight,
       fps: parseInt(this.inputRecFps.value, 10) || 30,
-      duration: parseInt(this.inputRecDur.value, 10) || 3,
+      duration: parseFloat(this.inputRecDur.value) || 3.0,
       spp: parseInt(this.inputRecSpp.value, 10) || 64, // Corrected property name
       batch: parseInt(this.inputRecBatch.value, 10) || 4,
       anim: parseInt(this.animSelect.value, 10) || 0,

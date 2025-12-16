@@ -201,8 +201,31 @@ const bindEvents = () => {
   };
 
   // Network Events
-  ui.onConnectHost = () => signaling.connect("host");
-  ui.onConnectWorker = () => signaling.connect("worker");
+  let currentRole: "host" | "worker" | null = null;
+
+  ui.onConnectHost = () => {
+    if (currentRole === "host") {
+      signaling.disconnect();
+      currentRole = null;
+      ui.setConnectionState(null);
+    } else {
+      signaling.connect("host");
+      currentRole = "host";
+      ui.setConnectionState("host");
+    }
+  };
+
+  ui.onConnectWorker = () => {
+    if (currentRole === "worker") {
+      signaling.disconnect();
+      currentRole = null;
+      ui.setConnectionState(null);
+    } else {
+      signaling.connect("worker");
+      currentRole = "worker";
+      ui.setConnectionState("worker");
+    }
+  };
 
   ui.onSendScene = async () => {
     if (!currentFileData || !currentFileType) {
@@ -242,6 +265,9 @@ const bindEvents = () => {
       worldBridge.setAnimation(config.anim);
     }
   };
+
+  // Initial State
+  ui.setConnectionState(null);
 };
 
 // --- Entry Point ---

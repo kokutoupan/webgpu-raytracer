@@ -46,6 +46,21 @@ export class SignalingClient {
     };
   }
 
+  public disconnect() {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    // Also close peer connections
+    this.workers.forEach((w) => w.close());
+    this.workers.clear();
+    if (this.hostClient) {
+      this.hostClient.close();
+      this.hostClient = null;
+    }
+    this.onStatusChange?.("Disconnected");
+  }
+
   private sendSignal(msg: SignalingMessage) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));

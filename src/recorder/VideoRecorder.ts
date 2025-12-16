@@ -30,7 +30,7 @@ export class VideoRecorder {
     if (this.isRecording) return;
     this.isRecording = true;
 
-    const totalFrames = config.fps * config.duration;
+    const totalFrames = Math.ceil(config.fps * config.duration);
     console.log(
       `Starting recording: ${totalFrames} frames @ ${config.fps}fps (VP9)`
     );
