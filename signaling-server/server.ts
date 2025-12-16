@@ -48,6 +48,11 @@ wss.on("connection", (ws: ExtWebSocket) => {
     switch (data.type) {
       case "register_host": {
         console.log(`Host registered: ${ws.id}`);
+        // hostは絶対に単一でありとりあえずは上書きできない
+        if (hostSocket != null) {
+          sendTo(ws, { type: "host_exists" });
+          break;
+        }
         hostSocket = ws;
         ws.role = "host";
 
