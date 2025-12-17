@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebGPU Ray Tracing</title>
+    <style>
+      /* --- レイアウト全体設定 --- */
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #111;
+        color: #eee;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* --- 操作パネル --- */
+      .controls {
+        flex-shrink: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: center;
+        padding: 10px;
+        background: #222;
+        border-bottom: 1px solid #444;
+        z-index: 10;
+        box-sizing: border-box;
+        width: 100%;
+      }
+
+      .group {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 5px;
+        background: #333;
+        padding: 5px 8px;
+        border-radius: 4px;
+        border: 1px solid #555;
+        justify-content: center;
+      }
+
+      button,
+      select,
+      input {
+        padding: 8px 10px;
+        font-size: 0.9rem;
+        border-radius: 4px;
+        border: none;
+        outline: none;
+      }
+
+      button {
+        background: #4caf50;
+        color: white;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      button:hover {
+        background: #45a049;
+      }
+
+      button#recompile-btn {
+        background: #2196f3;
+      }
+
+      button#recompile-btn:hover {
+        background: #1976d2;
+      }
+
+      /* ファイル選択ボタン */
+      .file-btn {
+        display: inline-block;
+        padding: 8px 12px;
+        background: #ff9800;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        white-space: nowrap;
+      }
+
+      .file-btn:hover {
+        background: #f57c00;
+      }
+
+      select,
+      input {
+        background: #444;
+        color: white;
+        border: 1px solid #666;
+      }
+
+      input[type="number"] {
+        width: 55px;
+        text-align: right;
+      }
+
+      .label {
+        color: #aaa;
+        margin-right: 3px;
+        font-size: 0.85rem;
+        white-space: nowrap;
+      }
+
+      .title {
+        font-weight: bold;
+        margin-right: 5px;
+        white-space: nowrap;
+      }
+
+      .canvas-wrapper {
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        position: relative;
+      }
+
+      canvas {
+        display: block;
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        image-rendering: pixelated;
+        box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-BcD3CAaG.js"></script>
+  </head>
+
+  <body>
+    <div class="controls">
+      <div class="title">WebGPU Tracer</div>
+
+
+      <div>
+        <select id="scene-select">
+          <option value="cornell">Cornell Box</option>
+          <option value="spheres">Random Spheres</option>
+          <option value="mixed">Mixed Scene</option>
+          <option value="special">Special Box</option>
+          <option value="mesh">Mesh Scene</option>
+          <option value="viewer">Obj Viewer Scene</option>
+        </select>
+      </div>
+
+      <div class="group">
+        <label for="obj-file" class="file-btn">📂 Model</label>
+        <input
+          type="file"
+          id="obj-file"
+          accept=".obj,.glb,.vrm"
+          style="display: none"
+        />
+      </div>
+
+      <div class="group">
+        <span class="label">Anim:</span>
+        <select id="anim-select" style="max-width: 120px"></select>
+      </div>
+
+      <div class="group">
+        <span class="label">Res:</span>
+        <input
+          id="res-width"
+          type="number"
+          value="720"
+          step="10"
+          min="10"
+          style="width: 50px"
+        />
+        <span class="label">x</span>
+        <input
+          id="res-height"
+          type="number"
+          value="480"
+          step="10"
+          min="10"
+          style="width: 50px"
+        />
+      </div>
+
+      <div class="group" style="border-color: #2196f3">
+        <span class="label">RT Config:</span>
+        <span class="label">Depth</span>
+        <input
+          id="max-depth"
+          type="number"
+          value="10"
+          min="1"
+          max="50"
+          style="width: 40px"
+        />
+        <span class="label">SPP</span>
+        <input
+          id="spp-frame"
+          type="number"
+          value="1"
+          min="1"
+          max="100"
+          style="width: 40px"
+        />
+        <span class="label">Intv:</span>
+        <input
+          id="update-interval"
+          type="number"
+          value="4"
+          min="0"
+          step="1"
+          style="width: 40px"
+        />
+        <button id="recompile-btn" title="Recompile Shader">Update</button>
+      </div>
+
+      <div class="group" style="border-color: #9c27b0; display: flex; align-items: center;">
+         <button id="btn-host">Host</button>
+         <button id="btn-worker">Worker</button>
+         <button id="btn-send-scene" style="display: none;">Send Scene</button>
+         <span id="status" style="font-size: 0.8rem; margin-left: 5px; color: #ccc;">Offline</span>
+      </div>
+
+      <div class="group" style="border-color: #e91e63">
+        <span class="label">Rec:</span>
+        <input
+          id="rec-fps"
+          type="number"
+          value="30"
+          title="FPS"
+          style="width: 40px"
+        />
+        <span class="label">fps</span>
+        <input
+          id="rec-duration"
+          type="number"
+          value="3"
+          step="0.1"
+          title="Duration (sec)"
+          style="width: 40px"
+        />
+        <span class="label">sec</span>
+        <span class="label" style="margin-left: 5px">SPP:</span>
+        <input
+          id="rec-spp"
+          type="number"
+          value="64"
+          title="Samples per Frame"
+          style="width: 45px"
+        />
+        <span class="label">Batch:</span>
+        <input
+          id="rec-batch"
+          type="number"
+          value="4"
+          title="Render Batch Size"
+          style="width: 40px"
+        />
+
+        <button id="record-btn" style="background: #e91e63">● Rec</button>
+      </div>
+
+
+
+      <button id="render-btn">Render Start</button>
+    </div>
+
+    <div class="canvas-wrapper">
+      <canvas id="gpu-canvas" width="720" height="480"></canvas>
+    </div>
+
+  </body>
+</html>
