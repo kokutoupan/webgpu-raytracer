@@ -1,8 +1,13 @@
 import { WebSocket, WebSocketServer } from "ws";
+import dotenv from "dotenv";
+import path from "path";
+import { randomUUID, timingSafeEqual } from "crypto";
+
+// 環境変数の読み込み
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 // ポート番号
-const PORT = 8080;
-
+const PORT = Number(process.env.VITE_SIGNALING_SERVER_PORT) || 8080;
 // サーバーの起動
 const wss = new WebSocketServer({ port: PORT });
 console.log(`Signaling Server running on port ${PORT}`);
@@ -35,10 +40,35 @@ const SECRET = process.env.VITE_SIGNALING_SECRET || "secretpassword";
 
 wss.on("connection", (ws: ExtWebSocket, req) => {
   // Authentication
+  // 1. URL解析
   const url = new URL(req.url || "", `http://${req.headers.host}`);
   const token = url.searchParams.get("token");
 
-  if (SECRET && token !== SECRET) {
+  // 2. SECRETがない場合はサーバー設定ミスとして落とす（Fail Closed）
+  if (!SECRET) {
+    console.error("Critical Error: SECRET is not configured on server.");
+    ws.close(1011, "Server Configuration Error");
+    return;
+  }
+
+  // 3. トークンがない、または長さが違う場合は即切断
+  if (!token || token.length !== SECRET.length) {
+    console.log(
+      `Connection rejected: Missing or invalid length token from ${req.socket.remoteAddress}`
+    );
+    ws.close(1008, "Invalid Token");
+    return;
+  }
+
+  // 4. タイミング攻撃に強い比較（Constant Time Comparison）
+  // Bufferに変換して crypto.timingSafeEqual で比較する
+  const sourceBuffer = Buffer.from(token);
+  const targetBuffer = Buffer.from(SECRET);
+
+  // 長さが違うとtimingSafeEqualはエラーになるので上記3で弾いておく必要がある
+  const isValid = timingSafeEqual(sourceBuffer, targetBuffer);
+
+  if (!isValid) {
     console.log(
       `Connection rejected: Invalid token from ${req.socket.remoteAddress}`
     );
@@ -47,7 +77,7 @@ wss.on("connection", (ws: ExtWebSocket, req) => {
   }
 
   // 簡易ID生成 (ランダム文字列)
-  ws.id = Math.random().toString(36).substring(2, 9);
+  ws.id = randomUUID();
 
   console.log(`New connection: ${ws.id}`);
 
