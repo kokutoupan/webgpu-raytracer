@@ -1804,7 +1804,7 @@ class li {
     var _a;
     if (this.ws) return;
     this.myRole = e, (_a = this.onStatusChange) == null ? void 0 : _a.call(this, `Connecting as ${e.toUpperCase()}...`);
-    const n = "secretpassword";
+    const n = "xWUaLfXQQkHZ9VmF";
     this.ws = new WebSocket(`${y.signalingServerUrl}?token=${n}`), this.ws.onopen = () => {
       var _a2;
       console.log("WS Connected"), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, `Waiting for Peer (${e.toUpperCase()})`), this.sendSignal({ type: e === "host" ? "register_host" : "register_worker" });
