@@ -1,16 +1,20 @@
 #!/bin/bash
-set -e # エラーが発生したら即停止
+set -e
 
-# Rust環境(rustup)をインストール
+# 1. Rust環境(rustup)のインストール
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-# 環境変数を読み込んで cargo コマンドを使えるようにする
 source "$HOME/.cargo/env"
 
-# Rust (Wasm) のビルド
+# 2. Rust (Wasm) のビルド
+# "cd rust-shader-tools" は不要です。pnpm exec はルートから実行できます。
+# --out-dir を指定して出力先を固定するとより確実ですが、
+# 元の構成(rust-shader-tools/pkg)に合わせるため、ディレクトリ移動は維持しつつ
+# コマンド実行方法を変えます。
+
 cd rust-shader-tools
-wasm-pack build --target web
+# pnpm exec を使うと node_modules/.bin のパスを自動解決してくれます
+pnpm exec wasm-pack build --target web
 cd ..
 
-# フロントエンドのビルド
+# 3. フロントエンドのビルド
 pnpm run build
