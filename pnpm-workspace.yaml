@@ -1,3 +1,7 @@
+packages:
+  - "."
+  - "signaling-server"
+
 ignoredBuiltDependencies:
   - '@swc/core'
   - esbuild
