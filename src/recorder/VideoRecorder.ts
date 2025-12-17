@@ -25,7 +25,7 @@ export class VideoRecorder {
   public async record(
     config: { fps: number; duration: number; spp: number; batch: number },
     onProgress: (frame: number, total: number) => void,
-    onComplete: (blobUrl: string) => void
+    onComplete: (blobUrl: string, blob?: Blob) => void
   ) {
     if (this.isRecording) return;
     this.isRecording = true;
@@ -58,7 +58,13 @@ export class VideoRecorder {
     });
 
     try {
-      await this.renderAndEncode(totalFrames, config, videoEncoder, onProgress);
+      await this.renderAndEncode(
+        totalFrames,
+        config,
+        videoEncoder,
+        onProgress,
+        (config as any).startFrame || 0
+      );
 
       await videoEncoder.flush();
       muxer.finalize();
@@ -66,7 +72,8 @@ export class VideoRecorder {
       const { buffer } = muxer.target;
       const blob = new Blob([buffer], { type: "video/webm" });
       const url = URL.createObjectURL(blob);
-      onComplete(url);
+      // Return blob too
+      onComplete(url, blob);
     } catch (e) {
       console.error("Recording failed:", e);
       throw e;
@@ -80,7 +87,8 @@ export class VideoRecorder {
     totalFrames: number,
     config: { fps: number; spp: number; batch: number },
     encoder: VideoEncoder,
-    onProgress: (f: number, t: number) => void
+    onProgress: (f: number, t: number) => void,
+    startFrameOffset: number = 0
   ) {
     for (let i = 0; i < totalFrames; i++) {
       onProgress(i, totalFrames);
@@ -88,7 +96,8 @@ export class VideoRecorder {
       // Allow UI to breathe
       await new Promise((r) => setTimeout(r, 0));
 
-      const time = i / config.fps;
+      const currentFrame = startFrameOffset + i;
+      const time = currentFrame / config.fps;
       this.worldBridge.update(time);
 
       // Re-upload Geometry/BVH as animation might have changed them

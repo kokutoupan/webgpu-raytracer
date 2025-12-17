@@ -17,6 +17,11 @@ export class SignalingClient {
     | ((data: ArrayBuffer | string, config: RenderConfig) => void)
     | null = null;
   public onHostHello: (() => void) | null = null;
+  public onRenderResult: ((blob: Blob, startFrame: number) => void) | null =
+    null;
+  public onRenderRequest:
+    | ((startFrame: number, frameCount: number, config: RenderConfig) => void)
+    | null = null;
 
   constructor() {}
 
@@ -61,6 +66,22 @@ export class SignalingClient {
     this.onStatusChange?.("Disconnected");
   }
 
+  public getWorkerCount() {
+    return this.workers.size;
+  }
+
+  public getWorkerIds() {
+    return Array.from(this.workers.keys());
+  }
+
+  public async sendRenderResult(blob: Blob, startFrame: number) {
+    if (this.hostClient) {
+      // Blob to ArrayBuffer
+      const buffer = await blob.arrayBuffer();
+      await this.hostClient.sendRenderResult(buffer, startFrame);
+    }
+  }
+
   private sendSignal(msg: SignalingMessage) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
@@ -91,6 +112,13 @@ export class SignalingClient {
 
         client.onAckReceived = (bytes) => {
           console.log(`Worker ${msg.workerId} ACK: ${bytes}`);
+        };
+
+        client.onRenderResult = (blob, startFrame) => {
+          console.log(
+            `Received Render Result from ${msg.workerId}: ${blob.size} bytes`
+          );
+          this.onRenderResult?.(blob, startFrame);
         };
 
         await client.startAsHost();
@@ -135,6 +163,10 @@ export class SignalingClient {
               typeof data === "string" ? data.length : data.byteLength;
             this.hostClient?.sendAck(size);
           };
+
+          this.hostClient.onRenderRequest = (start, count, config) => {
+            this.onRenderRequest?.(start, count, config);
+          };
         }
         break;
       case "candidate":
@@ -150,6 +182,17 @@ export class SignalingClient {
   ) {
     const promises = Array.from(this.workers.values()).map((w) =>
       w.sendScene(fileData, fileType, config)
+    );
+    await Promise.all(promises);
+  }
+
+  public async broadcastRenderRequest(
+    startFrame: number,
+    frameCount: number,
+    config: RenderConfig
+  ) {
+    const promises = Array.from(this.workers.values()).map((w) =>
+      w.sendRenderRequest(startFrame, frameCount, config)
     );
     await Promise.all(promises);
   }

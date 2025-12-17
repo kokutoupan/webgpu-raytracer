@@ -41,4 +41,13 @@ export type DataChannelMessage =
   // 設定とファイルサイズの通知
   | { type: "SCENE_INIT"; config: RenderConfig; totalBytes: number }
   // 受信完了通知
-  | { type: "SCENE_ACK"; receivedBytes: number };
+  | { type: "SCENE_ACK"; receivedBytes: number }
+  // レンダリング依頼 (Host -> Worker)
+  | {
+      type: "RENDER_REQUEST";
+      startFrame: number;
+      frameCount: number;
+      config: RenderConfig;
+    }
+  // レンダリング結果 (Worker -> Host)
+  | { type: "RENDER_RESULT"; totalBytes: number; startFrame: number };

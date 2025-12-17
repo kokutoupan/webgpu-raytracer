@@ -20,11 +20,17 @@ export class RtcClient {
   private receiveBuffer: Uint8Array = new Uint8Array(0);
   private receivedBytes = 0;
   private sceneMeta: { config: RenderConfig; totalBytes: number } | null = null;
+  private resultMeta: { startFrame: number; totalBytes: number } | null = null;
 
   // コールバック
   public onSceneReceived:
     | ((data: ArrayBuffer | string, config: RenderConfig) => void)
     | null = null;
+  public onRenderRequest:
+    | ((startFrame: number, frameCount: number, config: RenderConfig) => void)
+    | null = null;
+  public onRenderResult: ((blob: Blob, startFrame: number) => void) | null =
+    null;
   public onDataChannelOpen: (() => void) | null = null;
   public onAckReceived: ((receivedBytes: number) => void) | null = null;
 
@@ -80,15 +86,12 @@ export class RtcClient {
   ) {
     if (!this.dc || this.dc.readyState !== "open") return;
 
-    // データをUint8Arrayに統一
-    let buffer: Uint8Array<ArrayBuffer>;
+    let buffer: Uint8Array;
     if (typeof fileData === "string") {
       buffer = new TextEncoder().encode(fileData);
     } else {
       buffer = new Uint8Array(fileData);
     }
-
-    console.log(`[RTC] Sending Scene: ${fileType}, ${buffer.byteLength} bytes`);
 
     // 1. メタデータ送信
     const metaMsg: DataChannelMessage = {
@@ -99,13 +102,32 @@ export class RtcClient {
     this.sendData(metaMsg);
 
     // 2. チャンク送信
+    await this.sendBinaryChunks(buffer);
+  }
+
+  public async sendRenderResult(blob: ArrayBuffer, startFrame: number) {
+    if (!this.dc || this.dc.readyState !== "open") return;
+    const buffer = new Uint8Array(blob);
+
+    console.log(`[RTC] Sending Render Result: ${buffer.byteLength} bytes`);
+
+    this.sendData({
+      type: "RENDER_RESULT",
+      totalBytes: buffer.byteLength,
+      startFrame,
+    });
+
+    await this.sendBinaryChunks(buffer);
+  }
+
+  private async sendBinaryChunks(buffer: Uint8Array) {
     const CHUNK_SIZE = 16 * 1024;
     let offset = 0;
 
     const waitBuffer = () =>
       new Promise<void>((resolve) => {
         const i = setInterval(() => {
-          if (this.dc && this.dc.bufferedAmount < 64 * 1024) {
+          if (!this.dc || this.dc.bufferedAmount < 64 * 1024) {
             clearInterval(i);
             resolve();
           }
@@ -113,13 +135,18 @@ export class RtcClient {
       });
 
     while (offset < buffer.byteLength) {
-      if (this.dc.bufferedAmount > 256 * 1024) await waitBuffer();
+      if (this.dc && this.dc.bufferedAmount > 256 * 1024) await waitBuffer();
 
       const end = Math.min(offset + CHUNK_SIZE, buffer.byteLength);
-      this.dc.send(buffer.subarray(offset, end));
+      if (this.dc) {
+        try {
+          this.dc.send(buffer.subarray(offset, end) as any);
+        } catch (e) {
+          /* ignore closed */
+        }
+      }
       offset = end;
 
-      // UIブロック防止
       if (offset % (CHUNK_SIZE * 5) === 0)
         await new Promise((r) => setTimeout(r, 0));
     }
@@ -156,38 +183,55 @@ export class RtcClient {
       console.log(
         `[RTC] Receiving Scene: ${msg.config.fileType}, ${msg.totalBytes} bytes`
       );
-      console.log(`[RTC] Config:`, msg.config);
       this.sceneMeta = { config: msg.config, totalBytes: msg.totalBytes };
       this.receiveBuffer = new Uint8Array(msg.totalBytes);
       this.receivedBytes = 0;
     } else if (msg.type === "SCENE_ACK") {
       console.log(`[RTC] Scene ACK: ${msg.receivedBytes} bytes`);
       if (this.onAckReceived) this.onAckReceived(msg.receivedBytes);
+    } else if (msg.type === "RENDER_REQUEST") {
+      console.log(
+        `[RTC] Render Request: Frame ${msg.startFrame}, Count ${msg.frameCount}`
+      );
+      this.onRenderRequest?.(msg.startFrame, msg.frameCount, msg.config);
+    } else if (msg.type === "RENDER_RESULT") {
+      console.log(`[RTC] Receiving Render Result: ${msg.totalBytes} bytes`);
+      this.resultMeta = {
+        startFrame: msg.startFrame,
+        totalBytes: msg.totalBytes,
+      };
+      this.receiveBuffer = new Uint8Array(msg.totalBytes);
+      this.receivedBytes = 0;
     }
   }
 
   private handleBinaryChunk(chunk: ArrayBuffer) {
-    if (!this.sceneMeta) return;
-
     const data = new Uint8Array(chunk);
     this.receiveBuffer.set(data, this.receivedBytes);
     this.receivedBytes += data.byteLength;
 
-    if (this.receivedBytes >= this.sceneMeta.totalBytes) {
-      console.log(`[RTC] Scene Download Complete!`);
+    if (this.sceneMeta) {
+      if (this.receivedBytes >= this.sceneMeta.totalBytes) {
+        console.log(`[RTC] Scene Download Complete!`);
+        let resultData: ArrayBuffer | string;
+        if (this.sceneMeta.config.fileType === "obj") {
+          resultData = new TextDecoder().decode(this.receiveBuffer);
+        } else {
+          resultData = this.receiveBuffer.buffer as ArrayBuffer;
+        }
 
-      // 復元
-      let resultData: ArrayBuffer | string;
-      if (this.sceneMeta.config.fileType === "obj") {
-        resultData = new TextDecoder().decode(this.receiveBuffer);
-      } else {
-        resultData = this.receiveBuffer.buffer as ArrayBuffer; // ArrayBuffer
+        this.onSceneReceived?.(resultData, this.sceneMeta.config);
+        this.sceneMeta = null;
       }
-
-      if (this.onSceneReceived) {
-        this.onSceneReceived(resultData, this.sceneMeta.config);
+    } else if (this.resultMeta) {
+      if (this.receivedBytes >= this.resultMeta.totalBytes) {
+        console.log(`[RTC] Render Result Complete!`);
+        const blob = new Blob([this.receiveBuffer as any], {
+          type: "video/webm",
+        });
+        this.onRenderResult?.(blob, this.resultMeta.startFrame);
+        this.resultMeta = null;
       }
-      this.sceneMeta = null;
     }
   }
 
@@ -197,6 +241,20 @@ export class RtcClient {
 
   public sendAck(receivedBytes: number) {
     this.sendData({ type: "SCENE_ACK", receivedBytes });
+  }
+
+  public sendRenderRequest(
+    startFrame: number,
+    frameCount: number,
+    config: RenderConfig
+  ) {
+    const msg: DataChannelMessage = {
+      type: "RENDER_REQUEST",
+      startFrame,
+      frameCount,
+      config,
+    };
+    this.sendData(msg);
   }
 
   public close() {

@@ -170,33 +170,60 @@ const bindEvents = () => {
 
   ui.onRecordStart = async () => {
     if (recorder.recording) return;
-    isRendering = false;
-    ui.setRecordingState(true);
 
-    const config = ui.getRenderConfig();
-    try {
-      await recorder.record(
-        config,
-        (f, t) =>
-          ui.setRecordingState(
-            true,
-            `Rec: ${f}/${t} (${Math.round((f / t) * 100)}%)`
-          ),
-        (url) => {
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `raytrace_${Date.now()}.webm`;
-          a.click();
-          URL.revokeObjectURL(url);
-        }
-      );
-    } catch (e) {
-      alert("Recording failed.");
-    } finally {
-      ui.setRecordingState(false);
-      isRendering = true;
-      ui.updateRenderButton(true);
-      requestAnimationFrame(renderFrame);
+    if (currentRole === "host" && signaling.getWorkerCount() > 0) {
+      // Distributed Recording
+      const config = ui.getRenderConfig();
+      const totalFrames = Math.ceil(config.fps * config.duration);
+
+      const workers = signaling.getWorkerIds();
+      if (workers.length === 0) return; // Should not happen given check above
+
+      const framesPerWorker = Math.ceil(totalFrames / workers.length);
+
+      workers.forEach((_wId: string, index: number) => {
+        const start = index * framesPerWorker;
+        const count = Math.min(framesPerWorker, totalFrames - start);
+        if (count <= 0) return;
+      });
+
+      if (!confirm(`Distribute recording to ${workers.length} workers?`))
+        return;
+
+      // Broadcast entire range
+      const renderConfig = { ...config, fileType: "obj" as const };
+      await signaling.broadcastRenderRequest(0, totalFrames, renderConfig);
+      ui.setStatus("Requested Distributed Render...");
+    } else {
+      // Local Recording
+      isRendering = false;
+      ui.setRecordingState(true);
+      const config = ui.getRenderConfig();
+      try {
+        // Provide an onComplete callback that accepts url AND blob
+        await recorder.record(
+          config,
+          (f, t) =>
+            ui.setRecordingState(
+              true,
+              `Rec: ${f}/${t} (${Math.round((f / t) * 100)}%)`
+            ),
+          (url) => {
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `raytrace_${Date.now()}.webm`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }
+        );
+      } catch (e) {
+        alert("Recording failed.");
+      } finally {
+        ui.setRecordingState(false);
+        isRendering = true;
+        ui.updateRenderButton(true);
+        requestAnimationFrame(renderFrame);
+      }
     }
   };
 
@@ -244,8 +271,72 @@ const bindEvents = () => {
 
   // Signaling Callbacks
   signaling.onStatusChange = (msg) => ui.setStatus(`Status: ${msg}`);
-  signaling.onWorkerJoined = (_id) => ui.setSendSceneEnabled(true);
+  signaling.onRenderRequest = async (startFrame, frameCount, config) => {
+    console.log(
+      `[Worker] Received Render Request: Frames ${startFrame} - ${
+        startFrame + frameCount
+      }`
+    );
+    ui.setStatus(`Remote Rendering: ${startFrame}-${startFrame + frameCount}`);
 
+    // Stop Interactive Rendering
+    isRendering = false;
+
+    const workerConfig = {
+      ...config,
+      startFrame: startFrame, // Pass startFrame to recorder if needed, or handle offset in loop
+      // VideoRecorder expects total Frames to render in this batch.
+      // Is 'duration' inside 'config' representing TOTAL video duration or duration of THIS segment?
+      // The 'config' comes from Host's UI. It has 'duration'.
+      // We should override duration for the recorder based on frameCount?
+      // actually recorder takes 'duration' to calc totalFrames = fps * duration.
+      // So we should probably calculate duration = frameCount / fps.
+      duration: frameCount / config.fps,
+    };
+
+    try {
+      await recorder.record(
+        workerConfig as any,
+        (f, t) => ui.setRecordingState(true, `Remote: ${f}/${t}`),
+        async (url, blob) => {
+          if (blob) {
+            console.log("Sending Result back to Host...");
+            ui.setRecordingState(true, "Uploading...");
+            await signaling.sendRenderResult(blob, startFrame);
+            ui.setRecordingState(false);
+            ui.setStatus("Upload Complete");
+          }
+          URL.revokeObjectURL(url);
+        }
+      );
+    } catch (e) {
+      console.error("Remote Recording Failed", e);
+      ui.setStatus("Recording Failed");
+    } finally {
+      // Resume
+      isRendering = true;
+      requestAnimationFrame(renderFrame);
+    }
+  };
+
+  signaling.onWorkerJoined = (id) => {
+    ui.setStatus(`Worker Joined: ${id}`);
+    ui.setSendSceneEnabled(true);
+  };
+
+  signaling.onRenderResult = (blob, startFrame) => {
+    console.log(`[Host] Received Render Result for frame ${startFrame}`);
+    ui.setStatus(`Received Result: ${startFrame}`);
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `render_segment_${startFrame}_${Date.now()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
   signaling.onSceneReceived = async (data, config) => {
     console.log("Scene received successfully.");
 
