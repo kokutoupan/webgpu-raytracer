@@ -20,7 +20,11 @@ export class RtcClient {
   private receiveBuffer: Uint8Array = new Uint8Array(0);
   private receivedBytes = 0;
   private sceneMeta: { config: RenderConfig; totalBytes: number } | null = null;
-  private resultMeta: { startFrame: number; totalBytes: number } | null = null;
+  private resultMeta: {
+    startFrame: number;
+    totalBytes: number;
+    chunksMeta: any[];
+  } | null = null;
 
   // コールバック
   public onSceneReceived:
@@ -29,7 +33,7 @@ export class RtcClient {
   public onRenderRequest:
     | ((startFrame: number, frameCount: number, config: RenderConfig) => void)
     | null = null;
-  public onRenderResult: ((blob: Blob, startFrame: number) => void) | null =
+  public onRenderResult: ((chunks: any[], startFrame: number) => void) | null =
     null;
   public onDataChannelOpen: (() => void) | null = null;
   public onAckReceived: ((receivedBytes: number) => void) | null = null;
@@ -105,19 +109,43 @@ export class RtcClient {
     await this.sendBinaryChunks(buffer);
   }
 
-  public async sendRenderResult(blob: ArrayBuffer, startFrame: number) {
+  public async sendRenderResult(chunks: any[], startFrame: number) {
     if (!this.dc || this.dc.readyState !== "open") return;
-    const buffer = new Uint8Array(blob);
 
-    console.log(`[RTC] Sending Render Result: ${buffer.byteLength} bytes`);
+    // Calculate total size and prepare metadata
+    let totalBytes = 0;
+    const chunksMeta = chunks.map((c) => {
+      const size = c.data.byteLength;
+      totalBytes += size;
+      return {
+        type: c.type,
+        timestamp: c.timestamp,
+        duration: c.duration,
+        size,
+        decoderConfig: c.decoderConfig,
+      };
+    });
+
+    console.log(
+      `[RTC] Sending Render Result: ${totalBytes} bytes, ${chunks.length} chunks`
+    );
 
     this.sendData({
       type: "RENDER_RESULT",
-      totalBytes: buffer.byteLength,
       startFrame,
+      totalBytes,
+      chunksMeta,
     });
 
-    await this.sendBinaryChunks(buffer);
+    // Combine buffers
+    const combinedBuffer = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const c of chunks) {
+      combinedBuffer.set(new Uint8Array(c.data), offset);
+      offset += c.data.byteLength;
+    }
+
+    await this.sendBinaryChunks(combinedBuffer);
   }
 
   private async sendBinaryChunks(buffer: Uint8Array) {
@@ -199,6 +227,7 @@ export class RtcClient {
       this.resultMeta = {
         startFrame: msg.startFrame,
         totalBytes: msg.totalBytes,
+        chunksMeta: msg.chunksMeta,
       };
       this.receiveBuffer = new Uint8Array(msg.totalBytes);
       this.receivedBytes = 0;
@@ -226,10 +255,23 @@ export class RtcClient {
     } else if (this.resultMeta) {
       if (this.receivedBytes >= this.resultMeta.totalBytes) {
         console.log(`[RTC] Render Result Complete!`);
-        const blob = new Blob([this.receiveBuffer as any], {
-          type: "video/webm",
-        });
-        this.onRenderResult?.(blob, this.resultMeta.startFrame);
+
+        // Reconstruct Chunks
+        const chunks: any[] = [];
+        let offset = 0;
+        for (const meta of this.resultMeta.chunksMeta) {
+          const data = this.receiveBuffer.slice(offset, offset + meta.size);
+          chunks.push({
+            type: meta.type,
+            timestamp: meta.timestamp,
+            duration: meta.duration,
+            data: data.buffer,
+            decoderConfig: meta.decoderConfig,
+          });
+          offset += meta.size;
+        }
+
+        this.onRenderResult?.(chunks, this.resultMeta.startFrame);
         this.resultMeta = null;
       }
     }

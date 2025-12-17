@@ -36,12 +36,28 @@ export type RenderConfig = {
 };
 
 // DataChannelで送るデータ
+export interface SerializedChunk {
+  type: "key" | "delta";
+  timestamp: number;
+  duration: number;
+  data: ArrayBuffer;
+  // EncodedVideoChunkMetadata usually has decoderConfig
+  decoderConfig?: VideoDecoderConfig | null;
+}
+
 export type DataChannelMessage =
   | { type: "HELLO"; msg: string }
   // 設定とファイルサイズの通知
-  | { type: "SCENE_INIT"; config: RenderConfig; totalBytes: number }
+  | {
+      type: "SCENE_INIT";
+      totalBytes: number;
+      config: RenderConfig;
+    }
   // 受信完了通知
-  | { type: "SCENE_ACK"; receivedBytes: number }
+  | {
+      type: "SCENE_ACK";
+      receivedBytes: number;
+    }
   // レンダリング依頼 (Host -> Worker)
   | {
       type: "RENDER_REQUEST";
@@ -50,4 +66,15 @@ export type DataChannelMessage =
       config: RenderConfig;
     }
   // レンダリング結果 (Worker -> Host)
-  | { type: "RENDER_RESULT"; totalBytes: number; startFrame: number };
+  | {
+      type: "RENDER_RESULT";
+      startFrame: number;
+      totalBytes: number;
+      chunksMeta: {
+        type: "key" | "delta";
+        timestamp: number;
+        duration: number;
+        size: number;
+        decoderConfig?: VideoDecoderConfig | null;
+      }[];
+    };

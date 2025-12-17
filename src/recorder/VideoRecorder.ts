@@ -72,11 +72,58 @@ export class VideoRecorder {
       const { buffer } = muxer.target;
       const blob = new Blob([buffer], { type: "video/webm" });
       const url = URL.createObjectURL(blob);
-      // Return blob too
       onComplete(url, blob);
     } catch (e) {
       console.error("Recording failed:", e);
       throw e;
+    } finally {
+      this.isRecording = false;
+    }
+  }
+
+  public async recordChunks(
+    config: { fps: number; duration: number; spp: number; batch: number },
+    onProgress: (frame: number, total: number) => void
+  ): Promise<any[]> {
+    // Return SerializedChunk[] but avoid circular dep on Protocol for now or import it
+    if (this.isRecording) throw new Error("Already recording");
+    this.isRecording = true;
+
+    const chunks: any[] = []; // SerializedChunk[]
+    const totalFrames = Math.ceil(config.fps * config.duration);
+
+    const videoEncoder = new VideoEncoder({
+      output: (chunk, meta) => {
+        const buffer = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(buffer);
+        chunks.push({
+          type: chunk.type,
+          timestamp: chunk.timestamp,
+          duration: chunk.duration,
+          data: buffer.buffer,
+          decoderConfig: meta?.decoderConfig,
+        });
+      },
+      error: (e) => console.error("VideoEncoder Error:", e),
+    });
+
+    videoEncoder.configure({
+      codec: "vp09.00.10.08",
+      width: this.canvas.width,
+      height: this.canvas.height,
+      bitrate: 12_000_000, // Maybe lower bitrate for chunks?
+    });
+
+    try {
+      await this.renderAndEncode(
+        totalFrames,
+        config,
+        videoEncoder,
+        onProgress,
+        (config as any).startFrame || 0
+      );
+      await videoEncoder.flush();
+      return chunks;
     } finally {
       this.isRecording = false;
     }
@@ -112,7 +159,7 @@ export class VideoRecorder {
       }
 
       const frame = new VideoFrame(this.canvas, {
-        timestamp: (i * 1000000) / config.fps,
+        timestamp: (currentFrame * 1000000) / config.fps,
         duration: 1000000 / config.fps,
       });
 

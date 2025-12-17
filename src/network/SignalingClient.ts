@@ -17,8 +17,9 @@ export class SignalingClient {
     | ((data: ArrayBuffer | string, config: RenderConfig) => void)
     | null = null;
   public onHostHello: (() => void) | null = null;
-  public onRenderResult: ((blob: Blob, startFrame: number) => void) | null =
-    null;
+  public onRenderResult:
+    | ((chunks: any[], startFrame: number, workerId: string) => void)
+    | null = null;
   public onRenderRequest:
     | ((startFrame: number, frameCount: number, config: RenderConfig) => void)
     | null = null;
@@ -74,11 +75,11 @@ export class SignalingClient {
     return Array.from(this.workers.keys());
   }
 
-  public async sendRenderResult(blob: Blob, startFrame: number) {
+  public async sendRenderResult(chunks: any[], startFrame: number) {
     if (this.hostClient) {
       // Blob to ArrayBuffer
-      const buffer = await blob.arrayBuffer();
-      await this.hostClient.sendRenderResult(buffer, startFrame);
+      // const buffer = await blob.arrayBuffer(); // No longer needed
+      await this.hostClient.sendRenderResult(chunks, startFrame);
     }
   }
 
@@ -114,11 +115,11 @@ export class SignalingClient {
           console.log(`Worker ${msg.workerId} ACK: ${bytes}`);
         };
 
-        client.onRenderResult = (blob, startFrame) => {
+        client.onRenderResult = (chunks, startFrame) => {
           console.log(
-            `Received Render Result from ${msg.workerId}: ${blob.size} bytes`
+            `Received Render Result from ${msg.workerId}: ${chunks.length} chunks`
           );
-          this.onRenderResult?.(blob, startFrame);
+          this.onRenderResult?.(chunks, startFrame, msg.workerId);
         };
 
         await client.startAsHost();
@@ -186,14 +187,19 @@ export class SignalingClient {
     await Promise.all(promises);
   }
 
-  public async broadcastRenderRequest(
+  // ...
+
+  public async sendRenderRequest(
+    targetId: string,
     startFrame: number,
     frameCount: number,
     config: RenderConfig
   ) {
-    const promises = Array.from(this.workers.values()).map((w) =>
-      w.sendRenderRequest(startFrame, frameCount, config)
-    );
-    await Promise.all(promises);
+    const client = this.workers.get(targetId);
+    if (client) {
+      await client.sendRenderRequest(startFrame, frameCount, config);
+    }
   }
+
+  // ... (broadcastRenderRequest can stay or be removed if unused)
 }

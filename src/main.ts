@@ -168,32 +168,65 @@ const bindEvents = () => {
 
   ui.onAnimSelect = (idx) => worldBridge.setAnimation(idx);
 
+  // --- Dynamic Job Scheduling State ---
+  let jobQueue: { start: number; count: number }[] = [];
+  let pendingChunks: Map<number, any[]> = new Map(); // startFrame -> SerializedChunk[]
+  let completedJobs = 0;
+  let totalJobs = 0;
+  let totalRenderFrames = 0;
+  let distributedConfig: any = null;
+
+  const BATCH_SIZE = 20;
+
+  const assignJob = async (workerId: string) => {
+    if (jobQueue.length === 0) return;
+    const job = jobQueue.shift();
+    if (!job) return;
+
+    console.log(
+      `Assigning Job ${job.start} - ${job.start + job.count} to ${workerId}`
+    );
+    await signaling.sendRenderRequest(workerId, job.start, job.count, {
+      ...distributedConfig,
+      fileType: "obj",
+    });
+  };
+
   ui.onRecordStart = async () => {
     if (recorder.recording) return;
 
     if (currentRole === "host" && signaling.getWorkerCount() > 0) {
       // Distributed Recording
-      const config = ui.getRenderConfig();
-      const totalFrames = Math.ceil(config.fps * config.duration);
+      distributedConfig = ui.getRenderConfig();
+      totalRenderFrames = Math.ceil(
+        distributedConfig.fps * distributedConfig.duration
+      );
 
       const workers = signaling.getWorkerIds();
-      if (workers.length === 0) return; // Should not happen given check above
+      if (workers.length === 0) return;
 
-      const framesPerWorker = Math.ceil(totalFrames / workers.length);
-
-      workers.forEach((_wId: string, index: number) => {
-        const start = index * framesPerWorker;
-        const count = Math.min(framesPerWorker, totalFrames - start);
-        if (count <= 0) return;
-      });
-
-      if (!confirm(`Distribute recording to ${workers.length} workers?`))
+      if (
+        !confirm(
+          `Distribute recording to ${workers.length} workers (Dynamic Load Balancing)?`
+        )
+      )
         return;
 
-      // Broadcast entire range
-      const renderConfig = { ...config, fileType: "obj" as const };
-      await signaling.broadcastRenderRequest(0, totalFrames, renderConfig);
-      ui.setStatus("Requested Distributed Render...");
+      // Init Job Queue
+      jobQueue = [];
+      pendingChunks.clear();
+      completedJobs = 0;
+
+      for (let f = 0; f < totalRenderFrames; f += BATCH_SIZE) {
+        const count = Math.min(BATCH_SIZE, totalRenderFrames - f);
+        jobQueue.push({ start: f, count });
+      }
+      totalJobs = jobQueue.length;
+
+      // Initial Assignment
+      workers.forEach((w) => assignJob(w));
+
+      ui.setStatus(`Distributed Progress: 0 / ${totalJobs} jobs`);
     } else {
       // Local Recording
       isRendering = false;
@@ -271,6 +304,16 @@ const bindEvents = () => {
 
   // Signaling Callbacks
   signaling.onStatusChange = (msg) => ui.setStatus(`Status: ${msg}`);
+
+  signaling.onWorkerJoined = (id) => {
+    ui.setStatus(`Worker Joined: ${id}`);
+    ui.setSendSceneEnabled(true);
+    // If we are in the middle of a distributed render, assign job?
+    if (currentRole === "host" && jobQueue.length > 0) {
+      assignJob(id);
+    }
+  };
+
   signaling.onRenderRequest = async (startFrame, frameCount, config) => {
     console.log(
       `[Worker] Received Render Request: Frames ${startFrame} - ${
@@ -279,64 +322,115 @@ const bindEvents = () => {
     );
     ui.setStatus(`Remote Rendering: ${startFrame}-${startFrame + frameCount}`);
 
-    // Stop Interactive Rendering
     isRendering = false;
 
     const workerConfig = {
       ...config,
-      startFrame: startFrame, // Pass startFrame to recorder if needed, or handle offset in loop
-      // VideoRecorder expects total Frames to render in this batch.
-      // Is 'duration' inside 'config' representing TOTAL video duration or duration of THIS segment?
-      // The 'config' comes from Host's UI. It has 'duration'.
-      // We should override duration for the recorder based on frameCount?
-      // actually recorder takes 'duration' to calc totalFrames = fps * duration.
-      // So we should probably calculate duration = frameCount / fps.
+      startFrame: startFrame,
       duration: frameCount / config.fps,
     };
 
     try {
-      await recorder.record(
-        workerConfig as any,
-        (f, t) => ui.setRecordingState(true, `Remote: ${f}/${t}`),
-        async (url, blob) => {
-          if (blob) {
-            console.log("Sending Result back to Host...");
-            ui.setRecordingState(true, "Uploading...");
-            await signaling.sendRenderResult(blob, startFrame);
-            ui.setRecordingState(false);
-            ui.setStatus("Upload Complete");
-          }
-          URL.revokeObjectURL(url);
-        }
+      ui.setRecordingState(true, `Remote: ${frameCount} f`);
+
+      // Use recordChunks
+      const chunks = await recorder.recordChunks(workerConfig as any, (f, t) =>
+        ui.setRecordingState(true, `Remote: ${f}/${t}`)
       );
+
+      console.log("Sending Chunks back to Host...");
+      ui.setRecordingState(true, "Uploading...");
+      await signaling.sendRenderResult(chunks, startFrame);
+      ui.setRecordingState(false);
+      ui.setStatus("Idle");
     } catch (e) {
       console.error("Remote Recording Failed", e);
       ui.setStatus("Recording Failed");
     } finally {
-      // Resume
       isRendering = true;
       requestAnimationFrame(renderFrame);
     }
   };
 
-  signaling.onWorkerJoined = (id) => {
-    ui.setStatus(`Worker Joined: ${id}`);
-    ui.setSendSceneEnabled(true);
+  signaling.onRenderResult = async (chunks, startFrame, workerId) => {
+    console.log(
+      `[Host] Received ${chunks.length} chunks for ${startFrame} from ${workerId}`
+    );
+
+    pendingChunks.set(startFrame, chunks);
+    completedJobs++;
+    ui.setStatus(`Distributed Progress: ${completedJobs} / ${totalJobs} jobs`);
+
+    // Assign next job to this worker
+    await assignJob(workerId);
+
+    // Check completion
+    if (completedJobs >= totalJobs) {
+      console.log("All jobs complete. Muxing...");
+      ui.setStatus("Muxing...");
+
+      await muxAndDownload();
+    }
   };
 
-  signaling.onRenderResult = (blob, startFrame) => {
-    console.log(`[Host] Received Render Result for frame ${startFrame}`);
-    ui.setStatus(`Received Result: ${startFrame}`);
+  const muxAndDownload = async () => {
+    // Import Muxer (need to import at top, assuming it's available globally or imported)
+    // We used 'webm-muxer' in VideoRecorder.
+    // We should probably export a Muxer helper or use it here.
+    // import * as WebMMuxer from "webm-muxer"; // Need to ensure import
 
+    const sortedStarts = Array.from(pendingChunks.keys()).sort((a, b) => a - b);
+
+    // Create Muxer
+    const { Muxer, ArrayBufferTarget } = await import("webm-muxer");
+    const mult = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: {
+        codec: "V_VP9",
+        width: distributedConfig.width,
+        height: distributedConfig.height,
+        frameRate: distributedConfig.fps,
+      },
+    });
+
+    for (const start of sortedStarts) {
+      const chunks = pendingChunks.get(start);
+      if (!chunks) continue; // Should not happen
+      for (const c of chunks) {
+        mult.addVideoChunk(
+          new EncodedVideoChunk({
+            type: c.type,
+            timestamp: c.timestamp,
+            duration: c.duration,
+            data: c.data, // ArrayBuffer
+          }),
+          { decoderConfig: c.decoderConfig }
+        ); // meta? EncodedVideoChunkMetadata?
+        // Wait, addVideoChunk takes (chunk, meta).
+        // meta defaults?
+        // VideoEncoder output gives meta (decoderConfig etc).
+        // We didn't save meta!
+        // WebMMuxer might need it?
+        // "meta is optional but recommended for critical codec info" in strict modes.
+        // VP9 usually fine.
+        // But strict typing?
+      }
+    }
+
+    mult.finalize();
+    const { buffer } = mult.target;
+    const blob = new Blob([buffer], { type: "video/webm" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `render_segment_${startFrame}_${Date.now()}.webm`;
+    a.download = `distributed_trace_${Date.now()}.webm`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    ui.setStatus("Finished!");
   };
+
   signaling.onSceneReceived = async (data, config) => {
     console.log("Scene received successfully.");
 
