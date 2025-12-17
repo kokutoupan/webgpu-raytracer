@@ -29,12 +29,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     let s = Promise.resolve();
     if (t && t.length > 0) {
       let u = function(d) {
-        return Promise.all(d.map((_) => Promise.resolve(_).then((S) => ({
+        return Promise.all(d.map((_) => Promise.resolve(_).then((y) => ({
           status: "fulfilled",
-          value: S
-        }), (S) => ({
+          value: y
+        }), (y) => ({
           status: "rejected",
-          reason: S
+          reason: y
         }))));
       };
       document.getElementsByTagName("link");
@@ -42,11 +42,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       s = u(t.map((d) => {
         if (d = fe(d), d in K) return;
         K[d] = true;
-        const _ = d.endsWith(".css"), S = _ ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${d}"]${S}`)) return;
-        const b = document.createElement("link");
-        if (b.rel = _ ? "stylesheet" : ue, _ || (b.as = "script"), b.crossOrigin = "", b.href = d, l && b.setAttribute("nonce", l), document.head.appendChild(b), _) return new Promise((le, de) => {
-          b.addEventListener("load", le), b.addEventListener("error", () => de(new Error(`Unable to preload CSS for ${d}`)));
+        const _ = d.endsWith(".css"), y = _ ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${d}"]${y}`)) return;
+        const m = document.createElement("link");
+        if (m.rel = _ ? "stylesheet" : ue, _ || (m.as = "script"), m.crossOrigin = "", m.href = d, l && m.setAttribute("nonce", l), document.head.appendChild(m), _) return new Promise((le, de) => {
+          m.addEventListener("load", le), m.addEventListener("error", () => de(new Error(`Unable to preload CSS for ${d}`)));
         });
       }));
     }
@@ -648,8 +648,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       (!this.geometryBuffer || this.geometryBuffer.size < s) && (i = true);
       const a = e.length / 4;
       this.vertexCount = a, this.geometryBuffer = this.ensureBuffer(this.geometryBuffer, s, "GeometryBuffer"), !(r.length >= a * 2) && a > 0 && console.warn(`UV buffer mismatch: V=${a}, UV=${r.length / 2}. Filling 0.`);
-      const u = e.length, d = t.length, _ = r.length, S = u + d + _, b = new Float32Array(S);
-      return b.set(e, 0), b.set(t, u), b.set(r, u + d), this.device.queue.writeBuffer(this.geometryBuffer, 0, b), i;
+      const u = e.length, d = t.length, _ = r.length, y = u + d + _, m = new Float32Array(y);
+      return m.set(e, 0), m.set(t, u), m.set(r, u + d), this.device.queue.writeBuffer(this.geometryBuffer, 0, m), i;
     }
     updateCombinedBVH(e, t) {
       const r = e.byteLength, s = t.byteLength, i = r + s;
@@ -756,7 +756,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     return c.__wbindgen_externrefs.set(e, n), e;
   }
   function ge(n, e) {
-    return n = n >>> 0, E().subarray(n / 1, n / 1 + e);
+    return n = n >>> 0, A().subarray(n / 1, n / 1 + e);
   }
   let k = null;
   function X() {
@@ -765,11 +765,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   function U(n, e) {
     return n = n >>> 0, we(n, e);
   }
-  let A = null;
-  function E() {
-    return (A === null || A.byteLength === 0) && (A = new Uint8Array(c.memory.buffer)), A;
+  let E = null;
+  function A() {
+    return (E === null || E.byteLength === 0) && (E = new Uint8Array(c.memory.buffer)), E;
   }
-  function be(n, e) {
+  function me(n, e) {
     try {
       return n.apply(this, e);
     } catch (t) {
@@ -782,15 +782,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   function Z(n, e) {
     const t = e(n.length * 1, 1) >>> 0;
-    return E().set(n, t / 1), x = n.length, t;
+    return A().set(n, t / 1), S = n.length, t;
   }
   function G(n, e, t) {
     if (t === void 0) {
       const l = W.encode(n), u = e(l.length, 1) >>> 0;
-      return E().subarray(u, u + l.length).set(l), x = l.length, u;
+      return A().subarray(u, u + l.length).set(l), S = l.length, u;
     }
     let r = n.length, s = e(r, 1) >>> 0;
-    const i = E();
+    const i = A();
     let a = 0;
     for (; a < r; a++) {
       const l = n.charCodeAt(a);
@@ -799,23 +799,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     if (a !== r) {
       a !== 0 && (n = n.slice(a)), s = t(s, r, r = a + n.length * 3, 1) >>> 0;
-      const l = E().subarray(s + a, s + r), u = W.encodeInto(n, l);
+      const l = A().subarray(s + a, s + r), u = W.encodeInto(n, l);
       a += u.written, s = t(s, r, a, 1) >>> 0;
     }
-    return x = a, s;
+    return S = a, s;
   }
   let L = new TextDecoder("utf-8", {
     ignoreBOM: true,
     fatal: true
   });
   L.decode();
-  const me = 2146435072;
+  const be = 2146435072;
   let N = 0;
   function we(n, e) {
-    return N += e, N >= me && (L = new TextDecoder("utf-8", {
+    return N += e, N >= be && (L = new TextDecoder("utf-8", {
       ignoreBOM: true,
       fatal: true
-    }), L.decode(), N = e), L.decode(E().subarray(n, n + e));
+    }), L.decode(), N = e), L.decode(A().subarray(n, n + e));
   }
   const W = new TextEncoder();
   "encodeInto" in W || (W.encodeInto = function(n, e) {
@@ -825,7 +825,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       written: t.length
     };
   });
-  let x = 0;
+  let S = 0;
   typeof FinalizationRegistry > "u" || new FinalizationRegistry((n) => c.__wbg_renderbuffers_free(n >>> 0, 1));
   const ee = typeof FinalizationRegistry > "u" ? {
     register: () => {
@@ -900,15 +900,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     load_animation_glb(e) {
-      const t = Z(e, c.__wbindgen_malloc), r = x;
+      const t = Z(e, c.__wbindgen_malloc), r = S;
       c.world_load_animation_glb(this.__wbg_ptr, t, r);
     }
     get_animation_count() {
       return c.world_get_animation_count(this.__wbg_ptr) >>> 0;
     }
     constructor(e, t, r) {
-      const s = G(e, c.__wbindgen_malloc, c.__wbindgen_realloc), i = x;
-      var a = Q(t) ? 0 : G(t, c.__wbindgen_malloc, c.__wbindgen_realloc), l = x, u = Q(r) ? 0 : Z(r, c.__wbindgen_malloc), d = x;
+      const s = G(e, c.__wbindgen_malloc, c.__wbindgen_realloc), i = S;
+      var a = Q(t) ? 0 : G(t, c.__wbindgen_malloc, c.__wbindgen_realloc), l = S, u = Q(r) ? 0 : Z(r, c.__wbindgen_malloc), d = S;
       const _ = c.world_new(s, i, a, l, u, d);
       return this.__wbg_ptr = _ >>> 0, ee.register(this, this.__wbg_ptr, this), this;
     }
@@ -935,17 +935,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   Symbol.dispose && (V.prototype[Symbol.dispose] = V.prototype.free);
-  const ye = /* @__PURE__ */ new Set([
+  const ve = /* @__PURE__ */ new Set([
     "basic",
     "cors",
     "default"
   ]);
-  async function ve(n, e) {
+  async function ye(n, e) {
     if (typeof Response == "function" && n instanceof Response) {
       if (typeof WebAssembly.instantiateStreaming == "function") try {
         return await WebAssembly.instantiateStreaming(n, e);
       } catch (r) {
-        if (n.ok && ye.has(n.type) && n.headers.get("Content-Type") !== "application/wasm") console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", r);
+        if (n.ok && ve.has(n.type) && n.headers.get("Content-Type") !== "application/wasm") console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", r);
         else throw r;
       }
       const t = await n.arrayBuffer();
@@ -958,7 +958,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       } : t;
     }
   }
-  function Se() {
+  function Re() {
     const n = {};
     return n.wbg = {}, n.wbg.__wbg___wbindgen_throw_dd24417ed36fc46e = function(e, t) {
       throw new Error(U(e, t));
@@ -970,7 +970,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         c.__wbindgen_free(r, s, 1);
       }
     }, n.wbg.__wbg_getRandomValues_1c61fac11405ffdc = function() {
-      return be(function(e, t) {
+      return me(function(e, t) {
         globalThis.crypto.getRandomValues(ge(e, t));
       }, arguments);
     }, n.wbg.__wbg_log_1d990106d99dacb7 = function(e) {
@@ -978,7 +978,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }, n.wbg.__wbg_new_8a6f238a6ece86ea = function() {
       return new Error();
     }, n.wbg.__wbg_stack_0ed75d68575b0f3c = function(e, t) {
-      const r = t.stack, s = G(r, c.__wbindgen_malloc, c.__wbindgen_realloc), i = x;
+      const r = t.stack, s = G(r, c.__wbindgen_malloc, c.__wbindgen_realloc), i = S;
       X().setInt32(e + 4, i, true), X().setInt32(e + 0, s, true);
     }, n.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(e, t) {
       return U(e, t);
@@ -987,16 +987,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       e.set(0, void 0), e.set(t + 0, void 0), e.set(t + 1, null), e.set(t + 2, true), e.set(t + 3, false);
     }, n;
   }
-  function Re(n, e) {
-    return c = n.exports, ie.__wbindgen_wasm_module = e, k = null, A = null, c.__wbindgen_start(), c;
+  function Se(n, e) {
+    return c = n.exports, ie.__wbindgen_wasm_module = e, k = null, E = null, c.__wbindgen_start(), c;
   }
   async function ie(n) {
     if (c !== void 0) return c;
     typeof n < "u" && (Object.getPrototypeOf(n) === Object.prototype ? { module_or_path: n } = n : console.warn("using deprecated parameters for the initialization function; pass a single object instead")), typeof n > "u" && (n = new URL("/webgpu-raytracer/assets/rust_shader_tools_bg-CC5HVMsp.wasm", import.meta.url));
-    const e = Se();
+    const e = Re();
     (typeof n == "string" || typeof Request == "function" && n instanceof Request || typeof URL == "function" && n instanceof URL) && (n = fetch(n));
-    const { instance: t, module: r } = await ve(await n, e);
-    return Re(t, r);
+    const { instance: t, module: r } = await ye(await n, e);
+    return Se(t, r);
   }
   class xe {
     constructor() {
@@ -1109,7 +1109,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       recBatch: "rec-batch",
       btnHost: "btn-host",
       btnWorker: "btn-worker",
-      btnSendScene: "btn-send-scene",
       statusDiv: "status"
     }
   };
@@ -1133,7 +1132,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "inputRecBatch");
       __publicField(this, "btnHost");
       __publicField(this, "btnWorker");
-      __publicField(this, "btnSendScene");
       __publicField(this, "statusDiv");
       __publicField(this, "statsDiv");
       __publicField(this, "onRenderStart", null);
@@ -1146,8 +1144,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "onRecordStart", null);
       __publicField(this, "onConnectHost", null);
       __publicField(this, "onConnectWorker", null);
-      __publicField(this, "onSendScene", null);
-      this.canvas = this.el(h.ids.canvas), this.btnRender = this.el(h.ids.renderBtn), this.sceneSelect = this.el(h.ids.sceneSelect), this.inputWidth = this.el(h.ids.resWidth), this.inputHeight = this.el(h.ids.resHeight), this.inputFile = this.setupFileInput(), this.inputDepth = this.el(h.ids.maxDepth), this.inputSPP = this.el(h.ids.sppFrame), this.btnRecompile = this.el(h.ids.recompileBtn), this.inputUpdateInterval = this.el(h.ids.updateInterval), this.animSelect = this.el(h.ids.animSelect), this.btnRecord = this.el(h.ids.recordBtn), this.inputRecFps = this.el(h.ids.recFps), this.inputRecDur = this.el(h.ids.recDuration), this.inputRecSpp = this.el(h.ids.recSpp), this.inputRecBatch = this.el(h.ids.recBatch), this.btnHost = this.el(h.ids.btnHost), this.btnWorker = this.el(h.ids.btnWorker), this.btnSendScene = this.el(h.ids.btnSendScene), this.statusDiv = this.el(h.ids.statusDiv), this.statsDiv = this.createStatsDiv(), this.bindEvents();
+      this.canvas = this.el(h.ids.canvas), this.btnRender = this.el(h.ids.renderBtn), this.sceneSelect = this.el(h.ids.sceneSelect), this.inputWidth = this.el(h.ids.resWidth), this.inputHeight = this.el(h.ids.resHeight), this.inputFile = this.setupFileInput(), this.inputDepth = this.el(h.ids.maxDepth), this.inputSPP = this.el(h.ids.sppFrame), this.btnRecompile = this.el(h.ids.recompileBtn), this.inputUpdateInterval = this.el(h.ids.updateInterval), this.animSelect = this.el(h.ids.animSelect), this.btnRecord = this.el(h.ids.recordBtn), this.inputRecFps = this.el(h.ids.recFps), this.inputRecDur = this.el(h.ids.recDuration), this.inputRecSpp = this.el(h.ids.recSpp), this.inputRecBatch = this.el(h.ids.recBatch), this.btnHost = this.el(h.ids.btnHost), this.btnWorker = this.el(h.ids.btnWorker), this.statusDiv = this.el(h.ids.statusDiv), this.statsDiv = this.createStatsDiv(), this.bindEvents();
     }
     el(e) {
       const t = document.getElementById(e);
@@ -1206,9 +1203,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }), this.btnWorker.addEventListener("click", () => {
         var _a;
         return (_a = this.onConnectWorker) == null ? void 0 : _a.call(this);
-      }), this.btnSendScene.addEventListener("click", () => {
-        var _a;
-        return (_a = this.onSendScene) == null ? void 0 : _a.call(this);
       });
     }
     updateRenderButton(e) {
@@ -1221,13 +1215,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       this.statusDiv.textContent = e;
     }
     setConnectionState(e) {
-      e === "host" ? (this.btnHost.textContent = "Disconnect", this.btnHost.disabled = false, this.btnWorker.textContent = "Worker", this.btnWorker.disabled = true, this.btnSendScene.style.display = "inline-block", this.btnSendScene.disabled = true) : e === "worker" ? (this.btnHost.textContent = "Host", this.btnHost.disabled = true, this.btnWorker.textContent = "Disconnect", this.btnWorker.disabled = false, this.btnSendScene.style.display = "none") : (this.btnHost.textContent = "Host", this.btnHost.disabled = false, this.btnWorker.textContent = "Worker", this.btnWorker.disabled = false, this.btnSendScene.style.display = "none", this.statusDiv.textContent = "Offline");
-    }
-    setSendSceneEnabled(e) {
-      this.btnSendScene.disabled = !e;
-    }
-    setSendSceneText(e) {
-      this.btnSendScene.textContent = e;
+      e === "host" ? (this.btnHost.textContent = "Disconnect", this.btnHost.disabled = false, this.btnWorker.textContent = "Worker", this.btnWorker.disabled = true) : e === "worker" ? (this.btnHost.textContent = "Host", this.btnHost.disabled = true, this.btnWorker.textContent = "Disconnect", this.btnWorker.disabled = false) : (this.btnHost.textContent = "Host", this.btnHost.disabled = false, this.btnWorker.textContent = "Worker", this.btnWorker.disabled = false, this.statusDiv.textContent = "Offline");
     }
     setRecordingState(e, t) {
       e ? (this.btnRecord.disabled = true, this.btnRecord.textContent = t || "Recording...", this.btnRender.textContent = "Resume Rendering") : (this.btnRecord.disabled = false, this.btnRecord.textContent = "\u25CF Rec");
@@ -1304,8 +1292,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           d
         ], {
           type: "video/webm"
-        }), S = URL.createObjectURL(_);
-        r(S, _);
+        }), y = URL.createObjectURL(_);
+        r(y, _);
       } catch (d) {
         throw console.error("Recording failed:", d), d;
       } finally {
@@ -1702,23 +1690,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       i && await i.sendRenderRequest(t, r, s);
     }
   }
-  let w = false, m = null, y = null, R = null, B = [], $ = /* @__PURE__ */ new Map(), P = 0, F = 0, q = 0, T = null, v = /* @__PURE__ */ new Map(), D = /* @__PURE__ */ new Map(), j = false, M = null;
+  let b = false, w = null, x = null, R = null, B = [], $ = /* @__PURE__ */ new Map(), P = 0, F = 0, q = 0, T = null, v = /* @__PURE__ */ new Map(), D = /* @__PURE__ */ new Map(), j = false, M = null;
   const ne = 20, o = new Be(), p = new _e(o.canvas), f = new xe(), H = new ke(p, f, o.canvas), g = new Te();
   let C = 0, J = 0, I = 0, re = performance.now();
-  const Ee = () => {
+  const Ae = () => {
     const n = parseInt(o.inputDepth.value, 10) || h.defaultDepth, e = parseInt(o.inputSPP.value, 10) || h.defaultSPP;
     p.buildPipeline(n, e);
   }, Y = () => {
     const { width: n, height: e } = o.getRenderConfig();
     p.updateScreenSize(n, e), f.hasWorld && (f.updateCamera(n, e), p.updateSceneUniforms(f.cameraData, 0)), p.recreateBindGroup(), p.resetAccumulation(), C = 0, J = 0;
   }, O = async (n, e = true) => {
-    w = false, console.log(`Loading Scene: ${n}...`);
+    b = false, console.log(`Loading Scene: ${n}...`);
     let t, r;
-    n === "viewer" && m && (y === "obj" ? t = m : y === "glb" && (r = new Uint8Array(m))), f.loadScene(n, t, r), f.printStats(), await p.loadTexturesFromWorld(f), await Ae(), Y(), o.updateAnimList(f.getAnimationList()), e && (w = true, o.updateRenderButton(true));
-  }, Ae = async () => {
+    n === "viewer" && w && (x === "obj" ? t = w : x === "glb" && (r = new Uint8Array(w))), f.loadScene(n, t, r), f.printStats(), await p.loadTexturesFromWorld(f), await Ee(), Y(), o.updateAnimList(f.getAnimationList()), e && (b = true, o.updateRenderButton(true));
+  }, Ee = async () => {
     p.updateCombinedGeometry(f.vertices, f.normals, f.uvs), p.updateCombinedBVH(f.tlas, f.blas), p.updateBuffer("index", f.indices), p.updateBuffer("attr", f.attributes), p.updateBuffer("instance", f.instances);
   }, z = () => {
-    if (H.recording || (requestAnimationFrame(z), !w || !f.hasWorld)) return;
+    if (H.recording || (requestAnimationFrame(z), !b || !f.hasWorld)) return;
     let n = parseInt(o.inputUpdateInterval.value, 10) || 0;
     if (n < 0 && (n = 0), n > 0 && C >= n) {
       f.update(J / n / 60);
@@ -1729,9 +1717,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     const e = performance.now();
     e - re >= 1e3 && (o.updateStats(I, 1e3 / I, C), I = 0, re = e);
   }, ae = async (n) => {
-    if (!m || !y) return;
+    if (!w || !x) return;
     const e = o.getRenderConfig();
-    n ? (console.log(`Sending scene to specific worker: ${n}`), v.set(n, "loading"), await g.sendSceneToWorker(n, m, y, e)) : (console.log("Broadcasting scene to all workers..."), g.getWorkerIds().forEach((t) => v.set(t, "loading")), await g.broadcastScene(m, y, e));
+    n ? (console.log(`Sending scene to specific worker: ${n}`), v.set(n, "loading"), await g.sendSceneToWorker(n, w, x, e)) : (console.log("Broadcasting scene to all workers..."), g.getWorkerIds().forEach((t) => v.set(t, "loading")), await g.broadcastScene(w, x, e));
   }, oe = async (n) => {
     if (v.get(n) !== "idle") {
       console.log(`Worker ${n} is ${v.get(n)}, skipping assignment.`);
@@ -1778,7 +1766,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }), a = URL.createObjectURL(i), l = document.createElement("a");
     l.href = a, l.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(l), l.click(), document.body.removeChild(l), URL.revokeObjectURL(a), o.setStatus("Finished!");
   }, ce = async (n, e, t) => {
-    console.log(`[Worker] Starting Render: Frames ${n} - ${n + e}`), o.setStatus(`Remote Rendering: ${n}-${n + e}`), w = false;
+    console.log(`[Worker] Starting Render: Frames ${n} - ${n + e}`), o.setStatus(`Remote Rendering: ${n}-${n + e}`), b = false;
     const r = {
       ...t,
       startFrame: n,
@@ -1791,7 +1779,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     } catch (s) {
       console.error("Remote Recording Failed", s), o.setStatus("Recording Failed");
     } finally {
-      w = true, requestAnimationFrame(z);
+      b = true, requestAnimationFrame(z);
     }
   }, De = async () => {
     if (!M) return;
@@ -1808,7 +1796,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     console.log(`Worker ${n} is READY`), o.setStatus(`Worker ${n} Ready!`), v.set(n, "idle"), R === "host" && B.length > 0 && oe(n);
   };
   g.onWorkerJoined = (n) => {
-    o.setStatus(`Worker Joined: ${n}`), o.setSendSceneEnabled(true), v.set(n, "idle"), R === "host" && B.length > 0 && ae(n);
+    o.setStatus(`Worker Joined: ${n}`), v.set(n, "idle"), R === "host" && B.length > 0 && ae(n);
   };
   g.onRenderRequest = async (n, e, t) => {
     if (console.log(`[Worker] Received Render Request: Frames ${n} - ${n + e}`), j) {
@@ -1825,18 +1813,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     console.log(`[Host] Received ${n.length} chunks for ${e} from ${t}`), $.set(e, n), P++, o.setStatus(`Distributed Progress: ${P} / ${F} jobs`), v.set(t, "idle"), D.delete(t), await oe(t), P >= F && (console.log("All jobs complete. Muxing..."), o.setStatus("Muxing..."), await We());
   };
   g.onSceneReceived = async (n, e) => {
-    console.log("Scene received successfully."), j = true, o.setRenderConfig(e), y = e.fileType, e.fileType, m = n, o.sceneSelect.value = "viewer", await O("viewer", false), e.anim !== void 0 && (o.animSelect.value = e.anim.toString(), f.setAnimation(e.anim)), j = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), De();
+    console.log("Scene received successfully."), j = true, o.setRenderConfig(e), x = e.fileType, e.fileType, w = n, o.sceneSelect.value = "viewer", await O("viewer", false), e.anim !== void 0 && (o.animSelect.value = e.anim.toString(), f.setAnimation(e.anim)), j = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), De();
   };
   const Ie = () => {
     o.onRenderStart = () => {
-      w = true;
+      b = true;
     }, o.onRenderStop = () => {
-      w = false;
+      b = false;
     }, o.onSceneSelect = (n) => O(n, false), o.onResolutionChange = Y, o.onRecompile = (n, e) => {
-      w = false, p.buildPipeline(n, e), p.recreateBindGroup(), p.resetAccumulation(), C = 0, w = true;
+      b = false, p.buildPipeline(n, e), p.recreateBindGroup(), p.resetAccumulation(), C = 0, b = true;
     }, o.onFileSelect = async (n) => {
       var _a;
-      ((_a = n.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (m = await n.text(), y = "obj") : (m = await n.arrayBuffer(), y = "glb"), o.sceneSelect.value = "viewer", O("viewer", false);
+      ((_a = n.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await n.text(), x = "obj") : (w = await n.arrayBuffer(), x = "glb"), o.sceneSelect.value = "viewer", O("viewer", false);
     }, o.onAnimSelect = (n) => f.setAnimation(n), o.onRecordStart = async () => {
       if (!H.recording) if (R === "host") {
         const n = g.getWorkerIds();
@@ -1852,7 +1840,7 @@ Auto Scene Sync enabled.`)) return;
         }
         F = B.length, n.forEach((e) => v.set(e, "idle")), o.setStatus(`Distributed Progress: 0 / ${F} jobs (Waiting for workers...)`), n.length > 0 ? (o.setStatus("Syncing Scene to Workers..."), await ae()) : console.log("No workers yet. Waiting...");
       } else {
-        w = false, o.setRecordingState(true);
+        b = false, o.setRecordingState(true);
         const n = o.getRenderConfig();
         try {
           await H.record(n, (e, t) => o.setRecordingState(true, `Rec: ${e}/${t} (${Math.round(e / t * 100)}%)`), (e) => {
@@ -1862,21 +1850,13 @@ Auto Scene Sync enabled.`)) return;
         } catch {
           alert("Recording failed.");
         } finally {
-          o.setRecordingState(false), w = true, o.updateRenderButton(true), requestAnimationFrame(z);
+          o.setRecordingState(false), b = true, o.updateRenderButton(true), requestAnimationFrame(z);
         }
       }
     }, o.onConnectHost = () => {
       R === "host" ? (g.disconnect(), R = null, o.setConnectionState(null)) : (g.connect("host"), R = "host", o.setConnectionState("host"));
     }, o.onConnectWorker = () => {
       R === "worker" ? (g.disconnect(), R = null, o.setConnectionState(null)) : (g.connect("worker"), R = "worker", o.setConnectionState("worker"));
-    }, o.onSendScene = async () => {
-      if (!m || !y) {
-        alert("No scene loaded!");
-        return;
-      }
-      o.setSendSceneText("Sending..."), o.setSendSceneEnabled(false);
-      const n = o.getRenderConfig();
-      await g.broadcastScene(m, y, n), o.setSendSceneText("Send Scene"), o.setSendSceneEnabled(true);
     }, o.setConnectionState(null);
   };
   async function Ue() {
@@ -1886,7 +1866,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + n);
       return;
     }
-    Ie(), Ee(), Y(), O("cornell", false), requestAnimationFrame(z);
+    Ie(), Ae(), Y(), O("cornell", false), requestAnimationFrame(z);
   }
   Ue().catch(console.error);
 })();

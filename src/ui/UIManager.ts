@@ -22,7 +22,7 @@ export class UIManager {
 
   public btnHost: HTMLButtonElement;
   public btnWorker: HTMLButtonElement;
-  public btnSendScene: HTMLButtonElement;
+
   public statusDiv: HTMLDivElement;
 
   public statsDiv: HTMLDivElement;
@@ -40,7 +40,6 @@ export class UIManager {
 
   public onConnectHost: (() => void) | null = null;
   public onConnectWorker: (() => void) | null = null;
-  public onSendScene: (() => void) | null = null;
 
   constructor() {
     this.canvas = this.el<HTMLCanvasElement>(Config.ids.canvas);
@@ -65,7 +64,7 @@ export class UIManager {
 
     this.btnHost = this.el<HTMLButtonElement>(Config.ids.btnHost);
     this.btnWorker = this.el<HTMLButtonElement>(Config.ids.btnWorker);
-    this.btnSendScene = this.el<HTMLButtonElement>(Config.ids.btnSendScene);
+
     this.statusDiv = this.el<HTMLDivElement>(Config.ids.statusDiv);
 
     this.statsDiv = this.createStatsDiv();
@@ -151,7 +150,6 @@ export class UIManager {
 
     this.btnHost.addEventListener("click", () => this.onConnectHost?.());
     this.btnWorker.addEventListener("click", () => this.onConnectWorker?.());
-    this.btnSendScene.addEventListener("click", () => this.onSendScene?.());
   }
 
   // --- Public API for updates ---
@@ -179,17 +177,12 @@ export class UIManager {
 
       this.btnWorker.textContent = "Worker";
       this.btnWorker.disabled = true; // Can't be both
-
-      this.btnSendScene.style.display = "inline-block";
-      this.btnSendScene.disabled = true; // Wait for worker
     } else if (role === "worker") {
       this.btnHost.textContent = "Host";
       this.btnHost.disabled = true;
 
       this.btnWorker.textContent = "Disconnect";
       this.btnWorker.disabled = false;
-
-      this.btnSendScene.style.display = "none";
     } else {
       // Disconnected
       this.btnHost.textContent = "Host";
@@ -198,17 +191,8 @@ export class UIManager {
       this.btnWorker.textContent = "Worker";
       this.btnWorker.disabled = false;
 
-      this.btnSendScene.style.display = "none";
       this.statusDiv.textContent = "Offline";
     }
-  }
-
-  public setSendSceneEnabled(enabled: boolean) {
-    this.btnSendScene.disabled = !enabled;
-  }
-
-  public setSendSceneText(text: string) {
-    this.btnSendScene.textContent = text;
   }
 
   public setRecordingState(isRec: boolean, progressText?: string) {

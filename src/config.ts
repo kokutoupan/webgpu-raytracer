@@ -39,7 +39,7 @@ export const Config = {
     // Network UI
     btnHost: "btn-host",
     btnWorker: "btn-worker",
-    btnSendScene: "btn-send-scene",
+
     statusDiv: "status",
   },
 };

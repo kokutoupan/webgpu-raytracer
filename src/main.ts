@@ -325,7 +325,7 @@ signaling.onWorkerReady = (id: string) => {
 
 signaling.onWorkerJoined = (id) => {
   ui.setStatus(`Worker Joined: ${id}`);
-  ui.setSendSceneEnabled(true);
+
   workerStatus.set(id, "idle");
 
   if (currentRole === "host" && jobQueue.length > 0) {
@@ -530,21 +530,6 @@ const bindEvents = () => {
       currentRole = "worker";
       ui.setConnectionState("worker");
     }
-  };
-
-  ui.onSendScene = async () => {
-    if (!currentFileData || !currentFileType) {
-      alert("No scene loaded!");
-      return;
-    }
-    ui.setSendSceneText("Sending...");
-    ui.setSendSceneEnabled(false);
-
-    const config = ui.getRenderConfig();
-    await signaling.broadcastScene(currentFileData, currentFileType, config);
-
-    ui.setSendSceneText("Send Scene");
-    ui.setSendSceneEnabled(true);
   };
 
   // Initial State
