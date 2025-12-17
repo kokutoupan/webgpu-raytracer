@@ -11,7 +11,9 @@ export class SignalingClient {
   // Callbacks
   public onStatusChange: ((status: string) => void) | null = null;
   public onWorkerJoined: ((id: string) => void) | null = null;
+  public onWorkerLeft: ((id: string) => void) | null = null;
   public onHostConnected: (() => void) | null = null;
+  public onWorkerReady: ((id: string) => void) | null = null;
 
   public onSceneReceived:
     | ((data: ArrayBuffer | string, config: RenderConfig) => void)
@@ -122,7 +124,17 @@ export class SignalingClient {
           this.onRenderResult?.(chunks, startFrame, msg.workerId);
         };
 
+        client.onWorkerReady = () => {
+          this.onWorkerReady?.(msg.workerId);
+        };
+
         await client.startAsHost();
+        break;
+      case "worker_left":
+        console.log(`Worker left: ${msg.workerId}`);
+        this.workers.get(msg.workerId)?.close();
+        this.workers.delete(msg.workerId);
+        this.onWorkerLeft?.(msg.workerId);
         break;
       case "answer":
         if (msg.fromId)
@@ -135,6 +147,16 @@ export class SignalingClient {
       case "host_exists":
         alert("Host already exists!");
         break;
+      case "WORKER_READY":
+        if (msg.workerId) this.onWorkerReady?.(msg.workerId);
+        break;
+    }
+  }
+
+  public async sendWorkerReady() {
+    // this.sendSignal({ type: "WORKER_READY" }); // Old WS way
+    if (this.hostClient) {
+      this.hostClient.sendWorkerReady();
     }
   }
 
@@ -187,7 +209,17 @@ export class SignalingClient {
     await Promise.all(promises);
   }
 
-  // ...
+  public async sendSceneToWorker(
+    targetId: string,
+    fileData: ArrayBuffer | string,
+    fileType: "obj" | "glb",
+    config: Omit<RenderConfig, "fileType">
+  ) {
+    const client = this.workers.get(targetId);
+    if (client) {
+      await client.sendScene(fileData, fileType, config);
+    }
+  }
 
   public async sendRenderRequest(
     targetId: string,

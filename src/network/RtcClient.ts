@@ -37,6 +37,7 @@ export class RtcClient {
     null;
   public onDataChannelOpen: (() => void) | null = null;
   public onAckReceived: ((receivedBytes: number) => void) | null = null;
+  public onWorkerReady: (() => void) | null = null;
 
   constructor(remoteId: string, sendSignal: (msg: SignalingMessage) => void) {
     this.remoteId = remoteId;
@@ -231,6 +232,9 @@ export class RtcClient {
       };
       this.receiveBuffer = new Uint8Array(msg.totalBytes);
       this.receivedBytes = 0;
+    } else if (msg.type === "WORKER_READY") {
+      console.log(`[RTC] Worker Ready Signal Received`);
+      this.onWorkerReady?.();
     }
   }
 
@@ -297,6 +301,10 @@ export class RtcClient {
       config,
     };
     this.sendData(msg);
+  }
+
+  public sendWorkerReady() {
+    this.sendData({ type: "WORKER_READY" });
   }
 
   public close() {

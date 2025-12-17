@@ -21,7 +21,8 @@ export type SignalingMessage =
       candidate: RTCIceCandidateInit;
       targetId: string;
       fromId?: string;
-    };
+    }
+  | { type: "WORKER_READY"; workerId?: string }; // Sent by worker when scene is fully loaded
 
 // レンダリング設定（Res + Recの内容）
 export type RenderConfig = {
@@ -77,4 +78,5 @@ export type DataChannelMessage =
         size: number;
         decoderConfig?: VideoDecoderConfig | null;
       }[];
-    };
+    }
+  | { type: "WORKER_READY" };

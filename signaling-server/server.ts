@@ -48,16 +48,25 @@ wss.on("connection", (ws: ExtWebSocket) => {
     switch (data.type) {
       case "register_host": {
         console.log(`Host registered: ${ws.id}`);
-        // hostは絶対に単一でありとりあえずは上書きできない
-        if (hostSocket != null) {
-          sendTo(ws, { type: "host_exists" });
-          break;
+        // Allow overwriting host for development ease / reconnection
+        if (hostSocket != null && hostSocket.readyState === WebSocket.OPEN) {
+          console.log("Replacing existing host");
+          hostSocket.close();
         }
+
         hostSocket = ws;
         ws.role = "host";
 
-        // 既存のWorkerがいれば通知することも可能
-        // sendTo(ws, { type: 'worker_list', workers: Array.from(workers.keys()) });
+        // Notify Host of existing workers
+        console.log(`Notifying Host of ${workers.size} existing workers.`);
+        for (const [workerId, workerWs] of workers) {
+          if (workerWs.readyState === WebSocket.OPEN) {
+            sendTo(ws, {
+              type: "worker_joined",
+              workerId: workerId,
+            });
+          }
+        }
         break;
       }
 
@@ -77,14 +86,14 @@ wss.on("connection", (ws: ExtWebSocket) => {
       }
 
       // WebRTC シグナリング (転送処理)
-      case 'offer':
-      case 'answer':
-      case 'candidate': {
+      case "offer":
+      case "answer":
+      case "candidate": {
         const targetId = data.targetId;
         let targetWs: ExtWebSocket | undefined;
 
         // 【修正】 'HOST' という指定、または HostのIDと一致する場合に Host を対象にする
-        if (targetId === 'HOST' || (hostSocket && targetId === hostSocket.id)) {
+        if (targetId === "HOST" || (hostSocket && targetId === hostSocket.id)) {
           targetWs = hostSocket || undefined;
         } else {
           targetWs = workers.get(targetId);
