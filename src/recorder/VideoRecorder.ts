@@ -1,4 +1,3 @@
-import * as WebMMuxer from "webm-muxer";
 import { WebGPURenderer } from "../renderer";
 import { WorldBridge } from "../world-bridge";
 
@@ -29,14 +28,15 @@ export class VideoRecorder {
   ) {
     if (this.isRecording) return;
     this.isRecording = true;
+    const { Muxer, ArrayBufferTarget } = await import("webm-muxer");
 
     const totalFrames = Math.ceil(config.fps * config.duration);
     console.log(
       `Starting recording: ${totalFrames} frames @ ${config.fps}fps (VP9)`
     );
 
-    const muxer = new WebMMuxer.Muxer({
-      target: new WebMMuxer.ArrayBufferTarget(),
+    const muxer = new Muxer({
+      target: new ArrayBufferTarget(),
       video: {
         codec: "V_VP9",
         width: this.canvas.width,

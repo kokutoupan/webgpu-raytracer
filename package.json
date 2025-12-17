@@ -9,12 +9,12 @@
     "preview": "vite preview"
   },
   "devDependencies": {
-    "wasm-pack": "^0.13.0",
     "@webgpu/types": "^0.1.67",
     "typescript": "~5.9.3",
     "vite": "^7.2.4",
     "vite-plugin-top-level-await": "^1.6.0",
-    "vite-plugin-wasm": "^3.5.0"
+    "vite-plugin-wasm": "^3.5.0",
+    "wasm-pack": "^0.13.0"
   },
   "dependencies": {
     "webm-muxer": "^5.1.4"
@@ -22,7 +22,8 @@
   "pnpm": {
     "ignoredBuiltDependencies": [
       "@swc/core",
-      "esbuild"
+      "esbuild",
+      "wasm-pack"
     ]
   }
 }
