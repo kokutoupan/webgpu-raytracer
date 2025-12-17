@@ -30,13 +30,35 @@ const workers = new Map<string, ExtWebSocket>();
 
 // --- メインロジック ---
 
-wss.on("connection", (ws: ExtWebSocket) => {
+const MAX_PAYLOAD = 64 * 1024; // 64KB
+const SECRET = process.env.VITE_SIGNALING_SECRET || "secretpassword";
+
+wss.on("connection", (ws: ExtWebSocket, req) => {
+  // Authentication
+  const url = new URL(req.url || "", `http://${req.headers.host}`);
+  const token = url.searchParams.get("token");
+
+  if (SECRET && token !== SECRET) {
+    console.log(
+      `Connection rejected: Invalid token from ${req.socket.remoteAddress}`
+    );
+    ws.close(1008, "Invalid Token");
+    return;
+  }
+
   // 簡易ID生成 (ランダム文字列)
   ws.id = Math.random().toString(36).substring(2, 9);
 
   console.log(`New connection: ${ws.id}`);
 
-  ws.on("message", (message: string) => {
+  ws.on("message", (message: Buffer | string) => {
+    // Size Limit
+    if (message.length > MAX_PAYLOAD) {
+      console.warn(`Message too large from ${ws.id}: ${message.length} bytes`);
+      ws.close(1009, "Message too large");
+      return;
+    }
+
     let data: SignalingMessage;
     try {
       data = JSON.parse(message.toString()) as SignalingMessage;

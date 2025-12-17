@@ -33,7 +33,8 @@ export class SignalingClient {
     this.myRole = role;
     this.onStatusChange?.(`Connecting as ${role.toUpperCase()}...`);
 
-    this.ws = new WebSocket(Config.signalingServerUrl);
+    const token = import.meta.env.VITE_SIGNALING_SECRET || "secretpassword";
+    this.ws = new WebSocket(`${Config.signalingServerUrl}?token=${token}`);
 
     this.ws.onopen = () => {
       console.log("WS Connected");

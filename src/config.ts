@@ -7,9 +7,12 @@ export const Config = {
   defaultUpdateInterval: 4,
 
   // WebRTC / Network
-  signalingServerUrl: "ws://localhost:8080",
+  signalingServerUrl:
+    import.meta.env.VITE_SIGNALING_SERVER_URL || "ws://localhost:8080",
   rtcConfig: {
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    iceServers: import.meta.env.VITE_ICE_SERVERS
+      ? JSON.parse(import.meta.env.VITE_ICE_SERVERS)
+      : [{ urls: "stun:stun.l.google.com:19302" }],
   } as RTCConfiguration,
 
   // DOM Layout IDs

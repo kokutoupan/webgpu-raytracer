@@ -239,9 +239,21 @@ export class RtcClient {
   }
 
   private handleBinaryChunk(chunk: ArrayBuffer) {
-    const data = new Uint8Array(chunk);
-    this.receiveBuffer.set(data, this.receivedBytes);
-    this.receivedBytes += data.byteLength;
+    try {
+      const data = new Uint8Array(chunk);
+      if (
+        this.receivedBytes + data.byteLength >
+        this.receiveBuffer.byteLength
+      ) {
+        console.error("[RTC] Receive Buffer Overflow!");
+        return;
+      }
+      this.receiveBuffer.set(data, this.receivedBytes);
+      this.receivedBytes += data.byteLength;
+    } catch (e) {
+      console.error("[RTC] Error handling binary chunk", e);
+      return;
+    }
 
     if (this.sceneMeta) {
       if (this.receivedBytes >= this.sceneMeta.totalBytes) {

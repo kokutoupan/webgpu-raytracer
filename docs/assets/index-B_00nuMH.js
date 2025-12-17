@@ -879,7 +879,7 @@ class jn {
     this.world && console.log(`Scene Stats: V=${this.vertices.length / 4}, Tri=${this.indices.length / 3}, BLAS=${this.blas.length / 8}, TLAS=${this.tlas.length / 8}`);
   }
 }
-const y = { defaultWidth: 720, defaultHeight: 480, defaultDepth: 10, defaultSPP: 1, signalingServerUrl: "ws://localhost:8080", ids: { canvas: "gpu-canvas", renderBtn: "render-btn", sceneSelect: "scene-select", resWidth: "res-width", resHeight: "res-height", objFile: "obj-file", maxDepth: "max-depth", sppFrame: "spp-frame", recompileBtn: "recompile-btn", updateInterval: "update-interval", animSelect: "anim-select", recordBtn: "record-btn", recFps: "rec-fps", recDuration: "rec-duration", recSpp: "rec-spp", recBatch: "rec-batch", btnHost: "btn-host", btnWorker: "btn-worker", btnSendScene: "btn-send-scene", statusDiv: "status" } };
+const y = { defaultWidth: 720, defaultHeight: 480, defaultDepth: 10, defaultSPP: 1, signalingServerUrl: "ws://localhost:8080", rtcConfig: { iceServers: JSON.parse('[{"urls": "stun:stun.l.google.com:19302"}]') }, ids: { canvas: "gpu-canvas", renderBtn: "render-btn", sceneSelect: "scene-select", resWidth: "res-width", resHeight: "res-height", objFile: "obj-file", maxDepth: "max-depth", sppFrame: "spp-frame", recompileBtn: "recompile-btn", updateInterval: "update-interval", animSelect: "anim-select", recordBtn: "record-btn", recFps: "rec-fps", recDuration: "rec-duration", recSpp: "rec-spp", recBatch: "rec-batch", btnHost: "btn-host", btnWorker: "btn-worker", btnSendScene: "btn-send-scene", statusDiv: "status" } };
 class Kn {
   constructor() {
     __publicField(this, "canvas");
@@ -1738,22 +1738,32 @@ class Qt {
   }
   handleBinaryChunk(e) {
     var _a, _b;
-    const n = new Uint8Array(e);
-    if (this.receiveBuffer.set(n, this.receivedBytes), this.receivedBytes += n.byteLength, this.sceneMeta) {
+    try {
+      const n = new Uint8Array(e);
+      if (this.receivedBytes + n.byteLength > this.receiveBuffer.byteLength) {
+        console.error("[RTC] Receive Buffer Overflow!");
+        return;
+      }
+      this.receiveBuffer.set(n, this.receivedBytes), this.receivedBytes += n.byteLength;
+    } catch (n) {
+      console.error("[RTC] Error handling binary chunk", n);
+      return;
+    }
+    if (this.sceneMeta) {
       if (this.receivedBytes >= this.sceneMeta.totalBytes) {
         console.log("[RTC] Scene Download Complete!");
-        let r;
-        this.sceneMeta.config.fileType === "obj" ? r = new TextDecoder().decode(this.receiveBuffer) : r = this.receiveBuffer.buffer, (_a = this.onSceneReceived) == null ? void 0 : _a.call(this, r, this.sceneMeta.config), this.sceneMeta = null;
+        let n;
+        this.sceneMeta.config.fileType === "obj" ? n = new TextDecoder().decode(this.receiveBuffer) : n = this.receiveBuffer.buffer, (_a = this.onSceneReceived) == null ? void 0 : _a.call(this, n, this.sceneMeta.config), this.sceneMeta = null;
       }
     } else if (this.resultMeta && this.receivedBytes >= this.resultMeta.totalBytes) {
       console.log("[RTC] Render Result Complete!");
-      const r = [];
-      let s = 0;
-      for (const a of this.resultMeta.chunksMeta) {
-        const o = this.receiveBuffer.slice(s, s + a.size);
-        r.push({ type: a.type, timestamp: a.timestamp, duration: a.duration, data: o.buffer, decoderConfig: a.decoderConfig }), s += a.size;
+      const n = [];
+      let r = 0;
+      for (const s of this.resultMeta.chunksMeta) {
+        const a = this.receiveBuffer.slice(r, r + s.size);
+        n.push({ type: s.type, timestamp: s.timestamp, duration: s.duration, data: a.buffer, decoderConfig: s.decoderConfig }), r += s.size;
       }
-      (_b = this.onRenderResult) == null ? void 0 : _b.call(this, r, this.resultMeta.startFrame), this.resultMeta = null;
+      (_b = this.onRenderResult) == null ? void 0 : _b.call(this, n, this.resultMeta.startFrame), this.resultMeta = null;
     }
   }
   sendData(e) {
@@ -1792,16 +1802,19 @@ class li {
   }
   connect(e) {
     var _a;
-    this.ws || (this.myRole = e, (_a = this.onStatusChange) == null ? void 0 : _a.call(this, `Connecting as ${e.toUpperCase()}...`), this.ws = new WebSocket(y.signalingServerUrl), this.ws.onopen = () => {
+    if (this.ws) return;
+    this.myRole = e, (_a = this.onStatusChange) == null ? void 0 : _a.call(this, `Connecting as ${e.toUpperCase()}...`);
+    const n = "secretpassword";
+    this.ws = new WebSocket(`${y.signalingServerUrl}?token=${n}`), this.ws.onopen = () => {
       var _a2;
       console.log("WS Connected"), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, `Waiting for Peer (${e.toUpperCase()})`), this.sendSignal({ type: e === "host" ? "register_host" : "register_worker" });
-    }, this.ws.onmessage = (n) => {
-      const r = JSON.parse(n.data);
-      this.handleMessage(r);
+    }, this.ws.onmessage = (r) => {
+      const s = JSON.parse(r.data);
+      this.handleMessage(s);
     }, this.ws.onclose = () => {
       var _a2;
       (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Disconnected"), this.ws = null;
-    });
+    };
   }
   disconnect() {
     var _a;
