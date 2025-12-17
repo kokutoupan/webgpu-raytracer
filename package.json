@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "cd rust-shader-tools && wasm-pack build --target web && cd .. && tsc && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
+    "wasm-pack": "^0.13.0",
     "@webgpu/types": "^0.1.67",
     "typescript": "~5.9.3",
     "vite": "^7.2.4",
