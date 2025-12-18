@@ -209,6 +209,7 @@ renderWorker.onmessage = async (e) => {
     current,
     total,
     stage,
+    buffer,
   } = e.data;
 
   switch (type) {
@@ -253,14 +254,25 @@ renderWorker.onmessage = async (e) => {
 
     case "record-complete":
       ui.setRecordingState(false);
-      // isRendering = true;
-      // ui.updateRenderButton(true);
-      // renderWorker.postMessage({ type: "start-render" }); // Disabled by user
 
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `raytrace_${Date.now()}.webm`;
-      a.click();
+      if (buffer) {
+        const blob = new Blob([buffer], { type: "video/webm" });
+        const downloadUrl = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = `raytrace_${Date.now()}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      } else if (url) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `raytrace_${Date.now()}.webm`;
+        a.click();
+      }
       break;
 
     case "record-result-chunks":

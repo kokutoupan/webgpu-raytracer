@@ -74,10 +74,7 @@ export class WebGPURenderer {
 
     // Uniform Buffer: Camera(96) + Frame(4) + BLAS_Idx(4) + Pad(8) = 112
     // Aligned to 16 bytes.
-    this.sceneUniformBuffer = this.device.createBuffer({
-      size: 128, // Round up to be safe
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    this.ensureSceneUniformBuffer();
 
     this.sampler = this.device.createSampler({
       magFilter: "linear",
@@ -110,6 +107,14 @@ export class WebGPURenderer {
     );
     this.textureView = this.defaultTexture.createView({
       dimension: "2d-array",
+    });
+  }
+
+  ensureSceneUniformBuffer() {
+    if (this.sceneUniformBuffer) return;
+    this.sceneUniformBuffer = this.device.createBuffer({
+      size: 128,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
 
@@ -461,5 +466,30 @@ export class WebGPURenderer {
         depthOrArrayLayers: 1,
       }
     );
+  }
+
+  dispose() {
+    this.renderTarget?.destroy();
+    this.accumulateBuffer?.destroy();
+    this.sceneUniformBuffer?.destroy();
+    this.geometryBuffer?.destroy();
+    this.nodesBuffer?.destroy();
+    this.indexBuffer?.destroy();
+    this.attrBuffer?.destroy();
+    this.instanceBuffer?.destroy();
+    this.texture?.destroy();
+
+    // Clear references to force recreation
+    (this.renderTarget as any) = undefined;
+    (this.accumulateBuffer as any) = undefined;
+    (this.sceneUniformBuffer as any) = undefined;
+    (this.geometryBuffer as any) = undefined;
+    (this.nodesBuffer as any) = undefined;
+    (this.indexBuffer as any) = undefined;
+    (this.attrBuffer as any) = undefined;
+    (this.instanceBuffer as any) = undefined;
+    (this.texture as any) = undefined;
+
+    console.log("Renderer disposed");
   }
 }

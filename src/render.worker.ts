@@ -14,6 +14,9 @@ let frameCount = 0;
 let totalFrameCount = 0;
 let frameTimer = 0;
 let lastTime = 0; // performance.now() is available in worker
+// ★追加: 二重実行防止用のロックフラグ
+let isProcessing = false;
+let needsRestoration = false;
 
 // Configuration
 let currentDepth = 10;
@@ -99,140 +102,160 @@ async function uploadSceneBuffers() {
   renderer.updateBuffer("instance", worldBridge.instances);
 }
 
-// --- Render Loop ---
-function startRenderLoop() {
-  if (isRendering) return; // Prevent double start
-  isRendering = true;
-  lastTime = performance.now();
-  renderFrame();
+// Resurrect resources after dispose()
+async function restoreRenderer() {
+  if (!renderer || !worldBridge) return;
+  postMessage({ type: "status", message: "Restoring Renderer..." });
+
+  // 1. Recreate Textures
+  await renderer.loadTexturesFromWorld(worldBridge);
+
+  // 2. Recreate Buffers & Accel Structs
+  await uploadSceneBuffers();
+
+  // 3. Screen Res (Target & Accumulator)
+  renderer.updateScreenSize(renderConfig.width, renderConfig.height);
+
+  // 4. Update Camera & Uniforms
+  renderer.ensureSceneUniformBuffer();
+  worldBridge.updateCamera(renderConfig.width, renderConfig.height);
+  renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+
+  // 5. BindGroup & Reset
+  renderer.recreateBindGroup();
+  renderer.resetAccumulation();
+
+  // Reset per-frame counters
+  frameCount = 0;
+  // totalFrameCount should persist or reset? Usually reset for visual consistency
+  totalFrameCount = 0;
+  frameTimer = 0;
 }
 
+// --- Render Loop ---
+// ループ開始関数
+function startRenderLoop() {
+  if (isRendering) return;
+  isRendering = true;
+  lastTime = performance.now();
+  // setTimeoutではなくrAFを使うことで、ブラウザの負荷状況に合わせる
+  self.requestAnimationFrame(renderFrame);
+}
+
+// ループ停止関数
 function stopRenderLoop() {
   isRendering = false;
+  // requestAnimationFrameは自動で止まるが、念のためフラグを下げる
+  isProcessing = false;
   if (animationId) {
-    self.clearTimeout(animationId);
+    self.cancelAnimationFrame(animationId); // clearTimeoutから変更
     animationId = null;
   }
 }
 
+// ★最重要: 修正されたレンダリングループ
 async function renderFrame() {
+  // 1. 基本的な実行条件チェック
   if (!isRendering || !renderer || !worldBridge || !canvas) return;
 
-  if (recorder && recorder.recording) {
-    // If recording, we don't use the standard RAF loop in the same way,
-    // or we let the recorder drive it. Ideally, we shouldn't mix them.
-    // If recorder handles the loop, we stop this one.
+  // 録画中はRecorder側がループを回すので、ここでは何もしない
+  if (recorder && recorder.recording) return;
+
+  // 2. 多重実行ガード (前のフレームが終わっていなければスキップ)
+  if (isProcessing) {
+    if (isRendering) self.requestAnimationFrame(renderFrame);
     return;
   }
+  isProcessing = true;
 
-  // CRITICAL: Check if we were stopped during the await
-  if (!isRendering) return;
+  try {
+    // --- 【重要】ここからコマンド発行終了まで await は禁止 (アトミック実行) ---
+    // 途中で await すると、その隙に onmessage (リサイズ等) が走り、
+    // テクスチャやバッファが破棄されてクラッシュの原因になります。
 
-  const start = performance.now();
-  // Prevent freezing the browser by waiting for the GPU
-  await renderer.device.queue.onSubmittedWorkDone();
+    // Update Logic
+    if (updateInterval > 0 && frameCount >= updateInterval) {
+      worldBridge.update(totalFrameCount / updateInterval / 60);
 
-  // Use setTimeout instead of requestAnimationFrame for better stability in Firefox
-  // requestAnimationFrame in workers can sometimes cause instabilities with heavy WebGPU usage
-  // Force throttle to approx 60fps to give browser composition time
+      let needsRebind = false;
+      needsRebind ||= renderer.updateCombinedBVH(
+        worldBridge.tlas,
+        worldBridge.blas
+      );
+      needsRebind ||= renderer.updateBuffer("instance", worldBridge.instances);
 
-  if (!worldBridge.hasWorld) return;
+      worldBridge.updateCamera(renderConfig.width, renderConfig.height);
+      renderer.updateSceneUniforms(worldBridge.cameraData, 0);
 
-  // Animation Update
-  if (updateInterval > 0 && frameCount >= updateInterval) {
-    worldBridge.update(totalFrameCount / updateInterval / 60);
-
-    let needsRebind = false;
-    needsRebind ||= renderer.updateCombinedBVH(
-      worldBridge.tlas,
-      worldBridge.blas
-    );
-    needsRebind ||= renderer.updateBuffer("instance", worldBridge.instances);
-
-    // Geometry might change if we support deformation later, but for now assuming rigid
-    // DISABLING to save massive memory bandwidth/GC
-    /*
-    needsRebind ||= renderer.updateCombinedGeometry(
-      worldBridge.vertices,
-      worldBridge.normals,
-      worldBridge.uvs
-    );
-    needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
-    needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
-    */
-
-    worldBridge.updateCamera(renderConfig.width, renderConfig.height);
-    renderer.updateSceneUniforms(worldBridge.cameraData, 0);
-
-    if (needsRebind) renderer.recreateBindGroup();
-    renderer.resetAccumulation();
-    frameCount = 0;
-  }
-
-  frameCount++;
-  totalFrameCount++;
-  frameTimer++;
-
-  // DOUBLE CHECK before issuing render command
-  if (isRendering) {
-    const width = renderConfig.width;
-    const height = renderConfig.height;
-    const tilesX = Math.ceil(width / TILE_SIZE);
-    const tilesY = Math.ceil(height / TILE_SIZE);
-
-    for (let ty = 0; ty < tilesY; ty++) {
-      for (let tx = 0; tx < tilesX; tx++) {
-        const offsetX = tx * TILE_SIZE;
-        const offsetY = ty * TILE_SIZE;
-        const cw = Math.min(TILE_SIZE, width - offsetX);
-        const ch = Math.min(TILE_SIZE, height - offsetY);
-
-        const encoder = renderer.device.createCommandEncoder();
-        renderer.encodeTileCommand(
-          encoder,
-          offsetX,
-          offsetY,
-          cw,
-          ch,
-          frameCount
-        );
-        renderer.device.queue.submit([encoder.finish()]);
-
-        await renderer.device.queue.onSubmittedWorkDone();
-
-        // Check stop signal mid-frame
-        if (!isRendering) return;
-      }
+      if (needsRebind) renderer.recreateBindGroup();
+      renderer.resetAccumulation();
+      frameCount = 0;
     }
 
-    // Final Copy
-    const finalEncoder = renderer.device.createCommandEncoder();
-    renderer.present(finalEncoder);
-    renderer.device.queue.submit([finalEncoder.finish()]);
-  }
-  // --- 計測終了 ---
-  const gpuTime = performance.now() - start;
+    frameCount++;
+    totalFrameCount++;
+    frameTimer++;
 
-  // ★ここが重要：GPU時間が危険域に達していないかチェック
-  if (gpuTime > 200) {
-    console.warn(`⚠️ GPU負荷が高すぎます: ${gpuTime.toFixed(2)}ms`);
-  } else {
-    // console.log(`GPU Time: ${gpuTime.toFixed(2)}ms`);
-  }
+    // Render Logic
+    if (isRendering) {
+      const width = renderConfig.width;
+      const height = renderConfig.height;
 
-  animationId = self.setTimeout(renderFrame, 16);
+      // タイルサイズは元の設定(1024等)でも、アトミック実行なら競合は起きない
+      // 安全のため256-512程度を推奨するが、ここではユーザー設定に従う
+      const tilesX = Math.ceil(width / TILE_SIZE);
+      const tilesY = Math.ceil(height / TILE_SIZE);
 
-  // Status Update
-  const now = performance.now();
-  if (now - lastTime >= 1000) {
-    const fps = (frameTimer * 1000) / (now - lastTime);
-    postMessage({
-      type: "stats",
-      fps: fps,
-      spp: frameCount,
-    });
-    frameTimer = 0;
-    lastTime = now;
+      for (let ty = 0; ty < tilesY; ty++) {
+        for (let tx = 0; tx < tilesX; tx++) {
+          const offsetX = tx * TILE_SIZE;
+          const offsetY = ty * TILE_SIZE;
+          const cw = Math.min(TILE_SIZE, width - offsetX);
+          const ch = Math.min(TILE_SIZE, height - offsetY);
+
+          const encoder = renderer.device.createCommandEncoder();
+          renderer.encodeTileCommand(
+            encoder,
+            offsetX,
+            offsetY,
+            cw,
+            ch,
+            frameCount
+          );
+          renderer.device.queue.submit([encoder.finish()]);
+        }
+      }
+
+      // Final Present
+      const finalEncoder = renderer.device.createCommandEncoder();
+      renderer.present(finalEncoder);
+      renderer.device.queue.submit([finalEncoder.finish()]);
+    }
+    // --- コマンド発行終了 (ここまでノンストップ) ---
+
+    // 3. GPU完了待機 (ここで初めて yield する)
+    // これにより、GPUキューの詰まり(TDR)を防ぎつつ、
+    // 待機中に届いたメッセージ(リサイズ操作等)は次のフレームで安全に反映される
+    await renderer.device.queue.onSubmittedWorkDone();
+
+    // Stats Logic
+    const now = performance.now();
+    if (now - lastTime >= 1000) {
+      const fps = (frameTimer * 1000) / (now - lastTime);
+      postMessage({ type: "stats", fps: fps, spp: frameCount });
+      frameTimer = 0;
+      lastTime = now;
+    }
+  } catch (err) {
+    console.error("Render Error:", err);
+    // エラー時は停止
+    isRendering = false;
+  } finally {
+    // 4. ロック解除と次フレーム予約
+    isProcessing = false;
+    if (isRendering) {
+      self.requestAnimationFrame(renderFrame);
+    }
   }
 }
 
@@ -287,6 +310,10 @@ self.onmessage = async (e) => {
       break;
 
     case "start-render":
+      if (needsRestoration) {
+        await restoreRenderer();
+        needsRestoration = false;
+      }
       if (!isRendering) startRenderLoop();
       break;
 
@@ -298,6 +325,11 @@ self.onmessage = async (e) => {
       // Payload: config, role ("host" | "worker")
       if (!recorder) return;
       stopRenderLoop(); // Stop RAF
+
+      if (needsRestoration) {
+        await restoreRenderer();
+        needsRestoration = false;
+      }
 
       try {
         if (payload.role === "worker") {
@@ -323,8 +355,10 @@ self.onmessage = async (e) => {
                 stage: "recording",
               });
             },
-            (url) => {
-              postMessage({ type: "record-complete", url });
+            (buffer) => {
+              (postMessage as any)({ type: "record-complete", buffer }, [
+                buffer,
+              ]);
             }
           );
         }
@@ -335,7 +369,10 @@ self.onmessage = async (e) => {
         });
       } finally {
         // Resume
-        // startRenderLoop(); // Auto-resume disabled by user request
+        if (renderer) renderer.dispose(); // Free huge VRAM
+        needsRestoration = true; // Mark as needing restore next time
+        // await restoreRenderer(); // No immediate restore
+        // startRenderLoop(); // No auto-resume
       }
       break;
   }

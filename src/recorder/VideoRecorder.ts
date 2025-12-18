@@ -25,7 +25,7 @@ export class VideoRecorder {
   public async record(
     config: { fps: number; duration: number; spp: number; batch: number },
     onProgress: (frame: number, total: number) => void,
-    onComplete: (blobUrl: string, blob?: Blob) => void
+    onComplete: (buffer: ArrayBuffer) => void
   ) {
     if (this.isRecording) return;
     this.isRecording = true;
@@ -36,12 +36,16 @@ export class VideoRecorder {
       `Starting recording: ${totalFrames} frames @ ${config.fps}fps (VP9)`
     );
 
+    // ★修正1: 解像度を偶数に強制する (VP9クラッシュ対策)
+    const width = this.canvas.width & ~1;
+    const height = this.canvas.height & ~1;
+
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
       video: {
         codec: "V_VP9",
-        width: this.canvas.width,
-        height: this.canvas.height,
+        width: width,
+        height: height,
         frameRate: config.fps,
       },
     });
@@ -53,8 +57,8 @@ export class VideoRecorder {
 
     videoEncoder.configure({
       codec: "vp09.00.10.08",
-      width: this.canvas.width,
-      height: this.canvas.height,
+      width: width,
+      height: height,
       bitrate: 12_000_000,
     });
 
@@ -70,11 +74,15 @@ export class VideoRecorder {
       await videoEncoder.flush();
       muxer.finalize();
 
+      // ★修正2: エンコーダーを明示的に閉じてVRAMを解放する
+      videoEncoder.close();
+
       const { buffer } = muxer.target;
-      const blob = new Blob([buffer], { type: "video/webm" });
-      const url = URL.createObjectURL(blob);
-      onComplete(url, blob);
+      onComplete(buffer);
     } catch (e) {
+      try {
+        videoEncoder.close();
+      } catch (e) {} // エラー時も閉じる
       console.error("Recording failed:", e);
       throw e;
     } finally {
@@ -162,6 +170,7 @@ export class VideoRecorder {
       const frame = new VideoFrame(this.canvas, {
         timestamp: (currentFrame * 1000000) / config.fps,
         duration: 1000000 / config.fps,
+        alpha: "discard",
       });
 
       encoder.encode(frame, { keyFrame: i % config.fps === 0 });
@@ -250,28 +259,23 @@ export class VideoRecorder {
             // await this.renderer.device.queue.onSubmittedWorkDone();
           }
         }
+
+        // Wait for batch to complete to prevent TDR
+        await this.renderer.device.queue.onSubmittedWorkDone();
+
+        samplesDone += batch;
+
+        if (samplesDone < totalSpp) {
+          // Yield for UI
+          await new Promise((r) => setTimeout(r, 16));
+        }
       }
 
-      // Present is only needed at the very end of frame, but here we are in SPP loop.
-      // Actually we don't need to present every SPP sample, just at the end of the frame?
-      // But the encoder needs the result in renderTarget.
-      // Present copies RenderTarget -> Canvas. This is only needed for the VideoFrame capture.
-      // So we should do present AFTER the while loop or after batch?
-      // VideoEncoder reads from 'this.canvas'.
-
-      samplesDone += batch;
+      // Final present to canvas for capture
+      const finalEncoder = this.renderer.device.createCommandEncoder();
+      this.renderer.present(finalEncoder);
+      this.renderer.device.queue.submit([finalEncoder.finish()]);
       await this.renderer.device.queue.onSubmittedWorkDone();
-
-      if (samplesDone < totalSpp) {
-        // Yield for UI
-        await new Promise((r) => setTimeout(r, 16));
-      }
     }
-
-    // Final present to canvas for capture
-    const finalEncoder = this.renderer.device.createCommandEncoder();
-    this.renderer.present(finalEncoder);
-    this.renderer.device.queue.submit([finalEncoder.finish()]);
-    await this.renderer.device.queue.onSubmittedWorkDone();
   }
 }
