@@ -20,7 +20,7 @@ let currentDepth = 10;
 let currentSPP = 1;
 let updateInterval = 4;
 let renderConfig = { width: 400, height: 400 };
-const TILE_SIZE = 512;
+const TILE_SIZE = 1024;
 
 // --- Initialization ---
 async function init(newCanvas: OffscreenCanvas, width: number, height: number) {
@@ -46,7 +46,6 @@ async function init(newCanvas: OffscreenCanvas, width: number, height: number) {
   }
 }
 
-// --- Loading Scene ---
 // --- Loading Scene ---
 async function loadScene(
   name: string,
@@ -151,6 +150,8 @@ async function renderFrame() {
     needsRebind ||= renderer.updateBuffer("instance", worldBridge.instances);
 
     // Geometry might change if we support deformation later, but for now assuming rigid
+    // DISABLING to save massive memory bandwidth/GC
+    /*
     needsRebind ||= renderer.updateCombinedGeometry(
       worldBridge.vertices,
       worldBridge.normals,
@@ -158,6 +159,7 @@ async function renderFrame() {
     );
     needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
     needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
+    */
 
     worldBridge.updateCamera(renderConfig.width, renderConfig.height);
     renderer.updateSceneUniforms(worldBridge.cameraData, 0);

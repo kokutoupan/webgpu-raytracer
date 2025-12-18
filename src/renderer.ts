@@ -28,6 +28,7 @@ export class WebGPURenderer {
 
   // Texture Support
   texture!: GPUTexture;
+  textureView!: GPUTextureView;
   defaultTexture!: GPUTexture;
   sampler!: GPUSampler;
 
@@ -37,6 +38,7 @@ export class WebGPURenderer {
   // Cached for updating
   private blasOffset = 0;
   private vertexCount = 0;
+  private uniformParams: Uint32Array | null = null;
 
   constructor(canvas: HTMLCanvasElement | OffscreenCanvas) {
     this.canvas = canvas;
@@ -87,6 +89,9 @@ export class WebGPURenderer {
 
     this.createDefaultTexture();
     this.texture = this.defaultTexture;
+    this.textureView = this.defaultTexture.createView({
+      dimension: "2d-array",
+    });
   }
 
   createDefaultTexture() {
@@ -103,6 +108,9 @@ export class WebGPURenderer {
       { bytesPerRow: 256, rowsPerImage: 1 },
       [1, 1]
     );
+    this.textureView = this.defaultTexture.createView({
+      dimension: "2d-array",
+    });
   }
 
   buildPipeline(depth: number, spp: number) {
@@ -198,6 +206,7 @@ export class WebGPURenderer {
         [1024, 1024]
       );
     }
+    this.textureView = this.texture.createView({ dimension: "2d-array" });
   }
 
   async createFallbackBitmap() {
@@ -224,6 +233,8 @@ export class WebGPURenderer {
     let newSize = Math.ceil(size * 1.5);
     newSize = (newSize + 3) & ~3;
     newSize = Math.max(newSize, 4);
+
+    console.log(`Creating buffer ${label} of size ${newSize}`);
 
     return this.device.createBuffer({
       label,
@@ -277,9 +288,9 @@ export class WebGPURenderer {
 
   // Merge V, N, UV -> Geometry
   updateCombinedGeometry(
-    v: Float32Array,
-    n: Float32Array,
-    uv: Float32Array
+    v: Float32Array<ArrayBuffer>,
+    n: Float32Array<ArrayBuffer>,
+    uv: Float32Array<ArrayBuffer>
   ): boolean {
     const totalBytes = v.byteLength + n.byteLength + uv.byteLength;
 
@@ -308,23 +319,19 @@ export class WebGPURenderer {
     // Note: Positions and Normals are assumed to be stride-4 input arrays (x,y,z,w)
     // UVs are assumed to be stride-2 input arrays (u,v)
 
-    const posCount = v.length;
-    const normCount = n.length;
-    const uvCount = uv.length;
+    // 新しいコード: 結合せず、オフセットを指定して直接書き込む
+    // 1. Positions (Offset 0)
+    this.device.queue.writeBuffer(this.geometryBuffer, 0, v);
 
-    const sizeFloats = posCount + normCount + uvCount;
-    const bufferData = new Float32Array(sizeFloats);
+    // 2. Normals (Offset = v.byteLength)
+    this.device.queue.writeBuffer(this.geometryBuffer, v.byteLength, n);
 
-    // 1. Fill Positions
-    bufferData.set(v, 0);
-
-    // 2. Fill Normals
-    bufferData.set(n, posCount);
-
-    // 3. Fill UVs
-    bufferData.set(uv, posCount + normCount);
-
-    this.device.queue.writeBuffer(this.geometryBuffer, 0, bufferData);
+    // 3. UVs (Offset = v + n)
+    this.device.queue.writeBuffer(
+      this.geometryBuffer,
+      v.byteLength + n.byteLength,
+      uv
+    );
     return needsRebind;
   }
 
@@ -398,7 +405,7 @@ export class WebGPURenderer {
 
         {
           binding: 8,
-          resource: this.texture.createView({ dimension: "2d-array" }),
+          resource: this.textureView,
         },
         { binding: 9, resource: this.sampler },
       ],
@@ -415,17 +422,23 @@ export class WebGPURenderer {
   ) {
     if (!this.bindGroup) return;
 
-    // 1. Uniform Update (Writes to buffer immediately)
-    const params = new Uint32Array([
-      frameCount,
-      this.blasOffset,
-      this.vertexCount,
-      offsetX,
-      offsetY,
-      0,
-      0,
-    ]);
-    this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, params);
+    // Cached params array to reduce GC
+    if (!this.uniformParams) {
+      this.uniformParams = new Uint32Array(7);
+    }
+    this.uniformParams[0] = frameCount;
+    this.uniformParams[1] = this.blasOffset;
+    this.uniformParams[2] = this.vertexCount;
+    this.uniformParams[3] = offsetX;
+    this.uniformParams[4] = offsetY;
+    this.uniformParams[5] = 0;
+    this.uniformParams[6] = 0;
+
+    this.device.queue.writeBuffer(
+      this.sceneUniformBuffer,
+      96,
+      this.uniformParams as any
+    );
 
     // 2. Compute Pass
     const dispatchX = Math.ceil(width / 8);
