@@ -25,7 +25,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const K = "modulepreload", X = function(s) {
     return "/webgpu-raytracer/" + s;
-  }, N = {}, z = function(e, t, n) {
+  }, N = {}, q = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let p = function(f) {
@@ -742,7 +742,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function ee(s) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-hoHDk6V5.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-HkP6ze7E.js", {
       name: s == null ? void 0 : s.name
     });
   }
@@ -763,6 +763,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "_textures", []);
       __publicField(this, "_animations", []);
       __publicField(this, "hasNewData", false);
+      __publicField(this, "hasNewGeometry", false);
       __publicField(this, "pendingUpdate", false);
       __publicField(this, "resolveSceneLoad", null);
       __publicField(this, "updateResolvers", []);
@@ -785,10 +786,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           console.log("Main: Worker Ready"), (_a = this.resolveReady) == null ? void 0 : _a.call(this);
           break;
         case "SCENE_LOADED":
-          this._vertices = t.vertices, this._normals = t.normals, this._uvs = t.uvs, this._indices = t.indices, this._attributes = t.attributes, this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, this._textureCount = t.textureCount, this._textures = t.textures || [], this._animations = t.animations || [], this.hasNewData = true, (_b = this.resolveSceneLoad) == null ? void 0 : _b.call(this);
+          this._vertices = t.vertices, this._normals = t.normals, this._uvs = t.uvs, this._indices = t.indices, this._attributes = t.attributes, this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, this._textureCount = t.textureCount, this._textures = t.textures || [], this._animations = t.animations || [], this.hasNewData = true, this.hasNewGeometry = true, (_b = this.resolveSceneLoad) == null ? void 0 : _b.call(this);
           break;
         case "UPDATE_RESULT":
-          this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, this._vertices = t.vertices, this._normals = t.normals, this._uvs = t.uvs, this._indices = t.indices, this._attributes = t.attributes, this.hasNewData = true, this.pendingUpdate = false, this.updateResolvers.forEach((n) => n()), this.updateResolvers = [];
+          this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, t.vertices && (this._vertices = t.vertices, this.hasNewGeometry = true), t.normals && (this._normals = t.normals), t.uvs && (this._uvs = t.uvs), t.indices && (this._indices = t.indices), t.attributes && (this._attributes = t.attributes), this.hasNewData = true, this.pendingUpdate = false, this.updateResolvers.forEach((n) => n()), this.updateResolvers = [];
           break;
       }
     }
@@ -1058,7 +1059,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: r, ArrayBufferTarget: i } = await z(async () => {
+      const { Muxer: r, ArrayBufferTarget: i } = await q(async () => {
         const { Muxer: p, ArrayBufferTarget: f } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: p,
@@ -1489,31 +1490,31 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   let m = false, b = null, k = null, _ = null, R = [], D = /* @__PURE__ */ new Map(), A = 0, U = 0, L = 0, S = null, v = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), M = false, E = null;
-  const O = 20, a = new ne(), h = new Z(a.canvas), l = new te(), I = new re(h, l, a.canvas), g = new ie();
-  let x = 0, $ = 0, T = 0, q = performance.now();
+  const O = 20, a = new ne(), h = new Z(a.canvas), l = new te(), P = new re(h, l, a.canvas), g = new ie();
+  let x = 0, $ = 0, T = 0, G = performance.now();
   const ae = () => {
     const s = parseInt(a.inputDepth.value, 10) || u.defaultDepth, e = parseInt(a.inputSPP.value, 10) || u.defaultSPP;
     h.buildPipeline(s, e);
   }, H = () => {
     const { width: s, height: e } = a.getRenderConfig();
     h.updateScreenSize(s, e), l.hasWorld && (l.updateCamera(s, e), h.updateSceneUniforms(l.cameraData, 0)), h.recreateBindGroup(), h.resetAccumulation(), x = 0, $ = 0;
-  }, P = async (s, e = true) => {
+  }, I = async (s, e = true) => {
     m = false, console.log(`Loading Scene: ${s}...`);
     let t, n;
     s === "viewer" && b && (k === "obj" ? t = b : k === "glb" && (n = new Uint8Array(b).slice(0))), await l.loadScene(s, t, n), l.printStats(), await h.loadTexturesFromWorld(l), await oe(), H(), a.updateAnimList(l.getAnimationList()), e && (m = true, a.updateRenderButton(true));
   }, oe = async () => {
     h.updateCombinedGeometry(l.vertices, l.normals, l.uvs), h.updateCombinedBVH(l.tlas, l.blas), h.updateBuffer("index", l.indices), h.updateBuffer("attr", l.attributes), h.updateBuffer("instance", l.instances), h.updateSceneUniforms(l.cameraData, 0);
   }, W = () => {
-    if (I.recording || (requestAnimationFrame(W), !m || !l.hasWorld)) return;
+    if (P.recording || (requestAnimationFrame(W), !m || !l.hasWorld)) return;
     let s = parseInt(a.inputUpdateInterval.value, 10) || 0;
     if (s > 0 && x >= s && l.update($ / (s || 1) / 60), l.hasNewData) {
       let t = false;
-      t || (t = h.updateCombinedBVH(l.tlas, l.blas)), t || (t = h.updateBuffer("instance", l.instances)), t || (t = h.updateCombinedGeometry(l.vertices, l.normals, l.uvs)), t || (t = h.updateBuffer("index", l.indices)), t || (t = h.updateBuffer("attr", l.attributes)), l.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(l.cameraData, 0), t && h.recreateBindGroup(), h.resetAccumulation(), x = 0, l.hasNewData = false;
+      t || (t = h.updateCombinedBVH(l.tlas, l.blas)), t || (t = h.updateBuffer("instance", l.instances)), l.hasNewGeometry && (t || (t = h.updateCombinedGeometry(l.vertices, l.normals, l.uvs)), t || (t = h.updateBuffer("index", l.indices)), t || (t = h.updateBuffer("attr", l.attributes)), l.hasNewGeometry = false), l.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(l.cameraData, 0), t && h.recreateBindGroup(), h.resetAccumulation(), x = 0, l.hasNewData = false;
     }
     x++, T++, $++, h.render(x);
     const e = performance.now();
-    e - q >= 1e3 && (a.updateStats(T, 1e3 / T, x), T = 0, q = e);
-  }, G = async (s) => {
+    e - G >= 1e3 && (a.updateStats(T, 1e3 / T, x), T = 0, G = e);
+  }, z = async (s) => {
     const e = a.sceneSelect.value, t = e !== "viewer";
     if (!t && (!b || !k)) return;
     const n = a.getRenderConfig(), r = t ? e : void 0, i = t ? "DUMMY" : b, o = t ? "obj" : k;
@@ -1530,7 +1531,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       fileType: "obj"
     }));
   }, ce = async () => {
-    const s = Array.from(D.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await z(async () => {
+    const s = Array.from(D.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await q(async () => {
       const { Muxer: d, ArrayBufferTarget: p } = await import("./webm-muxer-MLtUgOCn.js");
       return {
         Muxer: d,
@@ -1572,7 +1573,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     try {
       a.setRecordingState(true, `Remote: ${e} f`);
-      const r = await I.recordChunks(n, (i, o) => a.setRecordingState(true, `Remote: ${i}/${o}`));
+      const r = await P.recordChunks(n, (i, o) => a.setRecordingState(true, `Remote: ${i}/${o}`));
       console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await g.sendRenderResult(r, s), a.setRecordingState(false), a.setStatus("Idle");
     } catch (r) {
       console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
@@ -1594,7 +1595,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     console.log(`Worker ${s} is READY`), a.setStatus(`Worker ${s} Ready!`), v.set(s, "idle"), _ === "host" && R.length > 0 && V(s);
   };
   g.onWorkerJoined = (s) => {
-    a.setStatus(`Worker Joined: ${s}`), v.set(s, "idle"), _ === "host" && R.length > 0 && G(s);
+    a.setStatus(`Worker Joined: ${s}`), v.set(s, "idle"), _ === "host" && R.length > 0 && z(s);
   };
   g.onRenderRequest = async (s, e, t) => {
     if (console.log(`[Worker] Received Render Request: Frames ${s} - ${s + e}`), M) {
@@ -1611,20 +1612,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     console.log(`[Host] Received ${s.length} chunks for ${e} from ${t}`), D.set(e, s), A++, a.setStatus(`Distributed Progress: ${A} / ${U} jobs`), v.set(t, "idle"), C.delete(t), await V(t), A >= U && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
   };
   g.onSceneReceived = async (s, e) => {
-    console.log("Scene received successfully."), M = true, a.setRenderConfig(e), k = e.fileType, e.fileType, b = s, a.sceneSelect.value = e.sceneName || "viewer", await P(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), l.setAnimation(e.anim)), M = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), le();
+    console.log("Scene received successfully."), M = true, a.setRenderConfig(e), k = e.fileType, e.fileType, b = s, a.sceneSelect.value = e.sceneName || "viewer", await I(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), l.setAnimation(e.anim)), M = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), le();
   };
   const de = () => {
     a.onRenderStart = () => {
       m = true;
     }, a.onRenderStop = () => {
       m = false;
-    }, a.onSceneSelect = (s) => P(s, false), a.onResolutionChange = H, a.onRecompile = (s, e) => {
+    }, a.onSceneSelect = (s) => I(s, false), a.onResolutionChange = H, a.onRecompile = (s, e) => {
       m = false, h.buildPipeline(s, e), h.recreateBindGroup(), h.resetAccumulation(), x = 0, m = true;
     }, a.onFileSelect = async (s) => {
       var _a;
-      ((_a = s.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (b = await s.text(), k = "obj") : (b = await s.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", P("viewer", false);
+      ((_a = s.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (b = await s.text(), k = "obj") : (b = await s.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", I("viewer", false);
     }, a.onAnimSelect = (s) => l.setAnimation(s), a.onRecordStart = async () => {
-      if (!I.recording) if (_ === "host") {
+      if (!P.recording) if (_ === "host") {
         const s = g.getWorkerIds();
         if (S = a.getRenderConfig(), L = Math.ceil(S.fps * S.duration), !confirm(`Distribute recording? (Workers: ${s.length})
 Auto Scene Sync enabled.`)) return;
@@ -1636,12 +1637,12 @@ Auto Scene Sync enabled.`)) return;
             count: t
           });
         }
-        U = R.length, s.forEach((e) => v.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${U} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await G()) : console.log("No workers yet. Waiting...");
+        U = R.length, s.forEach((e) => v.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${U} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await z()) : console.log("No workers yet. Waiting...");
       } else {
         m = false, a.setRecordingState(true);
         const s = a.getRenderConfig();
         try {
-          await I.record(s, (e, t) => a.setRecordingState(true, `Rec: ${e}/${t} (${Math.round(e / t * 100)}%)`), (e) => {
+          await P.record(s, (e, t) => a.setRecordingState(true, `Rec: ${e}/${t} (${Math.round(e / t * 100)}%)`), (e) => {
             const t = document.createElement("a");
             t.href = e, t.download = `raytrace_${Date.now()}.webm`, t.click(), URL.revokeObjectURL(e);
           });
@@ -1664,7 +1665,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + s);
       return;
     }
-    de(), ae(), H(), P("cornell", false), requestAnimationFrame(W);
+    de(), ae(), H(), I("cornell", false), requestAnimationFrame(W);
   }
   ue().catch(console.error);
 })();

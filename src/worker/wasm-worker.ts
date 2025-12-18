@@ -85,26 +85,37 @@ const sendSceneData = () => {
   ] as any);
 };
 
-const sendUpdateResult = () => {
+const sendUpdateResult = (includeGeometry = true) => {
   if (!world) return;
-
-  // Everything that might change
-  // Note: If vertices/normals don't change, we might optimize this later
-  // For now, assume full update for simplicity or check what changed?
-  // Usually only TLAS/BLAS/Instances/Camera change in simple animation.
-  // Vertex animation would change geometry.
 
   const tlas = getF32(world.tlas_ptr(), world.tlas_len());
   const blas = getF32(world.blas_ptr(), world.blas_len());
   const instances = getF32(world.instances_ptr(), world.instances_len());
   const camera = getF32(world.camera_ptr(), 24);
 
-  // Some geometry might be animated?
-  const vertices = getF32(world.vertices_ptr(), world.vertices_len());
-  const normals = getF32(world.normals_ptr(), world.normals_len());
-  const uvs = getF32(world.uvs_ptr(), world.uvs_len());
-  const indices = getU32(world.indices_ptr(), world.indices_len());
-  const attributes = getF32(world.attributes_ptr(), world.attributes_len());
+  let vertices, normals, uvs, indices, attributes;
+  const transfers: any[] = [
+    tlas.buffer,
+    blas.buffer,
+    instances.buffer,
+    camera.buffer,
+  ];
+
+  if (includeGeometry) {
+    vertices = getF32(world.vertices_ptr(), world.vertices_len());
+    normals = getF32(world.normals_ptr(), world.normals_len());
+    uvs = getF32(world.uvs_ptr(), world.uvs_len());
+    indices = getU32(world.indices_ptr(), world.indices_len());
+    attributes = getF32(world.attributes_ptr(), world.attributes_len());
+
+    transfers.push(
+      vertices.buffer,
+      normals.buffer,
+      uvs.buffer,
+      indices.buffer,
+      attributes.buffer
+    );
+  }
 
   const msg: MainMessage = {
     type: "UPDATE_RESULT",
@@ -119,17 +130,8 @@ const sendUpdateResult = () => {
     attributes,
   };
 
-  self.postMessage(msg, [
-    tlas.buffer,
-    blas.buffer,
-    instances.buffer,
-    camera.buffer,
-    vertices.buffer,
-    normals.buffer,
-    uvs.buffer,
-    indices.buffer,
-    attributes.buffer,
-  ] as any);
+  // Force cast to any because in Worker scope postMessage signature is different
+  (self as any).postMessage(msg, transfers);
 };
 
 self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
@@ -175,7 +177,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
     case "UPDATE_CAMERA":
       if (world) {
         world.update_camera(msg.width, msg.height);
-        sendUpdateResult(); // Send back new camera/instances
+        sendUpdateResult(false); // Only update camera/instances, keep geometry
       }
       break;
 

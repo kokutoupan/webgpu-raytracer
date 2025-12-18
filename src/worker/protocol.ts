@@ -34,10 +34,10 @@ export type MainMessage =
       blas: Float32Array;
       instances: Float32Array;
       camera: Float32Array;
-      vertices: Float32Array;
-      normals: Float32Array;
-      uvs: Float32Array;
-      indices: Uint32Array;
-      attributes: Float32Array; // Attributes might animate?
+      vertices?: Float32Array;
+      normals?: Float32Array;
+      uvs?: Float32Array;
+      indices?: Uint32Array;
+      attributes?: Float32Array; // Attributes might animate?
     }
   | { type: "TEXTURE_DATA"; index: number; data: Uint8Array };

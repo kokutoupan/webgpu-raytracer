@@ -19,6 +19,7 @@ export class WorldBridge {
   private _textures: Uint8Array[] = [];
   private _animations: string[] = [];
   public hasNewData = false;
+  public hasNewGeometry = false;
   public pendingUpdate = false;
 
   // Scene load promise
@@ -57,6 +58,7 @@ export class WorldBridge {
         this._textures = msg.textures || [];
         this._animations = msg.animations || [];
         this.hasNewData = true; // Ensure initial data is marked as new
+        this.hasNewGeometry = true;
         this.resolveSceneLoad?.();
         break;
       // ... (rest of update result)
@@ -66,11 +68,14 @@ export class WorldBridge {
         this._blas = msg.blas as any;
         this._instances = msg.instances as any;
         this._cameraData = msg.camera as any;
-        this._vertices = msg.vertices as any;
-        this._normals = msg.normals as any;
-        this._uvs = msg.uvs as any;
-        this._indices = msg.indices as any;
-        this._attributes = msg.attributes as any;
+        if (msg.vertices) {
+          this._vertices = msg.vertices as any;
+          this.hasNewGeometry = true;
+        }
+        if (msg.normals) this._normals = msg.normals as any;
+        if (msg.uvs) this._uvs = msg.uvs as any;
+        if (msg.indices) this._indices = msg.indices as any;
+        if (msg.attributes) this._attributes = msg.attributes as any;
         this.hasNewData = true;
         this.pendingUpdate = false;
         this.updateResolvers.forEach((r) => r());

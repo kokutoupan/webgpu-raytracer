@@ -125,13 +125,17 @@ const renderFrame = () => {
       worldBridge.blas
     );
     needsRebind ||= renderer.updateBuffer("instance", worldBridge.instances);
-    needsRebind ||= renderer.updateCombinedGeometry(
-      worldBridge.vertices,
-      worldBridge.normals,
-      worldBridge.uvs
-    );
-    needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
-    needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
+
+    if (worldBridge.hasNewGeometry) {
+      needsRebind ||= renderer.updateCombinedGeometry(
+        worldBridge.vertices,
+        worldBridge.normals,
+        worldBridge.uvs
+      );
+      needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
+      needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
+      worldBridge.hasNewGeometry = false;
+    }
 
     worldBridge.updateCamera(ui.canvas.width, ui.canvas.height);
     renderer.updateSceneUniforms(worldBridge.cameraData, 0);
