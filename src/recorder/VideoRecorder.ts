@@ -137,35 +137,48 @@ export class VideoRecorder {
     onProgress: (f: number, t: number) => void,
     startFrameOffset: number = 0
   ) {
+    // 1. Bootstrap: Update for first frame and wait for it
+    const startFrame = startFrameOffset;
+    this.worldBridge.update(startFrame / config.fps);
+    await this.worldBridge.waitForNextUpdate();
+
     for (let i = 0; i < totalFrames; i++) {
       onProgress(i, totalFrames);
 
       // Allow UI to breathe
       await new Promise((r) => setTimeout(r, 0));
 
-      const currentFrame = startFrameOffset + i;
-      const time = currentFrame / config.fps;
-      this.worldBridge.update(time);
-      await this.worldBridge.waitForNextUpdate();
-
-      // Re-upload Geometry/BVH as animation might have changed them
+      // 2. Upload buffers for CURRENT frame (data available from bootstrap or previous loop wait)
       await this.updateSceneBuffers();
 
-      // Render Frame
+      // 3. Kick off NEXT frame update asynchronously (overlap with rendering)
+      let nextUpdatePromise: Promise<void> | null = null;
+      if (i < totalFrames - 1) {
+        const nextFrame = startFrameOffset + i + 1;
+        this.worldBridge.update(nextFrame / config.fps);
+        nextUpdatePromise = this.worldBridge.waitForNextUpdate();
+      }
+
+      // 4. Render CURRENT frame
       await this.renderFrame(config.spp, config.batch);
 
-      // Encode
+      // 5. Encode
       if (encoder.encodeQueueSize > 5) {
         await encoder.flush();
       }
 
       const frame = new VideoFrame(this.canvas, {
-        timestamp: (currentFrame * 1000000) / config.fps,
+        timestamp: ((startFrameOffset + i) * 1000000) / config.fps,
         duration: 1000000 / config.fps,
       });
 
       encoder.encode(frame, { keyFrame: i % config.fps === 0 });
       frame.close();
+
+      // 6. Wait for NEXT frame data before entering next iteration
+      if (nextUpdatePromise) {
+        await nextUpdatePromise;
+      }
     }
   }
 
