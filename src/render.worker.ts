@@ -46,6 +46,7 @@ async function init(newCanvas: OffscreenCanvas, width: number, height: number) {
 }
 
 // --- Loading Scene ---
+// --- Loading Scene ---
 async function loadScene(
   name: string,
   objSource?: string,
@@ -53,8 +54,7 @@ async function loadScene(
 ) {
   if (!worldBridge || !renderer) return;
 
-  isRendering = false;
-  if (animationId) self.clearTimeout(animationId);
+  stopRenderLoop(); // Ensures isRendering = false and timer cleared
 
   postMessage({ type: "status", message: `Loading Scene: ${name}...` });
 
@@ -79,13 +79,14 @@ async function loadScene(
       animList: worldBridge.getAnimationList(),
     });
 
-    startRenderLoop();
+    // startRenderLoop(); // Auto-start disabled by user request
   } catch (e: any) {
     postMessage({ type: "error", message: "Load Failed: " + e.toString() });
   }
 }
 
 async function uploadSceneBuffers() {
+  // ... (unchanged)
   if (!renderer || !worldBridge) return;
   renderer.updateCombinedGeometry(
     worldBridge.vertices,
@@ -100,6 +101,7 @@ async function uploadSceneBuffers() {
 
 // --- Render Loop ---
 function startRenderLoop() {
+  if (isRendering) return; // Prevent double start
   isRendering = true;
   lastTime = performance.now();
   renderFrame();
@@ -123,12 +125,16 @@ async function renderFrame() {
     return;
   }
 
+  // CRITICAL: Check if we were stopped during the await
+  if (!isRendering) return;
+
+  const start = performance.now();
   // Prevent freezing the browser by waiting for the GPU
   await renderer.device.queue.onSubmittedWorkDone();
 
   // Use setTimeout instead of requestAnimationFrame for better stability in Firefox
   // requestAnimationFrame in workers can sometimes cause instabilities with heavy WebGPU usage
-  animationId = self.setTimeout(renderFrame, 0);
+  // Force throttle to approx 60fps to give browser composition time
 
   if (!worldBridge.hasWorld) return;
 
@@ -164,7 +170,22 @@ async function renderFrame() {
   totalFrameCount++;
   frameTimer++;
 
-  renderer.render(frameCount);
+  // DOUBLE CHECK before issuing render command
+  if (isRendering) {
+    renderer.render(frameCount);
+  }
+
+  // --- 計測終了 ---
+  const gpuTime = performance.now() - start;
+
+  // ★ここが重要：GPU時間が危険域に達していないかチェック
+  if (gpuTime > 200) {
+    console.warn(`⚠️ GPU負荷が高すぎます: ${gpuTime.toFixed(2)}ms`);
+  } else {
+    // console.log(`GPU Time: ${gpuTime.toFixed(2)}ms`);
+  }
+
+  animationId = self.setTimeout(renderFrame, 16);
 
   // Status Update
   const now = performance.now();
@@ -279,7 +300,7 @@ self.onmessage = async (e) => {
         });
       } finally {
         // Resume
-        startRenderLoop();
+        // startRenderLoop(); // Auto-resume disabled by user request
       }
       break;
   }

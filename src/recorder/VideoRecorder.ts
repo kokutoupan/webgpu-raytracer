@@ -209,7 +209,7 @@ export class VideoRecorder {
       samplesDone += batch;
       await this.renderer.device.queue.onSubmittedWorkDone();
       if (samplesDone < totalSpp) {
-        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 16));
       }
     }
   }

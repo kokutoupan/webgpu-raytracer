@@ -253,9 +253,9 @@ renderWorker.onmessage = async (e) => {
 
     case "record-complete":
       ui.setRecordingState(false);
-      isRendering = true;
-      ui.updateRenderButton(true);
-      renderWorker.postMessage({ type: "start-render" });
+      // isRendering = true;
+      // ui.updateRenderButton(true);
+      // renderWorker.postMessage({ type: "start-render" }); // Disabled by user
 
       const a = document.createElement("a");
       a.href = url;
@@ -315,8 +315,8 @@ renderWorker.addEventListener("message", async (e) => {
     ui.setRecordingState(false);
     ui.setStatus("Idle");
 
-    isRendering = true;
-    renderWorker.postMessage({ type: "start-render" });
+    // isRendering = true;
+    // renderWorker.postMessage({ type: "start-render" }); // Disabled
   }
 });
 
