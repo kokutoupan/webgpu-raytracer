@@ -5,12 +5,12 @@ export class VideoRecorder {
   private isRecording = false;
   private renderer: WebGPURenderer;
   private worldBridge: WorldBridge;
-  private canvas: HTMLCanvasElement;
+  private canvas: HTMLCanvasElement | OffscreenCanvas;
 
   constructor(
     renderer: WebGPURenderer,
     worldBridge: WorldBridge,
-    canvas: HTMLCanvasElement
+    canvas: HTMLCanvasElement | OffscreenCanvas
   ) {
     this.renderer = renderer;
     this.worldBridge = worldBridge;

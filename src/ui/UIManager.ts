@@ -35,6 +35,7 @@ export class UIManager {
   public onRecompile: ((depth: number, spp: number) => void) | null = null;
   public onFileSelect: ((file: File) => void) | null = null;
   public onAnimSelect: ((index: number) => void) | null = null;
+  public onUpdateIntervalChange: ((interval: number) => void) | null = null;
 
   public onRecordStart: (() => void) | null = null;
 
@@ -144,6 +145,11 @@ export class UIManager {
     this.animSelect.addEventListener("change", () => {
       const idx = parseInt(this.animSelect.value, 10);
       this.onAnimSelect?.(idx);
+    });
+
+    this.inputUpdateInterval.addEventListener("change", () => {
+      const val = parseInt(this.inputUpdateInterval.value, 10);
+      this.onUpdateIntervalChange?.(val);
     });
 
     this.btnRecord.addEventListener("click", () => this.onRecordStart?.());
