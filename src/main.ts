@@ -70,8 +70,10 @@ const loadScene = async (name: string, autoStart = true) => {
 
   if (name === "viewer" && currentFileData) {
     if (currentFileType === "obj") objSource = currentFileData as string;
-    else if (currentFileType === "glb")
-      glbData = new Uint8Array(currentFileData as ArrayBuffer);
+    else if (currentFileType === "glb") {
+      // SLICE to avoid detaching the original buffer, which is needed for distribution!
+      glbData = new Uint8Array(currentFileData as ArrayBuffer).slice(0);
+    }
   }
 
   await worldBridge.loadScene(name, objSource, glbData);
@@ -156,23 +158,29 @@ const renderFrame = () => {
 
 // --- Distributed Helpers ---
 const sendSceneHelper = async (workerId?: string) => {
-  if (!currentFileData || !currentFileType) return;
+  const currentScene = ui.sceneSelect.value;
+  const isProcedural = currentScene !== "viewer";
+
+  if (!isProcedural && (!currentFileData || !currentFileType)) return;
 
   const config = ui.getRenderConfig();
+  const sceneName = isProcedural ? currentScene : undefined;
+
+  // For procedural, we send dummy data but with sceneName in config
+  const fileData = isProcedural ? "DUMMY" : currentFileData!;
+  const fileType = isProcedural ? "obj" : currentFileType!;
+
+  // Inject sceneName
+  (config as any).sceneName = sceneName;
 
   if (workerId) {
     console.log(`Sending scene to specific worker: ${workerId}`);
     workerStatus.set(workerId, "loading");
-    await signaling.sendSceneToWorker(
-      workerId,
-      currentFileData,
-      currentFileType,
-      config
-    );
+    await signaling.sendSceneToWorker(workerId, fileData, fileType, config);
   } else {
     console.log(`Broadcasting scene to all workers...`);
     signaling.getWorkerIds().forEach((id) => workerStatus.set(id, "loading"));
-    await signaling.broadcastScene(currentFileData, currentFileType, config);
+    await signaling.broadcastScene(fileData, fileType, config);
   }
 };
 
@@ -386,8 +394,8 @@ signaling.onSceneReceived = async (data, config) => {
   if (config.fileType === "obj") currentFileData = data as string;
   else currentFileData = data as ArrayBuffer;
 
-  ui.sceneSelect.value = "viewer";
-  await loadScene("viewer", false);
+  ui.sceneSelect.value = config.sceneName || "viewer";
+  await loadScene(config.sceneName || "viewer", false);
 
   if (config.anim !== undefined) {
     ui.animSelect.value = config.anim.toString();

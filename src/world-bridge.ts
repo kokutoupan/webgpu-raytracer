@@ -73,6 +73,8 @@ export class WorldBridge {
         this._attributes = msg.attributes as any;
         this.hasNewData = true;
         this.pendingUpdate = false;
+        this.updateResolvers.forEach((r) => r());
+        this.updateResolvers = [];
         break;
     }
   }
@@ -108,6 +110,14 @@ export class WorldBridge {
         } as WorkerMessage,
         glbData ? [glbData.buffer] : []
       );
+    });
+  }
+
+  private updateResolvers: (() => void)[] = [];
+
+  waitForNextUpdate(): Promise<void> {
+    return new Promise((resolve) => {
+      this.updateResolvers.push(resolve);
     });
   }
 

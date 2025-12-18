@@ -146,6 +146,7 @@ export class VideoRecorder {
       const currentFrame = startFrameOffset + i;
       const time = currentFrame / config.fps;
       this.worldBridge.update(time);
+      await this.worldBridge.waitForNextUpdate();
 
       // Re-upload Geometry/BVH as animation might have changed them
       await this.updateSceneBuffers();
