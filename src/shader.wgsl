@@ -26,7 +26,8 @@ struct SceneUniforms {
     frame_count: u32,
     blas_base_idx: u32, // Start index of BLAS nodes in 'nodes' array
     vertex_count: u32,
-    pad2: u32
+    tile_offset_x: u32,
+    tile_offset_y: u32
 }
 
 struct TriangleAttributes {
@@ -374,8 +375,12 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(outputTex);
-    if id.x >= dims.x || id.y >= dims.y { return; }
-    let p_idx = id.y * dims.x + id.x;
+    // Apply Tile Offset
+    let px = id.x + scene.tile_offset_x;
+    let py = id.y + scene.tile_offset_y;
+
+    if px >= dims.x || py >= dims.y { return; }
+    let p_idx = py * dims.x + px;
     var rng = init_rng(p_idx, scene.frame_count);
 
     var col = vec3(0.);
@@ -385,8 +390,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let rd = scene.camera.lens_radius * random_in_unit_disk(&rng);
             off = scene.camera.u * rd.x + scene.camera.v * rd.y;
         }
-        let u = (f32(id.x) + rand_pcg(&rng)) / f32(dims.x);
-        let v = 1. - (f32(id.y) + rand_pcg(&rng)) / f32(dims.y);
+        let u = (f32(px) + rand_pcg(&rng)) / f32(dims.x);
+        let v = 1. - (f32(py) + rand_pcg(&rng)) / f32(dims.y);
         let d = scene.camera.lower_left_corner + u * scene.camera.horizontal + v * scene.camera.vertical - scene.camera.origin - off;
         col += ray_color(Ray(scene.camera.origin + off, d), &rng);
     }
@@ -398,5 +403,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     accumulateBuffer[p_idx] = new_acc;
 
     let out = sqrt(clamp(new_acc.rgb / new_acc.a, vec3(0.), vec3(1.)));
-    textureStore(outputTex, vec2<i32>(id.xy), vec4(out, 1.));
+    textureStore(outputTex, vec2<i32>(i32(px), i32(py)), vec4(out, 1.));
 }

@@ -405,23 +405,40 @@ export class WebGPURenderer {
     });
   }
 
-  render(frameCount: number) {
+  encodeTileCommand(
+    commandEncoder: GPUCommandEncoder,
+    offsetX: number,
+    offsetY: number,
+    width: number,
+    height: number,
+    frameCount: number
+  ) {
     if (!this.bindGroup) return;
 
-    // Update frame count
-    const frameData = new Uint32Array([frameCount]);
-    this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, frameData);
+    // 1. Uniform Update (Writes to buffer immediately)
+    const params = new Uint32Array([
+      frameCount,
+      this.blasOffset,
+      this.vertexCount,
+      offsetX,
+      offsetY,
+      0,
+      0,
+    ]);
+    this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, params);
 
-    const dispatchX = Math.ceil(this.canvas.width / 8);
-    const dispatchY = Math.ceil(this.canvas.height / 8);
+    // 2. Compute Pass
+    const dispatchX = Math.ceil(width / 8);
+    const dispatchY = Math.ceil(height / 8);
 
-    const commandEncoder = this.device.createCommandEncoder();
     const pass = commandEncoder.beginComputePass();
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);
     pass.dispatchWorkgroups(dispatchX, dispatchY);
     pass.end();
+  }
 
+  present(commandEncoder: GPUCommandEncoder) {
     commandEncoder.copyTextureToTexture(
       { texture: this.renderTarget },
       { texture: this.context.getCurrentTexture() },
@@ -431,7 +448,5 @@ export class WebGPURenderer {
         depthOrArrayLayers: 1,
       }
     );
-
-    this.device.queue.submit([commandEncoder.finish()]);
   }
 }

@@ -20,6 +20,7 @@ let currentDepth = 10;
 let currentSPP = 1;
 let updateInterval = 4;
 let renderConfig = { width: 400, height: 400 };
+const TILE_SIZE = 512;
 
 // --- Initialization ---
 async function init(newCanvas: OffscreenCanvas, width: number, height: number) {
@@ -172,9 +173,41 @@ async function renderFrame() {
 
   // DOUBLE CHECK before issuing render command
   if (isRendering) {
-    renderer.render(frameCount);
-  }
+    const width = renderConfig.width;
+    const height = renderConfig.height;
+    const tilesX = Math.ceil(width / TILE_SIZE);
+    const tilesY = Math.ceil(height / TILE_SIZE);
 
+    for (let ty = 0; ty < tilesY; ty++) {
+      for (let tx = 0; tx < tilesX; tx++) {
+        const offsetX = tx * TILE_SIZE;
+        const offsetY = ty * TILE_SIZE;
+        const cw = Math.min(TILE_SIZE, width - offsetX);
+        const ch = Math.min(TILE_SIZE, height - offsetY);
+
+        const encoder = renderer.device.createCommandEncoder();
+        renderer.encodeTileCommand(
+          encoder,
+          offsetX,
+          offsetY,
+          cw,
+          ch,
+          frameCount
+        );
+        renderer.device.queue.submit([encoder.finish()]);
+
+        await renderer.device.queue.onSubmittedWorkDone();
+
+        // Check stop signal mid-frame
+        if (!isRendering) return;
+      }
+    }
+
+    // Final Copy
+    const finalEncoder = renderer.device.createCommandEncoder();
+    renderer.present(finalEncoder);
+    renderer.device.queue.submit([finalEncoder.finish()]);
+  }
   // --- 計測終了 ---
   const gpuTime = performance.now() - start;
 

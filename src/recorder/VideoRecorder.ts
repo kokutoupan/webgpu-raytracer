@@ -6,6 +6,7 @@ export class VideoRecorder {
   private renderer: WebGPURenderer;
   private worldBridge: WorldBridge;
   private canvas: HTMLCanvasElement | OffscreenCanvas;
+  private TILE_SIZE = 512;
 
   constructor(
     renderer: WebGPURenderer,
@@ -203,14 +204,73 @@ export class VideoRecorder {
     let samplesDone = 0;
     while (samplesDone < totalSpp) {
       const batch = Math.min(batchSize, totalSpp - samplesDone);
+
+      const width = this.canvas.width;
+      const height = this.canvas.height;
+
+      // We process a batch of samples. For each sample, we do a full tiled pass.
+      // Or optimization: encode N samples inside the tile loop?
+      // Since uniform logic is per-dispatch (or per-tile in our case),
+      // strict replication of old behavior means loop K outside, allowing uniforms update.
+      // But tiled offset is also uniform.
+
+      // Correct approach:
+      // For each sample index k:
+      //   For each tile:
+      //     Update Uniform (Frame + TileOffset)
+      //     Dispatch
+      //   Wait?
+      const TILE_SIZE = this.TILE_SIZE;
+      // Ideally we loop tiles inside k loop.
+      const tilesX = Math.ceil(width / TILE_SIZE);
+      const tilesY = Math.ceil(height / TILE_SIZE);
+
       for (let k = 0; k < batch; k++) {
-        this.renderer.render(samplesDone + k);
+        const frameCount = samplesDone + k;
+
+        for (let ty = 0; ty < tilesY; ty++) {
+          for (let tx = 0; tx < tilesX; tx++) {
+            const offsetX = tx * TILE_SIZE;
+            const offsetY = ty * TILE_SIZE;
+            const cw = Math.min(TILE_SIZE, width - offsetX);
+            const ch = Math.min(TILE_SIZE, height - offsetY);
+
+            const encoder = this.renderer.device.createCommandEncoder();
+            this.renderer.encodeTileCommand(
+              encoder,
+              offsetX,
+              offsetY,
+              cw,
+              ch,
+              frameCount
+            );
+            this.renderer.device.queue.submit([encoder.finish()]);
+
+            // Wait for tile
+            await this.renderer.device.queue.onSubmittedWorkDone();
+          }
+        }
       }
+
+      // Present is only needed at the very end of frame, but here we are in SPP loop.
+      // Actually we don't need to present every SPP sample, just at the end of the frame?
+      // But the encoder needs the result in renderTarget.
+      // Present copies RenderTarget -> Canvas. This is only needed for the VideoFrame capture.
+      // So we should do present AFTER the while loop or after batch?
+      // VideoEncoder reads from 'this.canvas'.
+
       samplesDone += batch;
-      await this.renderer.device.queue.onSubmittedWorkDone();
+
       if (samplesDone < totalSpp) {
+        // Yield for UI
         await new Promise((r) => setTimeout(r, 16));
       }
     }
+
+    // Final present to canvas for capture
+    const finalEncoder = this.renderer.device.createCommandEncoder();
+    this.renderer.present(finalEncoder);
+    this.renderer.device.queue.submit([finalEncoder.finish()]);
+    await this.renderer.device.queue.onSubmittedWorkDone();
   }
 }
