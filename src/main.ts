@@ -74,7 +74,7 @@ const loadScene = async (name: string, autoStart = true) => {
       glbData = new Uint8Array(currentFileData as ArrayBuffer);
   }
 
-  worldBridge.loadScene(name, objSource, glbData);
+  await worldBridge.loadScene(name, objSource, glbData);
   worldBridge.printStats();
 
   await renderer.loadTexturesFromWorld(worldBridge);
@@ -99,6 +99,7 @@ const uploadSceneBuffers = async () => {
   renderer.updateBuffer("index", worldBridge.indices);
   renderer.updateBuffer("attr", worldBridge.attributes);
   renderer.updateBuffer("instance", worldBridge.instances);
+  renderer.updateSceneUniforms(worldBridge.cameraData, 0);
 };
 
 // --- Render Loop ---
@@ -109,11 +110,13 @@ const renderFrame = () => {
   if (!isRendering || !worldBridge.hasWorld) return;
 
   let updateInterval = parseInt(ui.inputUpdateInterval.value, 10) || 0;
-  if (updateInterval < 0) updateInterval = 0;
 
+  // updateInterval <= 0 means disabled
   if (updateInterval > 0 && frameCount >= updateInterval) {
-    worldBridge.update(totalFrameCount / updateInterval / 60);
+    worldBridge.update(totalFrameCount / (updateInterval || 1) / 60);
+  }
 
+  if (worldBridge.hasNewData) {
     let needsRebind = false;
     needsRebind ||= renderer.updateCombinedBVH(
       worldBridge.tlas,
@@ -134,6 +137,7 @@ const renderFrame = () => {
     if (needsRebind) renderer.recreateBindGroup();
     renderer.resetAccumulation();
     frameCount = 0;
+    worldBridge.hasNewData = false;
   }
 
   frameCount++;

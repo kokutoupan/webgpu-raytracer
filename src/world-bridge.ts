@@ -1,79 +1,187 @@
-// src/world-bridge.ts
-import init, { World } from '../rust-shader-tools/pkg/rust_shader_tools';
+import type { MainMessage, WorkerMessage } from "./worker/protocol";
+import Worker from "./worker/wasm-worker?worker";
 
 export class WorldBridge {
-  private world: World | null = null;
-  private wasmMemory: WebAssembly.Memory | null = null;
+  private worker: Worker;
+  private resolveReady: (() => void) | null = null;
+
+  // Local Data Cache (Simulating simple memory access)
+  private _vertices = new Float32Array(0);
+  private _normals = new Float32Array(0);
+  private _uvs = new Float32Array(0);
+  private _indices = new Uint32Array(0);
+  private _attributes = new Float32Array(0);
+  private _tlas = new Float32Array(0);
+  private _blas = new Float32Array(0);
+  private _instances = new Float32Array(0);
+  private _cameraData = new Float32Array(24);
+  private _textureCount = 0;
+  private _textures: Uint8Array[] = [];
+  private _animations: string[] = [];
+  public hasNewData = false;
+  public pendingUpdate = false;
+
+  // Scene load promise
+  private resolveSceneLoad: (() => void) | null = null;
+
+  constructor() {
+    this.worker = new Worker();
+    this.worker.onmessage = this.handleMessage.bind(this);
+  }
 
   async initWasm() {
-    const wasmInstance = await init();
-    this.wasmMemory = wasmInstance.memory;
-    console.log("Wasm initialized");
+    return new Promise<void>((resolve) => {
+      this.resolveReady = resolve;
+      this.worker.postMessage({ type: "INIT" } as WorkerMessage);
+    });
   }
 
-  loadScene(sceneName: string, objSource?: string, glbData?: Uint8Array) {
-    if (this.world) this.world.free();
-    this.world = new World(sceneName, objSource, glbData);
-  }
+  private handleMessage(e: MessageEvent<MainMessage>) {
+    const msg = e.data;
+    switch (msg.type) {
+      case "READY":
+        console.log("Main: Worker Ready");
+        this.resolveReady?.();
+        break;
+      case "SCENE_LOADED":
+        this._vertices = msg.vertices as any;
+        this._normals = msg.normals as any;
+        this._uvs = msg.uvs as any;
+        this._indices = msg.indices as any;
+        this._attributes = msg.attributes as any;
+        this._tlas = msg.tlas as any;
+        this._blas = msg.blas as any;
+        this._instances = msg.instances as any;
+        this._cameraData = msg.camera as any;
+        this._textureCount = msg.textureCount;
+        this._textures = msg.textures || [];
+        this._animations = msg.animations || [];
+        this.hasNewData = true; // Ensure initial data is marked as new
+        this.resolveSceneLoad?.();
+        break;
+      // ... (rest of update result)
 
-  update(time: number) {
-    this.world?.update(time);
-  }
-
-  updateCamera(width: number, height: number) {
-    this.world?.update_camera(width, height);
-  }
-
-  loadAnimation(data: Uint8Array) {
-    this.world?.load_animation_glb(data);
+      case "UPDATE_RESULT":
+        this._tlas = msg.tlas as any;
+        this._blas = msg.blas as any;
+        this._instances = msg.instances as any;
+        this._cameraData = msg.camera as any;
+        this._vertices = msg.vertices as any;
+        this._normals = msg.normals as any;
+        this._uvs = msg.uvs as any;
+        this._indices = msg.indices as any;
+        this._attributes = msg.attributes as any;
+        this.hasNewData = true;
+        this.pendingUpdate = false;
+        break;
+    }
   }
 
   getAnimationList(): string[] {
-    if (!this.world) return [];
-    const count = this.world.get_animation_count();
-    const list: string[] = [];
-    for (let i = 0; i < count; i++) {
-      list.push(this.world.get_animation_name(i));
+    return this._animations;
+  }
+
+  getTexture(index: number): Uint8Array | null {
+    if (index >= 0 && index < this._textures.length) {
+      return this._textures[index];
     }
-    return list;
+    return null;
+  }
+
+  loadScene(
+    sceneName: string,
+    objSource?: string,
+    glbData?: Uint8Array
+  ): Promise<void> {
+    // Reset camera cache so we force an update for the new world
+    this.lastWidth = -1;
+    this.lastHeight = -1;
+
+    return new Promise((resolve) => {
+      this.resolveSceneLoad = resolve;
+      this.worker.postMessage(
+        {
+          type: "LOAD_SCENE",
+          sceneName,
+          objSource,
+          glbData,
+        } as WorkerMessage,
+        glbData ? [glbData.buffer] : []
+      );
+    });
+  }
+
+  update(time: number) {
+    if (this.pendingUpdate) return;
+    this.pendingUpdate = true;
+    this.worker.postMessage({ type: "UPDATE", time } as WorkerMessage);
+  }
+
+  private lastWidth = -1;
+  private lastHeight = -1;
+
+  updateCamera(width: number, height: number) {
+    if (this.lastWidth === width && this.lastHeight === height) return;
+    this.lastWidth = width;
+    this.lastHeight = height;
+
+    this.worker.postMessage({
+      type: "UPDATE_CAMERA",
+      width,
+      height,
+    } as WorkerMessage);
+  }
+
+  loadAnimation(data: Uint8Array) {
+    this.worker.postMessage({ type: "LOAD_ANIMATION", data } as WorkerMessage, [
+      data.buffer,
+    ]);
   }
 
   setAnimation(index: number) {
-    this.world?.set_animation(index);
+    this.worker.postMessage({ type: "SET_ANIMATION", index } as WorkerMessage);
   }
 
   // --- Data Accessors ---
-  private getF32(ptr: number, len: number) {
-    return new Float32Array(this.wasmMemory!.buffer, ptr, len);
+  get vertices() {
+    return this._vertices;
   }
-  private getU32(ptr: number, len: number) {
-    return new Uint32Array(this.wasmMemory!.buffer, ptr, len);
+  get normals() {
+    return this._normals;
   }
-
-  get vertices() { return this.getF32(this.world!.vertices_ptr(), this.world!.vertices_len()); }
-  get normals() { return this.getF32(this.world!.normals_ptr(), this.world!.normals_len()); }
-  get uvs() { return this.getF32(this.world!.uvs_ptr(), this.world!.uvs_len()); } // ★追加
-  get indices() { return this.getU32(this.world!.indices_ptr(), this.world!.indices_len()); }
-  get attributes() { return this.getF32(this.world!.attributes_ptr(), this.world!.attributes_len()); }
-  get tlas() { return this.getF32(this.world!.tlas_ptr(), this.world!.tlas_len()); }
-  get blas() { return this.getF32(this.world!.blas_ptr(), this.world!.blas_len()); }
-  get instances() { return this.getF32(this.world!.instances_ptr(), this.world!.instances_len()); }
-  get cameraData() { return this.getF32(this.world!.camera_ptr(), 24); }
-
-  get textureCount() { return this.world?.get_texture_count() || 0; }
-
-  getTexture(index: number): Uint8Array | null {
-    if (!this.world) return null;
-    const ptr = this.world.get_texture_ptr(index);
-    const size = this.world.get_texture_size(index);
-    if (!ptr || size === 0) return null;
-    return new Uint8Array(this.wasmMemory!.buffer, ptr, size).slice();
+  get uvs() {
+    return this._uvs;
   }
-
-  get hasWorld() { return !!this.world; }
+  get indices() {
+    return this._indices;
+  }
+  get attributes() {
+    return this._attributes;
+  }
+  get tlas() {
+    return this._tlas;
+  }
+  get blas() {
+    return this._blas;
+  }
+  get instances() {
+    return this._instances;
+  }
+  get cameraData() {
+    return this._cameraData;
+  }
+  get textureCount() {
+    return this._textureCount;
+  }
+  get hasWorld() {
+    return this._vertices.length > 0;
+  }
 
   printStats() {
-    if (!this.world) return;
-    console.log(`Scene Stats: V=${this.vertices.length / 4}, Tri=${this.indices.length / 3}, BLAS=${this.blas.length / 8}, TLAS=${this.tlas.length / 8}`);
+    console.log(
+      `Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Tri=${
+        this.indices.length / 3
+      }`
+    );
   }
 }
