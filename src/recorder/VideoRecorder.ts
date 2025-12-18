@@ -247,7 +247,7 @@ export class VideoRecorder {
             this.renderer.device.queue.submit([encoder.finish()]);
 
             // Wait for tile
-            await this.renderer.device.queue.onSubmittedWorkDone();
+            // await this.renderer.device.queue.onSubmittedWorkDone();
           }
         }
       }
@@ -260,6 +260,7 @@ export class VideoRecorder {
       // VideoEncoder reads from 'this.canvas'.
 
       samplesDone += batch;
+      await this.renderer.device.queue.onSubmittedWorkDone();
 
       if (samplesDone < totalSpp) {
         // Yield for UI
