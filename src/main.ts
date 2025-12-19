@@ -499,6 +499,7 @@ const bindEvents = () => {
       ui.setRecordingState(true);
       const config = ui.getRenderConfig();
       try {
+        const timer = performance.now();
         await recorder.record(
           config,
           (f, t) =>
@@ -514,6 +515,7 @@ const bindEvents = () => {
             URL.revokeObjectURL(url);
           }
         );
+        console.log(`Recording took ${performance.now() - timer}[ms]`);
       } catch (e) {
         alert("Recording failed.");
       } finally {

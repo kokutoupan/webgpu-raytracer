@@ -196,6 +196,10 @@ export class WorldBridge {
     console.log(
       `Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Tri=${
         this.indices.length / 3
+      }, I=${this.instances.length / 16}, A=${
+        this.attributes.length / 16
+      }, TLAS=${this.tlas.length / 8}, BLAS=${this.blas.length / 8}, Anim=${
+        this._animations.length
       }`
     );
   }
