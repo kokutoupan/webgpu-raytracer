@@ -26,7 +26,7 @@ struct SceneUniforms {
     frame_count: u32,
     blas_base_idx: u32, // Start index of BLAS nodes in 'nodes' array
     vertex_count: u32,
-    pad2: u32
+    rand_seed: u32
 }
 
 struct TriangleAttributes {
@@ -123,15 +123,16 @@ fn random_in_unit_disk(rng: ptr<function, u32>) -> vec3<f32> {
     return vec3<f32>(r * cos(theta), r * sin(theta), 0.0);
 }
 fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
-    var r0 = (1.0 - ref_idx) / (1.0 + ref_idx); r0 = r0 * r0;
+    var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
     return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
 }
 
 // --- Intersection ---
 
-fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
-    let t0s = (min_b - r.origin) * inv_d;
-    let t1s = (max_b - r.origin) * inv_d;
+fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
+    let t0s = (min_b - origin) * inv_d;
+    let t1s = (max_b - origin) * inv_d;
     let t_small = min(t0s, t1s);
     let t_big = max(t0s, t1s);
     let tmin = max(t_min, max(t_small.x, max(t_small.y, t_small.z)));
@@ -156,14 +157,14 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 48>;
+    var stack: array<u32, 32>;
     var stackptr = 0u;
 
     // Root Node (Global Index in 'nodes' array)
     let root_idx = node_start_idx;
     let root = nodes[root_idx];
 
-    if intersect_aabb(root.min_b, root.max_b, r, inv_d, t_min, closest_t) < 1e30 {
+    if intersect_aabb(root.min_b, root.max_b, r.origin, inv_d, t_min, closest_t) < 1e30 {
         stack[stackptr] = root_idx;
         stackptr++;
     }
@@ -198,8 +199,8 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
             let nl = nodes[l];
             let nr = nodes[r_node_idx];
 
-            let dl = intersect_aabb(nl.min_b, nl.max_b, r, inv_d, t_min, closest_t);
-            let dr = intersect_aabb(nr.min_b, nr.max_b, r, inv_d, t_min, closest_t);
+            let dl = intersect_aabb(nl.min_b, nl.max_b, r.origin, inv_d, t_min, closest_t);
+            let dr = intersect_aabb(nr.min_b, nr.max_b, r.origin, inv_d, t_min, closest_t);
 
             let hl = dl < 1e30; let hr = dr < 1e30;
             if hl && hr {
@@ -219,10 +220,10 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if scene.blas_base_idx == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 24>;
+    var stack: array<u32, 16>;
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b, nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {
+    if intersect_aabb(nodes[0].min_b, nodes[0].max_b, r.origin, inv_d, t_min, res.t) < 1e30 {
         stack[stackptr] = 0u; stackptr++;
     }
 
@@ -253,8 +254,8 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
             let r_idx = l + 1u;
             let nl = nodes[l];
             let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b, nl.max_b, r, inv_d, t_min, res.t);
-            let dr = intersect_aabb(nr.min_b, nr.max_b, r, inv_d, t_min, res.t);
+            let dl = intersect_aabb(nl.min_b, nl.max_b, r.origin, inv_d, t_min, res.t);
+            let dr = intersect_aabb(nr.min_b, nr.max_b, r.origin, inv_d, t_min, res.t);
             if dl < 1e30 && dr < 1e30 {
                 if dl < dr {
                     stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++;
@@ -376,7 +377,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(outputTex);
     if id.x >= dims.x || id.y >= dims.y { return; }
     let p_idx = id.y * dims.x + id.x;
-    var rng = init_rng(p_idx, scene.frame_count);
+    var rng = init_rng(p_idx, scene.rand_seed);
 
     var col = vec3(0.);
     for (var s = 0u; s < SPP; s++) {

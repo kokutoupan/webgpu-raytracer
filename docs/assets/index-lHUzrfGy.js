@@ -5,62 +5,63 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   (function() {
     const e = document.createElement("link").relList;
     if (e && e.supports && e.supports("modulepreload")) return;
-    for (const s of document.querySelectorAll('link[rel="modulepreload"]')) r(s);
-    new MutationObserver((s) => {
-      for (const i of s) if (i.type === "childList") for (const a of i.addedNodes) a.tagName === "LINK" && a.rel === "modulepreload" && r(a);
+    for (const r of document.querySelectorAll('link[rel="modulepreload"]')) n(r);
+    new MutationObserver((r) => {
+      for (const i of r) if (i.type === "childList") for (const o of i.addedNodes) o.tagName === "LINK" && o.rel === "modulepreload" && n(o);
     }).observe(document, {
       childList: true,
       subtree: true
     });
-    function t(s) {
+    function t(r) {
       const i = {};
-      return s.integrity && (i.integrity = s.integrity), s.referrerPolicy && (i.referrerPolicy = s.referrerPolicy), s.crossOrigin === "use-credentials" ? i.credentials = "include" : s.crossOrigin === "anonymous" ? i.credentials = "omit" : i.credentials = "same-origin", i;
+      return r.integrity && (i.integrity = r.integrity), r.referrerPolicy && (i.referrerPolicy = r.referrerPolicy), r.crossOrigin === "use-credentials" ? i.credentials = "include" : r.crossOrigin === "anonymous" ? i.credentials = "omit" : i.credentials = "same-origin", i;
     }
-    function r(s) {
-      if (s.ep) return;
-      s.ep = true;
-      const i = t(s);
-      fetch(s.href, i);
+    function n(r) {
+      if (r.ep) return;
+      r.ep = true;
+      const i = t(r);
+      fetch(r.href, i);
     }
   })();
-  const ue = "modulepreload", fe = function(n) {
-    return "/webgpu-raytracer/" + n;
-  }, K = {}, se = function(e, t, r) {
-    let s = Promise.resolve();
+  const K = "modulepreload", X = function(s) {
+    return "/webgpu-raytracer/" + s;
+  }, H = {}, q = function(e, t, n) {
+    let r = Promise.resolve();
     if (t && t.length > 0) {
-      let u = function(d) {
-        return Promise.all(d.map((_) => Promise.resolve(_).then((y) => ({
+      let p = function(u) {
+        return Promise.all(u.map((y) => Promise.resolve(y).then((B) => ({
           status: "fulfilled",
-          value: y
-        }), (y) => ({
+          value: B
+        }), (B) => ({
           status: "rejected",
-          reason: y
+          reason: B
         }))));
       };
+      var o = p;
       document.getElementsByTagName("link");
-      const a = document.querySelector("meta[property=csp-nonce]"), l = (a == null ? void 0 : a.nonce) || (a == null ? void 0 : a.getAttribute("nonce"));
-      s = u(t.map((d) => {
-        if (d = fe(d), d in K) return;
-        K[d] = true;
-        const _ = d.endsWith(".css"), y = _ ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${d}"]${y}`)) return;
-        const m = document.createElement("link");
-        if (m.rel = _ ? "stylesheet" : ue, _ || (m.as = "script"), m.crossOrigin = "", m.href = d, l && m.setAttribute("nonce", l), document.head.appendChild(m), _) return new Promise((le, de) => {
-          m.addEventListener("load", le), m.addEventListener("error", () => de(new Error(`Unable to preload CSS for ${d}`)));
+      const c = document.querySelector("meta[property=csp-nonce]"), d = (c == null ? void 0 : c.nonce) || (c == null ? void 0 : c.getAttribute("nonce"));
+      r = p(t.map((u) => {
+        if (u = X(u), u in H) return;
+        H[u] = true;
+        const y = u.endsWith(".css"), B = y ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${u}"]${B}`)) return;
+        const w = document.createElement("link");
+        if (w.rel = y ? "stylesheet" : K, y || (w.as = "script"), w.crossOrigin = "", w.href = u, d && w.setAttribute("nonce", d), document.head.appendChild(w), y) return new Promise((J, Y) => {
+          w.addEventListener("load", J), w.addEventListener("error", () => Y(new Error(`Unable to preload CSS for ${u}`)));
         });
       }));
     }
-    function i(a) {
-      const l = new Event("vite:preloadError", {
+    function i(c) {
+      const d = new Event("vite:preloadError", {
         cancelable: true
       });
-      if (l.payload = a, window.dispatchEvent(l), !l.defaultPrevented) throw a;
+      if (d.payload = c, window.dispatchEvent(d), !d.defaultPrevented) throw c;
     }
-    return s.then((a) => {
-      for (const l of a || []) l.status === "rejected" && i(l.reason);
+    return r.then((c) => {
+      for (const d of c || []) d.status === "rejected" && i(d.reason);
       return e().catch(i);
     });
-  }, he = `// =========================================================
+  }, Q = `// =========================================================
 //   WebGPU Ray Tracer (TLAS & BLAS)
 // =========================================================
 
@@ -463,7 +464,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(outputTex, vec2<i32>(id.xy), vec4(out, 1.));
 }
 `;
-  class _e {
+  class Z {
     constructor(e) {
       __publicField(this, "device");
       __publicField(this, "context");
@@ -484,8 +485,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "sampler");
       __publicField(this, "bufferSize", 0);
       __publicField(this, "canvas");
+      __publicField(this, "presentationFormat");
       __publicField(this, "blasOffset", 0);
       __publicField(this, "vertexCount", 0);
+      __publicField(this, "uniformMixedData", new Uint32Array(4));
       this.canvas = e;
     }
     async init() {
@@ -498,9 +501,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         requiredLimits: {
           maxStorageBuffersPerShaderStage: 10
         }
-      }), this.context = this.canvas.getContext("webgpu"), this.context.configure({
+      }), this.context = this.canvas.getContext("webgpu"), this.presentationFormat = navigator.gpu.getPreferredCanvasFormat(), this.context.configure({
         device: this.device,
-        format: "rgba8unorm",
+        format: this.presentationFormat,
         usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
       }), this.sceneUniformBuffer = this.device.createBuffer({
         size: 128,
@@ -544,17 +547,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       ]);
     }
     buildPipeline(e, t) {
-      let r = he;
-      r = r.replace(/const\s+MAX_DEPTH\s*=\s*\d+u;/, `const MAX_DEPTH = ${e}u;`), r = r.replace(/const\s+SPP\s*=\s*\d+u;/, `const SPP = ${t}u;`);
-      const s = this.device.createShaderModule({
+      let n = Q;
+      n = n.replace(/const\s+MAX_DEPTH\s*=\s*\d+u;/, `const MAX_DEPTH = ${e}u;`), n = n.replace(/const\s+SPP\s*=\s*\d+u;/, `const SPP = ${t}u;`), n = n.replace("rgba8unorm", this.presentationFormat);
+      const r = this.device.createShaderModule({
         label: "RayTracing",
-        code: r
+        code: n
       });
       this.pipeline = this.device.createComputePipeline({
         label: "Main Pipeline",
         layout: "auto",
         compute: {
-          module: s,
+          module: r,
           entryPoint: "main"
         }
       }), this.bindGroupLayout = this.pipeline.getBindGroupLayout(0);
@@ -565,7 +568,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           e,
           t
         ],
-        format: "rgba8unorm",
+        format: this.presentationFormat,
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC
       }), this.renderTargetView = this.renderTarget.createView(), this.bufferSize = e * t * 16, this.accumulateBuffer && this.accumulateBuffer.destroy(), this.accumulateBuffer = this.device.createBuffer({
         size: this.bufferSize,
@@ -582,39 +585,39 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
       }
       console.log(`Loading ${t} textures...`);
-      const r = [];
-      for (let s = 0; s < t; s++) {
-        const i = e.getTexture(s);
+      const n = [];
+      for (let r = 0; r < t; r++) {
+        const i = e.getTexture(r);
         if (i) try {
-          const a = new Blob([
+          const o = new Blob([
             i
-          ]), l = await createImageBitmap(a, {
+          ]), c = await createImageBitmap(o, {
             resizeWidth: 1024,
             resizeHeight: 1024
           });
-          r.push(l);
-        } catch (a) {
-          console.warn(`Failed tex ${s}`, a), r.push(await this.createFallbackBitmap());
+          n.push(c);
+        } catch (o) {
+          console.warn(`Failed tex ${r}`, o), n.push(await this.createFallbackBitmap());
         }
-        else r.push(await this.createFallbackBitmap());
+        else n.push(await this.createFallbackBitmap());
       }
       this.texture && this.texture.destroy(), this.texture = this.device.createTexture({
         size: [
           1024,
           1024,
-          r.length
+          n.length
         ],
         format: "rgba8unorm",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
       });
-      for (let s = 0; s < r.length; s++) this.device.queue.copyExternalImageToTexture({
-        source: r[s]
+      for (let r = 0; r < n.length; r++) this.device.queue.copyExternalImageToTexture({
+        source: n[r]
       }, {
         texture: this.texture,
         origin: [
           0,
           0,
-          s
+          r
         ]
       }, [
         1024,
@@ -627,45 +630,37 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       const t = e.getContext("2d");
       return t.fillStyle = "white", t.fillRect(0, 0, 1024, 1024), await createImageBitmap(e);
     }
-    ensureBuffer(e, t, r) {
+    ensureBuffer(e, t, n) {
       if (e && e.size >= t) return e;
       e && e.destroy();
-      let s = Math.ceil(t * 1.5);
-      return s = s + 3 & -4, s = Math.max(s, 4), this.device.createBuffer({
-        label: r,
-        size: s,
+      let r = Math.ceil(t * 1.5);
+      return r = r + 3 & -4, r = Math.max(r, 4), this.device.createBuffer({
+        label: n,
+        size: r,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
       });
     }
     updateBuffer(e, t) {
-      const r = t.byteLength;
-      let s = false, i;
-      return e === "index" ? ((!this.indexBuffer || this.indexBuffer.size < r) && (s = true), this.indexBuffer = this.ensureBuffer(this.indexBuffer, r, "IndexBuffer"), i = this.indexBuffer) : e === "attr" ? ((!this.attrBuffer || this.attrBuffer.size < r) && (s = true), this.attrBuffer = this.ensureBuffer(this.attrBuffer, r, "AttrBuffer"), i = this.attrBuffer) : ((!this.instanceBuffer || this.instanceBuffer.size < r) && (s = true), this.instanceBuffer = this.ensureBuffer(this.instanceBuffer, r, "InstanceBuffer"), i = this.instanceBuffer), this.device.queue.writeBuffer(i, 0, t, 0, t.length), s;
+      const n = t.byteLength;
+      let r = false, i;
+      return e === "index" ? ((!this.indexBuffer || this.indexBuffer.size < n) && (r = true), this.indexBuffer = this.ensureBuffer(this.indexBuffer, n, "IndexBuffer"), i = this.indexBuffer) : e === "attr" ? ((!this.attrBuffer || this.attrBuffer.size < n) && (r = true), this.attrBuffer = this.ensureBuffer(this.attrBuffer, n, "AttrBuffer"), i = this.attrBuffer) : ((!this.instanceBuffer || this.instanceBuffer.size < n) && (r = true), this.instanceBuffer = this.ensureBuffer(this.instanceBuffer, n, "InstanceBuffer"), i = this.instanceBuffer), this.device.queue.writeBuffer(i, 0, t, 0, t.length), r;
     }
-    updateCombinedGeometry(e, t, r) {
-      const s = e.byteLength + t.byteLength + r.byteLength;
+    updateCombinedGeometry(e, t, n) {
+      const r = e.byteLength + t.byteLength + n.byteLength;
       let i = false;
-      (!this.geometryBuffer || this.geometryBuffer.size < s) && (i = true);
-      const a = e.length / 4;
-      this.vertexCount = a, this.geometryBuffer = this.ensureBuffer(this.geometryBuffer, s, "GeometryBuffer"), !(r.length >= a * 2) && a > 0 && console.warn(`UV buffer mismatch: V=${a}, UV=${r.length / 2}. Filling 0.`);
-      const u = e.length, d = t.length, _ = r.length, y = u + d + _, m = new Float32Array(y);
-      return m.set(e, 0), m.set(t, u), m.set(r, u + d), this.device.queue.writeBuffer(this.geometryBuffer, 0, m), i;
+      (!this.geometryBuffer || this.geometryBuffer.size < r) && (i = true);
+      const o = e.length / 4;
+      this.vertexCount = o, this.geometryBuffer = this.ensureBuffer(this.geometryBuffer, r, "GeometryBuffer"), !(n.length >= o * 2) && o > 0 && console.warn(`UV buffer mismatch: V=${o}, UV=${n.length / 2}. Filling 0.`);
+      let d = 0;
+      return this.device.queue.writeBuffer(this.geometryBuffer, d, e), d += e.byteLength, this.device.queue.writeBuffer(this.geometryBuffer, d, t), d += t.byteLength, this.device.queue.writeBuffer(this.geometryBuffer, d, n), i;
     }
     updateCombinedBVH(e, t) {
-      const r = e.byteLength, s = t.byteLength, i = r + s;
-      let a = false;
-      return (!this.nodesBuffer || this.nodesBuffer.size < i) && (a = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, i, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, e), this.device.queue.writeBuffer(this.nodesBuffer, r, t), this.blasOffset = e.length / 8, a;
+      const n = e.byteLength, r = t.byteLength, i = n + r;
+      let o = false;
+      return (!this.nodesBuffer || this.nodesBuffer.size < i) && (o = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, i, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, e), this.device.queue.writeBuffer(this.nodesBuffer, n, t), this.blasOffset = e.length / 8, o;
     }
     updateSceneUniforms(e, t) {
-      if (!this.sceneUniformBuffer) return;
-      this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e);
-      const r = new Uint32Array([
-        t,
-        this.blasOffset,
-        this.vertexCount,
-        0
-      ]);
-      this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, r);
+      this.sceneUniformBuffer && (this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = 0, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData));
     }
     recreateBindGroup() {
       !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || (this.bindGroup = this.device.createBindGroup({
@@ -732,12 +727,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     render(e) {
       if (!this.bindGroup) return;
-      const t = new Uint32Array([
-        e
-      ]);
-      this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, t);
-      const r = Math.ceil(this.canvas.width / 8), s = Math.ceil(this.canvas.height / 8), i = this.device.createCommandEncoder(), a = i.beginComputePass();
-      a.setPipeline(this.pipeline), a.setBindGroup(0, this.bindGroup), a.dispatchWorkgroups(r, s), a.end(), i.copyTextureToTexture({
+      this.uniformMixedData[0] = e, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData, 0, 1);
+      const t = Math.ceil(this.canvas.width / 8), n = Math.ceil(this.canvas.height / 8), r = this.device.createCommandEncoder(), i = r.beginComputePass();
+      i.setPipeline(this.pipeline), i.setBindGroup(0, this.bindGroup), i.dispatchWorkgroups(t, n), i.end(), r.copyTextureToTexture({
         texture: this.renderTarget
       }, {
         texture: this.context.getCurrentTexture()
@@ -746,339 +738,147 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         height: this.canvas.height,
         depthOrArrayLayers: 1
       }), this.device.queue.submit([
-        i.finish()
+        r.finish()
       ]);
     }
   }
-  let c;
-  function pe(n) {
-    const e = c.__externref_table_alloc();
-    return c.__wbindgen_externrefs.set(e, n), e;
+  function ee(s) {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-HkP6ze7E.js", {
+      name: s == null ? void 0 : s.name
+    });
   }
-  function ge(n, e) {
-    return n = n >>> 0, A().subarray(n / 1, n / 1 + e);
-  }
-  let k = null;
-  function X() {
-    return (k === null || k.buffer.detached === true || k.buffer.detached === void 0 && k.buffer !== c.memory.buffer) && (k = new DataView(c.memory.buffer)), k;
-  }
-  function U(n, e) {
-    return n = n >>> 0, we(n, e);
-  }
-  let E = null;
-  function A() {
-    return (E === null || E.byteLength === 0) && (E = new Uint8Array(c.memory.buffer)), E;
-  }
-  function me(n, e) {
-    try {
-      return n.apply(this, e);
-    } catch (t) {
-      const r = pe(t);
-      c.__wbindgen_exn_store(r);
-    }
-  }
-  function Q(n) {
-    return n == null;
-  }
-  function Z(n, e) {
-    const t = e(n.length * 1, 1) >>> 0;
-    return A().set(n, t / 1), S = n.length, t;
-  }
-  function G(n, e, t) {
-    if (t === void 0) {
-      const l = W.encode(n), u = e(l.length, 1) >>> 0;
-      return A().subarray(u, u + l.length).set(l), S = l.length, u;
-    }
-    let r = n.length, s = e(r, 1) >>> 0;
-    const i = A();
-    let a = 0;
-    for (; a < r; a++) {
-      const l = n.charCodeAt(a);
-      if (l > 127) break;
-      i[s + a] = l;
-    }
-    if (a !== r) {
-      a !== 0 && (n = n.slice(a)), s = t(s, r, r = a + n.length * 3, 1) >>> 0;
-      const l = A().subarray(s + a, s + r), u = W.encodeInto(n, l);
-      a += u.written, s = t(s, r, a, 1) >>> 0;
-    }
-    return S = a, s;
-  }
-  let L = new TextDecoder("utf-8", {
-    ignoreBOM: true,
-    fatal: true
-  });
-  L.decode();
-  const be = 2146435072;
-  let N = 0;
-  function we(n, e) {
-    return N += e, N >= be && (L = new TextDecoder("utf-8", {
-      ignoreBOM: true,
-      fatal: true
-    }), L.decode(), N = e), L.decode(A().subarray(n, n + e));
-  }
-  const W = new TextEncoder();
-  "encodeInto" in W || (W.encodeInto = function(n, e) {
-    const t = W.encode(n);
-    return e.set(t), {
-      read: n.length,
-      written: t.length
-    };
-  });
-  let S = 0;
-  typeof FinalizationRegistry > "u" || new FinalizationRegistry((n) => c.__wbg_renderbuffers_free(n >>> 0, 1));
-  const ee = typeof FinalizationRegistry > "u" ? {
-    register: () => {
-    },
-    unregister: () => {
-    }
-  } : new FinalizationRegistry((n) => c.__wbg_world_free(n >>> 0, 1));
-  class V {
-    __destroy_into_raw() {
-      const e = this.__wbg_ptr;
-      return this.__wbg_ptr = 0, ee.unregister(this), e;
-    }
-    free() {
-      const e = this.__destroy_into_raw();
-      c.__wbg_world_free(e, 0);
-    }
-    camera_ptr() {
-      return c.world_camera_ptr(this.__wbg_ptr) >>> 0;
-    }
-    indices_len() {
-      return c.world_indices_len(this.__wbg_ptr) >>> 0;
-    }
-    indices_ptr() {
-      return c.world_indices_ptr(this.__wbg_ptr) >>> 0;
-    }
-    normals_len() {
-      return c.world_normals_len(this.__wbg_ptr) >>> 0;
-    }
-    normals_ptr() {
-      return c.world_normals_ptr(this.__wbg_ptr) >>> 0;
-    }
-    vertices_len() {
-      return c.world_vertices_len(this.__wbg_ptr) >>> 0;
-    }
-    vertices_ptr() {
-      return c.world_vertices_ptr(this.__wbg_ptr) >>> 0;
-    }
-    instances_len() {
-      return c.world_instances_len(this.__wbg_ptr) >>> 0;
-    }
-    instances_ptr() {
-      return c.world_instances_ptr(this.__wbg_ptr) >>> 0;
-    }
-    set_animation(e) {
-      c.world_set_animation(this.__wbg_ptr, e);
-    }
-    update_camera(e, t) {
-      c.world_update_camera(this.__wbg_ptr, e, t);
-    }
-    attributes_len() {
-      return c.world_attributes_len(this.__wbg_ptr) >>> 0;
-    }
-    attributes_ptr() {
-      return c.world_attributes_ptr(this.__wbg_ptr) >>> 0;
-    }
-    get_texture_ptr(e) {
-      return c.world_get_texture_ptr(this.__wbg_ptr, e) >>> 0;
-    }
-    get_texture_size(e) {
-      return c.world_get_texture_size(this.__wbg_ptr, e) >>> 0;
-    }
-    get_texture_count() {
-      return c.world_get_texture_count(this.__wbg_ptr) >>> 0;
-    }
-    get_animation_name(e) {
-      let t, r;
-      try {
-        const s = c.world_get_animation_name(this.__wbg_ptr, e);
-        return t = s[0], r = s[1], U(s[0], s[1]);
-      } finally {
-        c.__wbindgen_free(t, r, 1);
-      }
-    }
-    load_animation_glb(e) {
-      const t = Z(e, c.__wbindgen_malloc), r = S;
-      c.world_load_animation_glb(this.__wbg_ptr, t, r);
-    }
-    get_animation_count() {
-      return c.world_get_animation_count(this.__wbg_ptr) >>> 0;
-    }
-    constructor(e, t, r) {
-      const s = G(e, c.__wbindgen_malloc, c.__wbindgen_realloc), i = S;
-      var a = Q(t) ? 0 : G(t, c.__wbindgen_malloc, c.__wbindgen_realloc), l = S, u = Q(r) ? 0 : Z(r, c.__wbindgen_malloc), d = S;
-      const _ = c.world_new(s, i, a, l, u, d);
-      return this.__wbg_ptr = _ >>> 0, ee.register(this, this.__wbg_ptr, this), this;
-    }
-    update(e) {
-      c.world_update(this.__wbg_ptr, e);
-    }
-    uvs_len() {
-      return c.world_uvs_len(this.__wbg_ptr) >>> 0;
-    }
-    uvs_ptr() {
-      return c.world_uvs_ptr(this.__wbg_ptr) >>> 0;
-    }
-    blas_len() {
-      return c.world_blas_len(this.__wbg_ptr) >>> 0;
-    }
-    blas_ptr() {
-      return c.world_blas_ptr(this.__wbg_ptr) >>> 0;
-    }
-    tlas_len() {
-      return c.world_tlas_len(this.__wbg_ptr) >>> 0;
-    }
-    tlas_ptr() {
-      return c.world_tlas_ptr(this.__wbg_ptr) >>> 0;
-    }
-  }
-  Symbol.dispose && (V.prototype[Symbol.dispose] = V.prototype.free);
-  const ve = /* @__PURE__ */ new Set([
-    "basic",
-    "cors",
-    "default"
-  ]);
-  async function ye(n, e) {
-    if (typeof Response == "function" && n instanceof Response) {
-      if (typeof WebAssembly.instantiateStreaming == "function") try {
-        return await WebAssembly.instantiateStreaming(n, e);
-      } catch (r) {
-        if (n.ok && ve.has(n.type) && n.headers.get("Content-Type") !== "application/wasm") console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", r);
-        else throw r;
-      }
-      const t = await n.arrayBuffer();
-      return await WebAssembly.instantiate(t, e);
-    } else {
-      const t = await WebAssembly.instantiate(n, e);
-      return t instanceof WebAssembly.Instance ? {
-        instance: t,
-        module: n
-      } : t;
-    }
-  }
-  function Re() {
-    const n = {};
-    return n.wbg = {}, n.wbg.__wbg___wbindgen_throw_dd24417ed36fc46e = function(e, t) {
-      throw new Error(U(e, t));
-    }, n.wbg.__wbg_error_7534b8e9a36f1ab4 = function(e, t) {
-      let r, s;
-      try {
-        r = e, s = t, console.error(U(e, t));
-      } finally {
-        c.__wbindgen_free(r, s, 1);
-      }
-    }, n.wbg.__wbg_getRandomValues_1c61fac11405ffdc = function() {
-      return me(function(e, t) {
-        globalThis.crypto.getRandomValues(ge(e, t));
-      }, arguments);
-    }, n.wbg.__wbg_log_1d990106d99dacb7 = function(e) {
-      console.log(e);
-    }, n.wbg.__wbg_new_8a6f238a6ece86ea = function() {
-      return new Error();
-    }, n.wbg.__wbg_stack_0ed75d68575b0f3c = function(e, t) {
-      const r = t.stack, s = G(r, c.__wbindgen_malloc, c.__wbindgen_realloc), i = S;
-      X().setInt32(e + 4, i, true), X().setInt32(e + 0, s, true);
-    }, n.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(e, t) {
-      return U(e, t);
-    }, n.wbg.__wbindgen_init_externref_table = function() {
-      const e = c.__wbindgen_externrefs, t = e.grow(4);
-      e.set(0, void 0), e.set(t + 0, void 0), e.set(t + 1, null), e.set(t + 2, true), e.set(t + 3, false);
-    }, n;
-  }
-  function Se(n, e) {
-    return c = n.exports, ie.__wbindgen_wasm_module = e, k = null, E = null, c.__wbindgen_start(), c;
-  }
-  async function ie(n) {
-    if (c !== void 0) return c;
-    typeof n < "u" && (Object.getPrototypeOf(n) === Object.prototype ? { module_or_path: n } = n : console.warn("using deprecated parameters for the initialization function; pass a single object instead")), typeof n > "u" && (n = new URL("/webgpu-raytracer/assets/rust_shader_tools_bg-CC5HVMsp.wasm", import.meta.url));
-    const e = Re();
-    (typeof n == "string" || typeof Request == "function" && n instanceof Request || typeof URL == "function" && n instanceof URL) && (n = fetch(n));
-    const { instance: t, module: r } = await ye(await n, e);
-    return Se(t, r);
-  }
-  class xe {
+  class te {
     constructor() {
-      __publicField(this, "world", null);
-      __publicField(this, "wasmMemory", null);
+      __publicField(this, "worker");
+      __publicField(this, "resolveReady", null);
+      __publicField(this, "_vertices", new Float32Array(0));
+      __publicField(this, "_normals", new Float32Array(0));
+      __publicField(this, "_uvs", new Float32Array(0));
+      __publicField(this, "_indices", new Uint32Array(0));
+      __publicField(this, "_attributes", new Float32Array(0));
+      __publicField(this, "_tlas", new Float32Array(0));
+      __publicField(this, "_blas", new Float32Array(0));
+      __publicField(this, "_instances", new Float32Array(0));
+      __publicField(this, "_cameraData", new Float32Array(24));
+      __publicField(this, "_textureCount", 0);
+      __publicField(this, "_textures", []);
+      __publicField(this, "_animations", []);
+      __publicField(this, "hasNewData", false);
+      __publicField(this, "hasNewGeometry", false);
+      __publicField(this, "pendingUpdate", false);
+      __publicField(this, "resolveSceneLoad", null);
+      __publicField(this, "updateResolvers", []);
+      __publicField(this, "lastWidth", -1);
+      __publicField(this, "lastHeight", -1);
+      this.worker = new ee(), this.worker.onmessage = this.handleMessage.bind(this);
     }
     async initWasm() {
-      const e = await ie();
-      this.wasmMemory = e.memory, console.log("Wasm initialized");
+      return new Promise((e) => {
+        this.resolveReady = e, this.worker.postMessage({
+          type: "INIT"
+        });
+      });
     }
-    loadScene(e, t, r) {
-      this.world && this.world.free(), this.world = new V(e, t, r);
-    }
-    update(e) {
-      var _a;
-      (_a = this.world) == null ? void 0 : _a.update(e);
-    }
-    updateCamera(e, t) {
-      var _a;
-      (_a = this.world) == null ? void 0 : _a.update_camera(e, t);
-    }
-    loadAnimation(e) {
-      var _a;
-      (_a = this.world) == null ? void 0 : _a.load_animation_glb(e);
+    handleMessage(e) {
+      var _a, _b;
+      const t = e.data;
+      switch (t.type) {
+        case "READY":
+          console.log("Main: Worker Ready"), (_a = this.resolveReady) == null ? void 0 : _a.call(this);
+          break;
+        case "SCENE_LOADED":
+          this._vertices = t.vertices, this._normals = t.normals, this._uvs = t.uvs, this._indices = t.indices, this._attributes = t.attributes, this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, this._textureCount = t.textureCount, this._textures = t.textures || [], this._animations = t.animations || [], this.hasNewData = true, this.hasNewGeometry = true, (_b = this.resolveSceneLoad) == null ? void 0 : _b.call(this);
+          break;
+        case "UPDATE_RESULT":
+          this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, t.vertices && (this._vertices = t.vertices, this.hasNewGeometry = true), t.normals && (this._normals = t.normals), t.uvs && (this._uvs = t.uvs), t.indices && (this._indices = t.indices), t.attributes && (this._attributes = t.attributes), this.hasNewData = true, this.pendingUpdate = false, this.updateResolvers.forEach((n) => n()), this.updateResolvers = [];
+          break;
+      }
     }
     getAnimationList() {
-      if (!this.world) return [];
-      const e = this.world.get_animation_count(), t = [];
-      for (let r = 0; r < e; r++) t.push(this.world.get_animation_name(r));
-      return t;
-    }
-    setAnimation(e) {
-      var _a;
-      (_a = this.world) == null ? void 0 : _a.set_animation(e);
-    }
-    getF32(e, t) {
-      return new Float32Array(this.wasmMemory.buffer, e, t);
-    }
-    getU32(e, t) {
-      return new Uint32Array(this.wasmMemory.buffer, e, t);
-    }
-    get vertices() {
-      return this.getF32(this.world.vertices_ptr(), this.world.vertices_len());
-    }
-    get normals() {
-      return this.getF32(this.world.normals_ptr(), this.world.normals_len());
-    }
-    get uvs() {
-      return this.getF32(this.world.uvs_ptr(), this.world.uvs_len());
-    }
-    get indices() {
-      return this.getU32(this.world.indices_ptr(), this.world.indices_len());
-    }
-    get attributes() {
-      return this.getF32(this.world.attributes_ptr(), this.world.attributes_len());
-    }
-    get tlas() {
-      return this.getF32(this.world.tlas_ptr(), this.world.tlas_len());
-    }
-    get blas() {
-      return this.getF32(this.world.blas_ptr(), this.world.blas_len());
-    }
-    get instances() {
-      return this.getF32(this.world.instances_ptr(), this.world.instances_len());
-    }
-    get cameraData() {
-      return this.getF32(this.world.camera_ptr(), 24);
-    }
-    get textureCount() {
-      var _a;
-      return ((_a = this.world) == null ? void 0 : _a.get_texture_count()) || 0;
+      return this._animations;
     }
     getTexture(e) {
-      if (!this.world) return null;
-      const t = this.world.get_texture_ptr(e), r = this.world.get_texture_size(e);
-      return !t || r === 0 ? null : new Uint8Array(this.wasmMemory.buffer, t, r).slice();
+      return e >= 0 && e < this._textures.length ? this._textures[e] : null;
+    }
+    loadScene(e, t, n) {
+      return this.lastWidth = -1, this.lastHeight = -1, new Promise((r) => {
+        this.resolveSceneLoad = r, this.worker.postMessage({
+          type: "LOAD_SCENE",
+          sceneName: e,
+          objSource: t,
+          glbData: n
+        }, n ? [
+          n.buffer
+        ] : []);
+      });
+    }
+    waitForNextUpdate() {
+      return new Promise((e) => {
+        this.updateResolvers.push(e);
+      });
+    }
+    update(e) {
+      this.pendingUpdate || (this.pendingUpdate = true, this.worker.postMessage({
+        type: "UPDATE",
+        time: e
+      }));
+    }
+    updateCamera(e, t) {
+      this.lastWidth === e && this.lastHeight === t || (this.lastWidth = e, this.lastHeight = t, this.worker.postMessage({
+        type: "UPDATE_CAMERA",
+        width: e,
+        height: t
+      }));
+    }
+    loadAnimation(e) {
+      this.worker.postMessage({
+        type: "LOAD_ANIMATION",
+        data: e
+      }, [
+        e.buffer
+      ]);
+    }
+    setAnimation(e) {
+      this.worker.postMessage({
+        type: "SET_ANIMATION",
+        index: e
+      });
+    }
+    get vertices() {
+      return this._vertices;
+    }
+    get normals() {
+      return this._normals;
+    }
+    get uvs() {
+      return this._uvs;
+    }
+    get indices() {
+      return this._indices;
+    }
+    get attributes() {
+      return this._attributes;
+    }
+    get tlas() {
+      return this._tlas;
+    }
+    get blas() {
+      return this._blas;
+    }
+    get instances() {
+      return this._instances;
+    }
+    get cameraData() {
+      return this._cameraData;
+    }
+    get textureCount() {
+      return this._textureCount;
     }
     get hasWorld() {
-      return !!this.world;
+      return this._vertices.length > 0;
     }
     printStats() {
-      this.world && console.log(`Scene Stats: V=${this.vertices.length / 4}, Tri=${this.indices.length / 3}, BLAS=${this.blas.length / 8}, TLAS=${this.tlas.length / 8}`);
+      console.log(`Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Tri=${this.indices.length / 3}`);
     }
   }
   const h = {
@@ -1112,7 +912,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       statusDiv: "status"
     }
   };
-  class Be {
+  class ne {
     constructor() {
       __publicField(this, "canvas");
       __publicField(this, "btnRender");
@@ -1188,8 +988,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         return (_a = this.onRecompile) == null ? void 0 : _a.call(this, parseInt(this.inputDepth.value) || 10, parseInt(this.inputSPP.value) || 1);
       }), this.inputFile.addEventListener("change", (t) => {
         var _a, _b;
-        const r = (_a = t.target.files) == null ? void 0 : _a[0];
-        r && ((_b = this.onFileSelect) == null ? void 0 : _b.call(this, r));
+        const n = (_a = t.target.files) == null ? void 0 : _a[0];
+        n && ((_b = this.onFileSelect) == null ? void 0 : _b.call(this, n));
       }), this.animSelect.addEventListener("change", () => {
         var _a;
         const t = parseInt(this.animSelect.value, 10);
@@ -1208,8 +1008,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     updateRenderButton(e) {
       this.btnRender.textContent = e ? "Stop Rendering" : "Resume Rendering";
     }
-    updateStats(e, t, r) {
-      this.statsDiv.textContent = `FPS: ${e} | ${t.toFixed(2)}ms | Frame: ${r}`;
+    updateStats(e, t, n) {
+      this.statsDiv.textContent = `FPS: ${e} | ${t.toFixed(2)}ms | Frame: ${n}`;
     }
     setStatus(e) {
       this.statusDiv.textContent = e;
@@ -1226,9 +1026,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         t.text = "No Anim", this.animSelect.add(t), this.animSelect.disabled = true;
         return;
       }
-      this.animSelect.disabled = false, e.forEach((t, r) => {
-        const s = document.createElement("option");
-        s.text = `[${r}] ${t}`, s.value = r.toString(), this.animSelect.add(s);
+      this.animSelect.disabled = false, e.forEach((t, n) => {
+        const r = document.createElement("option");
+        r.text = `[${n}] ${t}`, r.value = n.toString(), this.animSelect.add(r);
       }), this.animSelect.value = "0";
     }
     getRenderConfig() {
@@ -1246,29 +1046,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       this.inputWidth.value = e.width.toString(), this.inputHeight.value = e.height.toString(), this.inputRecFps.value = e.fps.toString(), this.inputRecDur.value = e.duration.toString(), this.inputRecSpp.value = e.spp.toString(), this.inputRecBatch.value = e.batch.toString();
     }
   }
-  class ke {
-    constructor(e, t, r) {
+  class re {
+    constructor(e, t, n) {
       __publicField(this, "isRecording", false);
       __publicField(this, "renderer");
       __publicField(this, "worldBridge");
       __publicField(this, "canvas");
-      this.renderer = e, this.worldBridge = t, this.canvas = r;
+      this.renderer = e, this.worldBridge = t, this.canvas = n;
     }
     get recording() {
       return this.isRecording;
     }
-    async record(e, t, r) {
+    async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: s, ArrayBufferTarget: i } = await se(async () => {
-        const { Muxer: d, ArrayBufferTarget: _ } = await import("./webm-muxer-MLtUgOCn.js");
+      const { Muxer: r, ArrayBufferTarget: i } = await q(async () => {
+        const { Muxer: p, ArrayBufferTarget: u } = await import("./webm-muxer-MLtUgOCn.js");
         return {
-          Muxer: d,
-          ArrayBufferTarget: _
+          Muxer: p,
+          ArrayBufferTarget: u
         };
-      }, []), a = Math.ceil(e.fps * e.duration);
-      console.log(`Starting recording: ${a} frames @ ${e.fps}fps (VP9)`);
-      const l = new s({
+      }, []), o = Math.ceil(e.fps * e.duration);
+      console.log(`Starting recording: ${o} frames @ ${e.fps}fps (VP9)`);
+      const c = new r({
         target: new i(),
         video: {
           codec: "V_VP9",
@@ -1276,26 +1076,26 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           height: this.canvas.height,
           frameRate: e.fps
         }
-      }), u = new VideoEncoder({
-        output: (d, _) => l.addVideoChunk(d, _),
-        error: (d) => console.error("VideoEncoder Error:", d)
+      }), d = new VideoEncoder({
+        output: (p, u) => c.addVideoChunk(p, u),
+        error: (p) => console.error("VideoEncoder Error:", p)
       });
-      u.configure({
+      d.configure({
         codec: "vp09.00.10.08",
         width: this.canvas.width,
         height: this.canvas.height,
         bitrate: 12e6
       });
       try {
-        await this.renderAndEncode(a, e, u, t, e.startFrame || 0), await u.flush(), l.finalize();
-        const { buffer: d } = l.target, _ = new Blob([
-          d
+        await this.renderAndEncode(o, e, d, t, e.startFrame || 0), await d.flush(), c.finalize();
+        const { buffer: p } = c.target, u = new Blob([
+          p
         ], {
           type: "video/webm"
-        }), y = URL.createObjectURL(_);
-        r(y, _);
-      } catch (d) {
-        throw console.error("Recording failed:", d), d;
+        }), y = URL.createObjectURL(u);
+        n(y, u);
+      } catch (p) {
+        throw console.error("Recording failed:", p), p;
       } finally {
         this.isRecording = false;
       }
@@ -1303,18 +1103,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async recordChunks(e, t) {
       if (this.isRecording) throw new Error("Already recording");
       this.isRecording = true;
-      const r = [], s = Math.ceil(e.fps * e.duration), i = new VideoEncoder({
-        output: (a, l) => {
-          const u = new Uint8Array(a.byteLength);
-          a.copyTo(u), r.push({
-            type: a.type,
-            timestamp: a.timestamp,
-            duration: a.duration,
-            data: u.buffer,
-            decoderConfig: l == null ? void 0 : l.decoderConfig
+      const n = [], r = Math.ceil(e.fps * e.duration), i = new VideoEncoder({
+        output: (o, c) => {
+          const d = new Uint8Array(o.byteLength);
+          o.copyTo(d), n.push({
+            type: o.type,
+            timestamp: o.timestamp,
+            duration: o.duration,
+            data: d.buffer,
+            decoderConfig: c == null ? void 0 : c.decoderConfig
           });
         },
-        error: (a) => console.error("VideoEncoder Error:", a)
+        error: (o) => console.error("VideoEncoder Error:", o)
       });
       i.configure({
         codec: "vp09.00.10.08",
@@ -1323,23 +1123,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         bitrate: 12e6
       });
       try {
-        return await this.renderAndEncode(s, e, i, t, e.startFrame || 0), await i.flush(), r;
+        return await this.renderAndEncode(r, e, i, t, e.startFrame || 0), await i.flush(), n;
       } finally {
         this.isRecording = false;
       }
     }
-    async renderAndEncode(e, t, r, s, i = 0) {
-      for (let a = 0; a < e; a++) {
-        s(a, e), await new Promise((_) => setTimeout(_, 0));
-        const l = i + a, u = l / t.fps;
-        this.worldBridge.update(u), await this.updateSceneBuffers(), await this.renderFrame(t.spp, t.batch), r.encodeQueueSize > 5 && await r.flush();
-        const d = new VideoFrame(this.canvas, {
-          timestamp: l * 1e6 / t.fps,
+    async renderAndEncode(e, t, n, r, i = 0) {
+      const o = i;
+      this.worldBridge.update(o / t.fps), await this.worldBridge.waitForNextUpdate();
+      for (let c = 0; c < e; c++) {
+        r(c, e), await new Promise((u) => setTimeout(u, 0)), await this.updateSceneBuffers();
+        let d = null;
+        if (c < e - 1) {
+          const u = i + c + 1;
+          this.worldBridge.update(u / t.fps), d = this.worldBridge.waitForNextUpdate();
+        }
+        await this.renderFrame(t.spp, t.batch), n.encodeQueueSize > 5 && await n.flush();
+        const p = new VideoFrame(this.canvas, {
+          timestamp: (i + c) * 1e6 / t.fps,
           duration: 1e6 / t.fps
         });
-        r.encode(d, {
-          keyFrame: a % t.fps === 0
-        }), d.close();
+        n.encode(p, {
+          keyFrame: c % t.fps === 0
+        }), p.close(), d && await d;
       }
     }
     async updateSceneBuffers() {
@@ -1347,22 +1153,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       e || (e = this.renderer.updateCombinedBVH(this.worldBridge.tlas, this.worldBridge.blas)), e || (e = this.renderer.updateBuffer("instance", this.worldBridge.instances)), e || (e = this.renderer.updateCombinedGeometry(this.worldBridge.vertices, this.worldBridge.normals, this.worldBridge.uvs)), e || (e = this.renderer.updateBuffer("index", this.worldBridge.indices)), e || (e = this.renderer.updateBuffer("attr", this.worldBridge.attributes)), this.worldBridge.updateCamera(this.canvas.width, this.canvas.height), this.renderer.updateSceneUniforms(this.worldBridge.cameraData, 0), e && this.renderer.recreateBindGroup(), this.renderer.resetAccumulation();
     }
     async renderFrame(e, t) {
-      let r = 0;
-      for (; r < e; ) {
-        const s = Math.min(t, e - r);
-        for (let i = 0; i < s; i++) this.renderer.render(r + i);
-        r += s, await this.renderer.device.queue.onSubmittedWorkDone(), r < e && await new Promise((i) => setTimeout(i, 0));
+      let n = 0;
+      for (; n < e; ) {
+        const r = Math.min(t, e - n);
+        for (let i = 0; i < r; i++) this.renderer.render(n + i);
+        n += r, await this.renderer.device.queue.onSubmittedWorkDone(), n < e && await new Promise((i) => setTimeout(i, 0));
       }
     }
   }
-  const Ce = {
+  const se = {
     iceServers: [
       {
         urls: "stun:stun.l.google.com:19302"
       }
     ]
   };
-  class te {
+  class F {
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -1378,10 +1184,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "onDataChannelOpen", null);
       __publicField(this, "onAckReceived", null);
       __publicField(this, "onWorkerReady", null);
-      this.remoteId = e, this.sendSignal = t, this.pc = new RTCPeerConnection(Ce), this.pc.onicecandidate = (r) => {
-        r.candidate && this.sendSignal({
+      this.remoteId = e, this.sendSignal = t, this.pc = new RTCPeerConnection(se), this.pc.onicecandidate = (n) => {
+        n.candidate && this.sendSignal({
           type: "candidate",
-          candidate: r.candidate.toJSON(),
+          candidate: n.candidate.toJSON(),
           targetId: this.remoteId
         });
       };
@@ -1396,8 +1202,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       });
     }
     async handleOffer(e) {
-      this.pc.ondatachannel = (r) => {
-        this.dc = r.channel, this.setupDataChannel();
+      this.pc.ondatachannel = (n) => {
+        this.dc = n.channel, this.setupDataChannel();
       }, await this.pc.setRemoteDescription(new RTCSessionDescription(e));
       const t = await this.pc.createAnswer();
       await this.pc.setLocalDescription(t), this.sendSignal({
@@ -1412,59 +1218,59 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async handleCandidate(e) {
       await this.pc.addIceCandidate(new RTCIceCandidate(e));
     }
-    async sendScene(e, t, r) {
+    async sendScene(e, t, n) {
       if (!this.dc || this.dc.readyState !== "open") return;
-      let s;
-      typeof e == "string" ? s = new TextEncoder().encode(e) : s = new Uint8Array(e);
+      let r;
+      typeof e == "string" ? r = new TextEncoder().encode(e) : r = new Uint8Array(e);
       const i = {
         type: "SCENE_INIT",
-        totalBytes: s.byteLength,
+        totalBytes: r.byteLength,
         config: {
-          ...r,
+          ...n,
           fileType: t
         }
       };
-      this.sendData(i), await this.sendBinaryChunks(s);
+      this.sendData(i), await this.sendBinaryChunks(r);
     }
     async sendRenderResult(e, t) {
       if (!this.dc || this.dc.readyState !== "open") return;
-      let r = 0;
-      const s = e.map((l) => {
-        const u = l.data.byteLength;
-        return r += u, {
-          type: l.type,
-          timestamp: l.timestamp,
-          duration: l.duration,
-          size: u,
-          decoderConfig: l.decoderConfig
+      let n = 0;
+      const r = e.map((c) => {
+        const d = c.data.byteLength;
+        return n += d, {
+          type: c.type,
+          timestamp: c.timestamp,
+          duration: c.duration,
+          size: d,
+          decoderConfig: c.decoderConfig
         };
       });
-      console.log(`[RTC] Sending Render Result: ${r} bytes, ${e.length} chunks`), this.sendData({
+      console.log(`[RTC] Sending Render Result: ${n} bytes, ${e.length} chunks`), this.sendData({
         type: "RENDER_RESULT",
         startFrame: t,
-        totalBytes: r,
-        chunksMeta: s
+        totalBytes: n,
+        chunksMeta: r
       });
-      const i = new Uint8Array(r);
-      let a = 0;
-      for (const l of e) i.set(new Uint8Array(l.data), a), a += l.data.byteLength;
+      const i = new Uint8Array(n);
+      let o = 0;
+      for (const c of e) i.set(new Uint8Array(c.data), o), o += c.data.byteLength;
       await this.sendBinaryChunks(i);
     }
     async sendBinaryChunks(e) {
-      let r = 0;
-      const s = () => new Promise((i) => {
-        const a = setInterval(() => {
-          (!this.dc || this.dc.bufferedAmount < 65536) && (clearInterval(a), i());
+      let n = 0;
+      const r = () => new Promise((i) => {
+        const o = setInterval(() => {
+          (!this.dc || this.dc.bufferedAmount < 65536) && (clearInterval(o), i());
         }, 5);
       });
-      for (; r < e.byteLength; ) {
-        this.dc && this.dc.bufferedAmount > 256 * 1024 && await s();
-        const i = Math.min(r + 16384, e.byteLength);
+      for (; n < e.byteLength; ) {
+        this.dc && this.dc.bufferedAmount > 256 * 1024 && await r();
+        const i = Math.min(n + 16384, e.byteLength);
         if (this.dc) try {
-          this.dc.send(e.subarray(r, i));
+          this.dc.send(e.subarray(n, i));
         } catch {
         }
-        r = i, r % (16384 * 5) === 0 && await new Promise((a) => setTimeout(a, 0));
+        n = i, n % (16384 * 5) === 0 && await new Promise((o) => setTimeout(o, 0));
       }
       console.log("[RTC] Transfer Complete");
     }
@@ -1474,8 +1280,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }, this.dc.onmessage = (e) => {
         const t = e.data;
         if (typeof t == "string") try {
-          const r = JSON.parse(t);
-          this.handleControlMessage(r);
+          const n = JSON.parse(t);
+          this.handleControlMessage(n);
         } catch {
         }
         else t instanceof ArrayBuffer && this.handleBinaryChunk(t);
@@ -1514,16 +1320,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       } else if (this.resultMeta && this.receivedBytes >= this.resultMeta.totalBytes) {
         console.log("[RTC] Render Result Complete!");
         const t = [];
-        let r = 0;
-        for (const s of this.resultMeta.chunksMeta) {
-          const i = this.receiveBuffer.slice(r, r + s.size);
+        let n = 0;
+        for (const r of this.resultMeta.chunksMeta) {
+          const i = this.receiveBuffer.slice(n, n + r.size);
           t.push({
-            type: s.type,
-            timestamp: s.timestamp,
-            duration: s.duration,
+            type: r.type,
+            timestamp: r.timestamp,
+            duration: r.duration,
             data: i.buffer,
-            decoderConfig: s.decoderConfig
-          }), r += s.size;
+            decoderConfig: r.decoderConfig
+          }), n += r.size;
         }
         (_b = this.onRenderResult) == null ? void 0 : _b.call(this, t, this.resultMeta.startFrame), this.resultMeta = null;
       }
@@ -1538,14 +1344,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         receivedBytes: e
       });
     }
-    sendRenderRequest(e, t, r) {
-      const s = {
+    sendRenderRequest(e, t, n) {
+      const r = {
         type: "RENDER_REQUEST",
         startFrame: e,
         frameCount: t,
-        config: r
+        config: n
       };
-      this.sendData(s);
+      this.sendData(r);
     }
     sendWorkerReady() {
       this.sendData({
@@ -1556,7 +1362,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       this.dc && (this.dc.close(), this.dc = null), this.pc && this.pc.close(), console.log(`[RTC] Connection closed: ${this.remoteId}`);
     }
   }
-  class Te {
+  class ie {
     constructor() {
       __publicField(this, "ws", null);
       __publicField(this, "myRole", null);
@@ -1582,9 +1388,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         console.log("WS Connected"), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, `Waiting for Peer (${e.toUpperCase()})`), this.sendSignal({
           type: e === "host" ? "register_host" : "register_worker"
         });
-      }, this.ws.onmessage = (r) => {
-        const s = JSON.parse(r.data);
-        this.handleMessage(s);
+      }, this.ws.onmessage = (n) => {
+        const r = JSON.parse(n.data);
+        this.handleMessage(r);
       }, this.ws.onclose = () => {
         var _a2;
         (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Disconnected"), this.ws = null;
@@ -1611,22 +1417,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       this.myRole === "host" ? await this.handleHostMessage(e) : await this.handleWorkerMessage(e);
     }
     async handleHostMessage(e) {
-      var _a, _b, _c, _d, _e2;
+      var _a, _b, _c, _d, _e;
       switch (e.type) {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
-          const t = new te(e.workerId, (r) => this.sendSignal(r));
+          const t = new F(e.workerId, (n) => this.sendSignal(n));
           this.workers.set(e.workerId, t), t.onDataChannelOpen = () => {
             var _a2;
             console.log(`[Host] Open for ${e.workerId}`), t.sendData({
               type: "HELLO",
               msg: "Hello from Host!"
             }), (_a2 = this.onWorkerJoined) == null ? void 0 : _a2.call(this, e.workerId);
-          }, t.onAckReceived = (r) => {
-            console.log(`Worker ${e.workerId} ACK: ${r}`);
-          }, t.onRenderResult = (r, s) => {
+          }, t.onAckReceived = (n) => {
+            console.log(`Worker ${e.workerId} ACK: ${n}`);
+          }, t.onRenderResult = (n, r) => {
             var _a2;
-            console.log(`Received Render Result from ${e.workerId}: ${r.length} chunks`), (_a2 = this.onRenderResult) == null ? void 0 : _a2.call(this, r, s, e.workerId);
+            console.log(`Received Render Result from ${e.workerId}: ${n.length} chunks`), (_a2 = this.onRenderResult) == null ? void 0 : _a2.call(this, n, r, e.workerId);
           }, t.onWorkerReady = () => {
             var _a2;
             (_a2 = this.onWorkerReady) == null ? void 0 : _a2.call(this, e.workerId);
@@ -1645,7 +1451,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           alert("Host already exists!");
           break;
         case "WORKER_READY":
-          e.workerId && ((_e2 = this.onWorkerReady) == null ? void 0 : _e2.call(this, e.workerId));
+          e.workerId && ((_e = this.onWorkerReady) == null ? void 0 : _e.call(this, e.workerId));
           break;
       }
     }
@@ -1656,20 +1462,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       var _a, _b, _c;
       switch (e.type) {
         case "offer":
-          e.fromId && (this.hostClient = new te(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
+          e.fromId && (this.hostClient = new F(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
             var _a2, _b2;
             (_a2 = this.hostClient) == null ? void 0 : _a2.sendData({
               type: "HELLO",
               msg: "Hello from Worker!"
             }), (_b2 = this.onHostHello) == null ? void 0 : _b2.call(this);
-          }, this.hostClient.onSceneReceived = (t, r) => {
+          }, this.hostClient.onSceneReceived = (t, n) => {
             var _a2, _b2;
-            (_a2 = this.onSceneReceived) == null ? void 0 : _a2.call(this, t, r);
-            const s = typeof t == "string" ? t.length : t.byteLength;
-            (_b2 = this.hostClient) == null ? void 0 : _b2.sendAck(s);
-          }, this.hostClient.onRenderRequest = (t, r, s) => {
+            (_a2 = this.onSceneReceived) == null ? void 0 : _a2.call(this, t, n);
+            const r = typeof t == "string" ? t.length : t.byteLength;
+            (_b2 = this.hostClient) == null ? void 0 : _b2.sendAck(r);
+          }, this.hostClient.onRenderRequest = (t, n, r) => {
             var _a2;
-            (_a2 = this.onRenderRequest) == null ? void 0 : _a2.call(this, t, r, s);
+            (_a2 = this.onRenderRequest) == null ? void 0 : _a2.call(this, t, n, r);
           });
           break;
         case "candidate":
@@ -1677,196 +1483,196 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           break;
       }
     }
-    async broadcastScene(e, t, r) {
-      const s = Array.from(this.workers.values()).map((i) => i.sendScene(e, t, r));
-      await Promise.all(s);
+    async broadcastScene(e, t, n) {
+      const r = Array.from(this.workers.values()).map((i) => i.sendScene(e, t, n));
+      await Promise.all(r);
     }
-    async sendSceneToWorker(e, t, r, s) {
+    async sendSceneToWorker(e, t, n, r) {
       const i = this.workers.get(e);
-      i && await i.sendScene(t, r, s);
+      i && await i.sendScene(t, n, r);
     }
-    async sendRenderRequest(e, t, r, s) {
+    async sendRenderRequest(e, t, n, r) {
       const i = this.workers.get(e);
-      i && await i.sendRenderRequest(t, r, s);
+      i && await i.sendRenderRequest(t, n, r);
     }
   }
-  let b = false, w = null, x = null, R = null, B = [], $ = /* @__PURE__ */ new Map(), P = 0, F = 0, q = 0, T = null, v = /* @__PURE__ */ new Map(), D = /* @__PURE__ */ new Map(), j = false, M = null;
-  const ne = 20, o = new Be(), p = new _e(o.canvas), f = new xe(), H = new ke(p, f, o.canvas), g = new Te();
-  let C = 0, J = 0, I = 0, re = performance.now();
-  const Ae = () => {
-    const n = parseInt(o.inputDepth.value, 10) || h.defaultDepth, e = parseInt(o.inputSPP.value, 10) || h.defaultSPP;
-    p.buildPipeline(n, e);
-  }, Y = () => {
-    const { width: n, height: e } = o.getRenderConfig();
-    p.updateScreenSize(n, e), f.hasWorld && (f.updateCamera(n, e), p.updateSceneUniforms(f.cameraData, 0)), p.recreateBindGroup(), p.resetAccumulation(), C = 0, J = 0;
-  }, O = async (n, e = true) => {
-    b = false, console.log(`Loading Scene: ${n}...`);
-    let t, r;
-    n === "viewer" && w && (x === "obj" ? t = w : x === "glb" && (r = new Uint8Array(w))), f.loadScene(n, t, r), f.printStats(), await p.loadTexturesFromWorld(f), await Ee(), Y(), o.updateAnimList(f.getAnimationList()), e && (b = true, o.updateRenderButton(true));
-  }, Ee = async () => {
-    p.updateCombinedGeometry(f.vertices, f.normals, f.uvs), p.updateCombinedBVH(f.tlas, f.blas), p.updateBuffer("index", f.indices), p.updateBuffer("attr", f.attributes), p.updateBuffer("instance", f.instances);
-  }, z = () => {
-    if (H.recording || (requestAnimationFrame(z), !b || !f.hasWorld)) return;
-    let n = parseInt(o.inputUpdateInterval.value, 10) || 0;
-    if (n < 0 && (n = 0), n > 0 && C >= n) {
-      f.update(J / n / 60);
+  let m = false, b = null, k = null, _ = null, R = [], D = /* @__PURE__ */ new Map(), A = 0, U = 0, L = 0, S = null, v = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), M = false, E = null;
+  const O = 20, a = new ne(), f = new Z(a.canvas), l = new te(), P = new re(f, l, a.canvas), g = new ie();
+  let x = 0, N = 0, T = 0, G = performance.now();
+  const ae = () => {
+    const s = parseInt(a.inputDepth.value, 10) || h.defaultDepth, e = parseInt(a.inputSPP.value, 10) || h.defaultSPP;
+    f.buildPipeline(s, e);
+  }, $ = () => {
+    const { width: s, height: e } = a.getRenderConfig();
+    f.updateScreenSize(s, e), l.hasWorld && (l.updateCamera(s, e), f.updateSceneUniforms(l.cameraData, 0)), f.recreateBindGroup(), f.resetAccumulation(), x = 0, N = 0;
+  }, I = async (s, e = true) => {
+    m = false, console.log(`Loading Scene: ${s}...`);
+    let t, n;
+    s === "viewer" && b && (k === "obj" ? t = b : k === "glb" && (n = new Uint8Array(b).slice(0))), await l.loadScene(s, t, n), l.printStats(), await f.loadTexturesFromWorld(l), await oe(), $(), a.updateAnimList(l.getAnimationList()), e && (m = true, a.updateRenderButton(true));
+  }, oe = async () => {
+    f.updateCombinedGeometry(l.vertices, l.normals, l.uvs), f.updateCombinedBVH(l.tlas, l.blas), f.updateBuffer("index", l.indices), f.updateBuffer("attr", l.attributes), f.updateBuffer("instance", l.instances), f.updateSceneUniforms(l.cameraData, 0);
+  }, W = () => {
+    if (P.recording || (requestAnimationFrame(W), !m || !l.hasWorld)) return;
+    let s = parseInt(a.inputUpdateInterval.value, 10) || 0;
+    if (s > 0 && x >= s && l.update(N / (s || 1) / 60), l.hasNewData) {
       let t = false;
-      t || (t = p.updateCombinedBVH(f.tlas, f.blas)), t || (t = p.updateBuffer("instance", f.instances)), t || (t = p.updateCombinedGeometry(f.vertices, f.normals, f.uvs)), t || (t = p.updateBuffer("index", f.indices)), t || (t = p.updateBuffer("attr", f.attributes)), f.updateCamera(o.canvas.width, o.canvas.height), p.updateSceneUniforms(f.cameraData, 0), t && p.recreateBindGroup(), p.resetAccumulation(), C = 0;
+      t || (t = f.updateCombinedBVH(l.tlas, l.blas)), t || (t = f.updateBuffer("instance", l.instances)), l.hasNewGeometry && (t || (t = f.updateCombinedGeometry(l.vertices, l.normals, l.uvs)), t || (t = f.updateBuffer("index", l.indices)), t || (t = f.updateBuffer("attr", l.attributes)), l.hasNewGeometry = false), l.updateCamera(a.canvas.width, a.canvas.height), f.updateSceneUniforms(l.cameraData, 0), t && f.recreateBindGroup(), f.resetAccumulation(), x = 0, l.hasNewData = false;
     }
-    C++, I++, J++, p.render(C);
+    x++, T++, N++, f.render(x);
     const e = performance.now();
-    e - re >= 1e3 && (o.updateStats(I, 1e3 / I, C), I = 0, re = e);
-  }, ae = async (n) => {
-    if (!w || !x) return;
-    const e = o.getRenderConfig();
-    n ? (console.log(`Sending scene to specific worker: ${n}`), v.set(n, "loading"), await g.sendSceneToWorker(n, w, x, e)) : (console.log("Broadcasting scene to all workers..."), g.getWorkerIds().forEach((t) => v.set(t, "loading")), await g.broadcastScene(w, x, e));
-  }, oe = async (n) => {
-    if (v.get(n) !== "idle") {
-      console.log(`Worker ${n} is ${v.get(n)}, skipping assignment.`);
+    e - G >= 1e3 && (a.updateStats(T, 1e3 / T, x), T = 0, G = e);
+  }, z = async (s) => {
+    const e = a.sceneSelect.value, t = e !== "viewer";
+    if (!t && (!b || !k)) return;
+    const n = a.getRenderConfig(), r = t ? e : void 0, i = t ? "DUMMY" : b, o = t ? "obj" : k;
+    n.sceneName = r, s ? (console.log(`Sending scene to specific worker: ${s}`), v.set(s, "loading"), await g.sendSceneToWorker(s, i, o, n)) : (console.log("Broadcasting scene to all workers..."), g.getWorkerIds().forEach((c) => v.set(c, "loading")), await g.broadcastScene(i, o, n));
+  }, V = async (s) => {
+    if (v.get(s) !== "idle") {
+      console.log(`Worker ${s} is ${v.get(s)}, skipping assignment.`);
       return;
     }
-    if (B.length === 0) return;
-    const e = B.shift();
-    e && (v.set(n, "busy"), D.set(n, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${n}`), await g.sendRenderRequest(n, e.start, e.count, {
-      ...T,
+    if (R.length === 0) return;
+    const e = R.shift();
+    e && (v.set(s, "busy"), C.set(s, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${s}`), await g.sendRenderRequest(s, e.start, e.count, {
+      ...S,
       fileType: "obj"
     }));
-  }, We = async () => {
-    const n = Array.from($.keys()).sort((u, d) => u - d), { Muxer: e, ArrayBufferTarget: t } = await se(async () => {
-      const { Muxer: u, ArrayBufferTarget: d } = await import("./webm-muxer-MLtUgOCn.js");
+  }, ce = async () => {
+    const s = Array.from(D.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await q(async () => {
+      const { Muxer: d, ArrayBufferTarget: p } = await import("./webm-muxer-MLtUgOCn.js");
       return {
-        Muxer: u,
-        ArrayBufferTarget: d
+        Muxer: d,
+        ArrayBufferTarget: p
       };
-    }, []), r = new e({
+    }, []), n = new e({
       target: new t(),
       video: {
         codec: "V_VP9",
-        width: T.width,
-        height: T.height,
-        frameRate: T.fps
+        width: S.width,
+        height: S.height,
+        frameRate: S.fps
       }
     });
-    for (const u of n) {
-      const d = $.get(u);
-      if (d) for (const _ of d) r.addVideoChunk(new EncodedVideoChunk({
-        type: _.type,
-        timestamp: _.timestamp,
-        duration: _.duration,
-        data: _.data
+    for (const d of s) {
+      const p = D.get(d);
+      if (p) for (const u of p) n.addVideoChunk(new EncodedVideoChunk({
+        type: u.type,
+        timestamp: u.timestamp,
+        duration: u.duration,
+        data: u.data
       }), {
-        decoderConfig: _.decoderConfig
+        decoderConfig: u.decoderConfig
       });
     }
-    r.finalize();
-    const { buffer: s } = r.target, i = new Blob([
-      s
+    n.finalize();
+    const { buffer: r } = n.target, i = new Blob([
+      r
     ], {
       type: "video/webm"
-    }), a = URL.createObjectURL(i), l = document.createElement("a");
-    l.href = a, l.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(l), l.click(), document.body.removeChild(l), URL.revokeObjectURL(a), o.setStatus("Finished!");
-  }, ce = async (n, e, t) => {
-    console.log(`[Worker] Starting Render: Frames ${n} - ${n + e}`), o.setStatus(`Remote Rendering: ${n}-${n + e}`), b = false;
-    const r = {
+    }), o = URL.createObjectURL(i), c = document.createElement("a");
+    c.href = o, c.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(c), c.click(), document.body.removeChild(c), URL.revokeObjectURL(o), a.setStatus("Finished!");
+  }, j = async (s, e, t) => {
+    console.log(`[Worker] Starting Render: Frames ${s} - ${s + e}`), a.setStatus(`Remote Rendering: ${s}-${s + e}`), m = false;
+    const n = {
       ...t,
-      startFrame: n,
+      startFrame: s,
       duration: e / t.fps
     };
     try {
-      o.setRecordingState(true, `Remote: ${e} f`);
-      const s = await H.recordChunks(r, (i, a) => o.setRecordingState(true, `Remote: ${i}/${a}`));
-      console.log("Sending Chunks back to Host..."), o.setRecordingState(true, "Uploading..."), await g.sendRenderResult(s, n), o.setRecordingState(false), o.setStatus("Idle");
-    } catch (s) {
-      console.error("Remote Recording Failed", s), o.setStatus("Recording Failed");
+      a.setRecordingState(true, `Remote: ${e} f`);
+      const r = await P.recordChunks(n, (i, o) => a.setRecordingState(true, `Remote: ${i}/${o}`));
+      console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await g.sendRenderResult(r, s), a.setRecordingState(false), a.setStatus("Idle");
+    } catch (r) {
+      console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
     } finally {
-      b = true, requestAnimationFrame(z);
+      m = true, requestAnimationFrame(W);
     }
-  }, De = async () => {
-    if (!M) return;
-    const { start: n, count: e, config: t } = M;
-    M = null, await ce(n, e, t);
+  }, le = async () => {
+    if (!E) return;
+    const { start: s, count: e, config: t } = E;
+    E = null, await j(s, e, t);
   };
-  g.onStatusChange = (n) => o.setStatus(`Status: ${n}`);
-  g.onWorkerLeft = (n) => {
-    console.log(`Worker Left: ${n}`), o.setStatus(`Worker Left: ${n}`), v.delete(n);
-    const e = D.get(n);
-    e && (console.warn(`Worker ${n} failed job ${e.start}. Re-queueing.`), B.unshift(e), D.delete(n), o.setStatus(`Re-queued Job ${e.start}`));
+  g.onStatusChange = (s) => a.setStatus(`Status: ${s}`);
+  g.onWorkerLeft = (s) => {
+    console.log(`Worker Left: ${s}`), a.setStatus(`Worker Left: ${s}`), v.delete(s);
+    const e = C.get(s);
+    e && (console.warn(`Worker ${s} failed job ${e.start}. Re-queueing.`), R.unshift(e), C.delete(s), a.setStatus(`Re-queued Job ${e.start}`));
   };
-  g.onWorkerReady = (n) => {
-    console.log(`Worker ${n} is READY`), o.setStatus(`Worker ${n} Ready!`), v.set(n, "idle"), R === "host" && B.length > 0 && oe(n);
+  g.onWorkerReady = (s) => {
+    console.log(`Worker ${s} is READY`), a.setStatus(`Worker ${s} Ready!`), v.set(s, "idle"), _ === "host" && R.length > 0 && V(s);
   };
-  g.onWorkerJoined = (n) => {
-    o.setStatus(`Worker Joined: ${n}`), v.set(n, "idle"), R === "host" && B.length > 0 && ae(n);
+  g.onWorkerJoined = (s) => {
+    a.setStatus(`Worker Joined: ${s}`), v.set(s, "idle"), _ === "host" && R.length > 0 && z(s);
   };
-  g.onRenderRequest = async (n, e, t) => {
-    if (console.log(`[Worker] Received Render Request: Frames ${n} - ${n + e}`), j) {
-      console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${n}`), M = {
-        start: n,
+  g.onRenderRequest = async (s, e, t) => {
+    if (console.log(`[Worker] Received Render Request: Frames ${s} - ${s + e}`), M) {
+      console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${s}`), E = {
+        start: s,
         count: e,
         config: t
       };
       return;
     }
-    await ce(n, e, t);
+    await j(s, e, t);
   };
-  g.onRenderResult = async (n, e, t) => {
-    console.log(`[Host] Received ${n.length} chunks for ${e} from ${t}`), $.set(e, n), P++, o.setStatus(`Distributed Progress: ${P} / ${F} jobs`), v.set(t, "idle"), D.delete(t), await oe(t), P >= F && (console.log("All jobs complete. Muxing..."), o.setStatus("Muxing..."), await We());
+  g.onRenderResult = async (s, e, t) => {
+    console.log(`[Host] Received ${s.length} chunks for ${e} from ${t}`), D.set(e, s), A++, a.setStatus(`Distributed Progress: ${A} / ${U} jobs`), v.set(t, "idle"), C.delete(t), await V(t), A >= U && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
   };
-  g.onSceneReceived = async (n, e) => {
-    console.log("Scene received successfully."), j = true, o.setRenderConfig(e), x = e.fileType, e.fileType, w = n, o.sceneSelect.value = "viewer", await O("viewer", false), e.anim !== void 0 && (o.animSelect.value = e.anim.toString(), f.setAnimation(e.anim)), j = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), De();
+  g.onSceneReceived = async (s, e) => {
+    console.log("Scene received successfully."), M = true, a.setRenderConfig(e), k = e.fileType, e.fileType, b = s, a.sceneSelect.value = e.sceneName || "viewer", await I(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), l.setAnimation(e.anim)), M = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), le();
   };
-  const Ie = () => {
-    o.onRenderStart = () => {
-      b = true;
-    }, o.onRenderStop = () => {
-      b = false;
-    }, o.onSceneSelect = (n) => O(n, false), o.onResolutionChange = Y, o.onRecompile = (n, e) => {
-      b = false, p.buildPipeline(n, e), p.recreateBindGroup(), p.resetAccumulation(), C = 0, b = true;
-    }, o.onFileSelect = async (n) => {
+  const de = () => {
+    a.onRenderStart = () => {
+      m = true;
+    }, a.onRenderStop = () => {
+      m = false;
+    }, a.onSceneSelect = (s) => I(s, false), a.onResolutionChange = $, a.onRecompile = (s, e) => {
+      m = false, f.buildPipeline(s, e), f.recreateBindGroup(), f.resetAccumulation(), x = 0, m = true;
+    }, a.onFileSelect = async (s) => {
       var _a;
-      ((_a = n.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await n.text(), x = "obj") : (w = await n.arrayBuffer(), x = "glb"), o.sceneSelect.value = "viewer", O("viewer", false);
-    }, o.onAnimSelect = (n) => f.setAnimation(n), o.onRecordStart = async () => {
-      if (!H.recording) if (R === "host") {
-        const n = g.getWorkerIds();
-        if (T = o.getRenderConfig(), q = Math.ceil(T.fps * T.duration), !confirm(`Distribute recording? (Workers: ${n.length})
+      ((_a = s.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (b = await s.text(), k = "obj") : (b = await s.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", I("viewer", false);
+    }, a.onAnimSelect = (s) => l.setAnimation(s), a.onRecordStart = async () => {
+      if (!P.recording) if (_ === "host") {
+        const s = g.getWorkerIds();
+        if (S = a.getRenderConfig(), L = Math.ceil(S.fps * S.duration), !confirm(`Distribute recording? (Workers: ${s.length})
 Auto Scene Sync enabled.`)) return;
-        B = [], $.clear(), P = 0, D.clear();
-        for (let e = 0; e < q; e += ne) {
-          const t = Math.min(ne, q - e);
-          B.push({
+        R = [], D.clear(), A = 0, C.clear();
+        for (let e = 0; e < L; e += O) {
+          const t = Math.min(O, L - e);
+          R.push({
             start: e,
             count: t
           });
         }
-        F = B.length, n.forEach((e) => v.set(e, "idle")), o.setStatus(`Distributed Progress: 0 / ${F} jobs (Waiting for workers...)`), n.length > 0 ? (o.setStatus("Syncing Scene to Workers..."), await ae()) : console.log("No workers yet. Waiting...");
+        U = R.length, s.forEach((e) => v.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${U} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await z()) : console.log("No workers yet. Waiting...");
       } else {
-        b = false, o.setRecordingState(true);
-        const n = o.getRenderConfig();
+        m = false, a.setRecordingState(true);
+        const s = a.getRenderConfig();
         try {
-          await H.record(n, (e, t) => o.setRecordingState(true, `Rec: ${e}/${t} (${Math.round(e / t * 100)}%)`), (e) => {
+          await P.record(s, (e, t) => a.setRecordingState(true, `Rec: ${e}/${t} (${Math.round(e / t * 100)}%)`), (e) => {
             const t = document.createElement("a");
             t.href = e, t.download = `raytrace_${Date.now()}.webm`, t.click(), URL.revokeObjectURL(e);
           });
         } catch {
           alert("Recording failed.");
         } finally {
-          o.setRecordingState(false), b = true, o.updateRenderButton(true), requestAnimationFrame(z);
+          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(W);
         }
       }
-    }, o.onConnectHost = () => {
-      R === "host" ? (g.disconnect(), R = null, o.setConnectionState(null)) : (g.connect("host"), R = "host", o.setConnectionState("host"));
-    }, o.onConnectWorker = () => {
-      R === "worker" ? (g.disconnect(), R = null, o.setConnectionState(null)) : (g.connect("worker"), R = "worker", o.setConnectionState("worker"));
-    }, o.setConnectionState(null);
+    }, a.onConnectHost = () => {
+      _ === "host" ? (g.disconnect(), _ = null, a.setConnectionState(null)) : (g.connect("host"), _ = "host", a.setConnectionState("host"));
+    }, a.onConnectWorker = () => {
+      _ === "worker" ? (g.disconnect(), _ = null, a.setConnectionState(null)) : (g.connect("worker"), _ = "worker", a.setConnectionState("worker"));
+    }, a.setConnectionState(null);
   };
-  async function Ue() {
+  async function ue() {
     try {
-      await p.init(), await f.initWasm();
-    } catch (n) {
-      alert("Init failed: " + n);
+      await f.init(), await l.initWasm();
+    } catch (s) {
+      alert("Init failed: " + s);
       return;
     }
-    Ie(), Ae(), Y(), O("cornell", false), requestAnimationFrame(z);
+    de(), ae(), $(), I("cornell", false), requestAnimationFrame(W);
   }
-  Ue().catch(console.error);
+  ue().catch(console.error);
 })();

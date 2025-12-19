@@ -34,6 +34,7 @@ export type RenderConfig = {
   batch: number; // RecのBatch
   fileType: "obj" | "glb"; // ファイル形式
   anim: number; // Animation Index
+  sceneName?: string; // For procedural scenes (e.g. "cornell_box")
 };
 
 // DataChannelで送るデータ
