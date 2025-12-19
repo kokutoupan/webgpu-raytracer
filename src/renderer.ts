@@ -37,6 +37,8 @@ export class WebGPURenderer {
   private blasOffset = 0;
   private vertexCount = 0;
 
+  private seed = Math.floor(Math.random() * 0xffffff);
+
   // Reuse to avoid allocation
   private uniformMixedData = new Uint32Array(4);
 
@@ -406,14 +408,15 @@ export class WebGPURenderer {
   compute(frameCount: number) {
     if (!this.bindGroup) return;
 
+    this.seed++;
+
     // Uniformの更新
     this.uniformMixedData[0] = frameCount;
+    this.uniformMixedData[3] = this.seed;
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
       96,
-      this.uniformMixedData,
-      0,
-      1
+      this.uniformMixedData
     );
 
     const dispatchX = Math.ceil(this.canvas.width / 8);

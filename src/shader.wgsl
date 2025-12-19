@@ -26,7 +26,7 @@ struct SceneUniforms {
     frame_count: u32,
     blas_base_idx: u32, // Start index of BLAS nodes in 'nodes' array
     vertex_count: u32,
-    pad2: u32
+    rand_seed: u32
 }
 
 struct TriangleAttributes {
@@ -376,7 +376,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(outputTex);
     if id.x >= dims.x || id.y >= dims.y { return; }
     let p_idx = id.y * dims.x + id.x;
-    var rng = init_rng(p_idx, scene.frame_count);
+    var rng = init_rng(p_idx, scene.rand_seed);
 
     var col = vec3(0.);
     for (var s = 0u; s < SPP; s++) {
