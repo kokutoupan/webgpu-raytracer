@@ -150,7 +150,8 @@ const renderFrame = () => {
   frameTimer++;
   totalFrameCount++;
 
-  renderer.render(frameCount);
+  renderer.compute(frameCount);
+  renderer.present();
 
   const now = performance.now();
   if (now - lastTime >= 1000) {

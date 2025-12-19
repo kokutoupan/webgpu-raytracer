@@ -485,6 +485,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "sampler");
       __publicField(this, "bufferSize", 0);
       __publicField(this, "canvas");
+      __publicField(this, "presentationFormat");
       __publicField(this, "blasOffset", 0);
       __publicField(this, "vertexCount", 0);
       __publicField(this, "uniformMixedData", new Uint32Array(4));
@@ -500,9 +501,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         requiredLimits: {
           maxStorageBuffersPerShaderStage: 10
         }
-      }), this.context = this.canvas.getContext("webgpu"), this.context.configure({
+      }), this.context = this.canvas.getContext("webgpu"), this.presentationFormat = navigator.gpu.getPreferredCanvasFormat(), this.context.configure({
         device: this.device,
-        format: "rgba8unorm",
+        format: this.presentationFormat,
         usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
       }), this.sceneUniformBuffer = this.device.createBuffer({
         size: 128,
@@ -547,7 +548,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     buildPipeline(e, t) {
       let n = Q;
-      n = n.replace(/const\s+MAX_DEPTH\s*=\s*\d+u;/, `const MAX_DEPTH = ${e}u;`), n = n.replace(/const\s+SPP\s*=\s*\d+u;/, `const SPP = ${t}u;`);
+      n = n.replace(/const\s+MAX_DEPTH\s*=\s*\d+u;/, `const MAX_DEPTH = ${e}u;`), n = n.replace(/const\s+SPP\s*=\s*\d+u;/, `const SPP = ${t}u;`), n = n.replace("rgba8unorm", this.presentationFormat);
       const r = this.device.createShaderModule({
         label: "RayTracing",
         code: n
@@ -567,7 +568,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           e,
           t
         ],
-        format: "rgba8unorm",
+        format: this.presentationFormat,
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC
       }), this.renderTargetView = this.renderTarget.createView(), this.bufferSize = e * t * 16, this.accumulateBuffer && this.accumulateBuffer.destroy(), this.accumulateBuffer = this.device.createBuffer({
         size: this.bufferSize,

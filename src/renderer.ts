@@ -402,12 +402,12 @@ export class WebGPURenderer {
     });
   }
 
-  render(frameCount: number) {
+  // ★ 名前を変更: render -> compute
+  compute(frameCount: number) {
     if (!this.bindGroup) return;
 
-    // Update frame count
+    // Uniformの更新
     this.uniformMixedData[0] = frameCount;
-    // Write only the first element (frameCount) to index 96
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
       96,
@@ -426,6 +426,19 @@ export class WebGPURenderer {
     pass.dispatchWorkgroups(dispatchX, dispatchY);
     pass.end();
 
+    // ★ copyTextureToTexture はここでは行わない
+    // 計算結果(renderTarget)はGPUメモリ内に残る
+
+    this.device.queue.submit([commandEncoder.finish()]);
+  }
+
+  // ★ 新設: 画面への転送のみを行うメソッド
+  present() {
+    if (!this.renderTarget) return;
+
+    const commandEncoder = this.device.createCommandEncoder();
+
+    // ここで初めてCanvasのテクスチャを取得してコピー
     commandEncoder.copyTextureToTexture(
       { texture: this.renderTarget },
       { texture: this.context.getCurrentTexture() },
