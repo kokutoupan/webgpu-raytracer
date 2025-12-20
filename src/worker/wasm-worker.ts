@@ -29,6 +29,7 @@ const sendSceneData = () => {
     world.mesh_topology_ptr(),
     world.mesh_topology_len()
   );
+  const lights = getU32(world.lights_ptr(), world.lights_len());
 
   // BVH & Instances
   const tlas = getF32(world.tlas_ptr(), world.tlas_len());
@@ -61,6 +62,7 @@ const sendSceneData = () => {
     normals,
     uvs,
     mesh_topology,
+    lights, // Added
     tlas,
     blas,
     instances,
@@ -76,6 +78,7 @@ const sendSceneData = () => {
     normals.buffer,
     uvs.buffer,
     mesh_topology.buffer,
+    lights.buffer, // Added
     tlas.buffer,
     blas.buffer,
     instances.buffer,
@@ -90,6 +93,7 @@ const sendUpdateResult = (includeGeometry = true) => {
   const tlas = getF32(world.tlas_ptr(), world.tlas_len());
   const blas = getF32(world.blas_ptr(), world.blas_len());
   const instances = getF32(world.instances_ptr(), world.instances_len());
+  const lights = getU32(world.lights_ptr(), world.lights_len()); // Added
   const camera = getF32(world.camera_ptr(), 24);
 
   let vertices, normals, uvs, mesh_topology;
@@ -122,6 +126,7 @@ const sendUpdateResult = (includeGeometry = true) => {
     tlas,
     blas,
     instances,
+    lights, // Added
     camera,
     vertices,
     normals,

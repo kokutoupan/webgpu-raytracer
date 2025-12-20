@@ -201,6 +201,10 @@ export class VideoRecorder {
       "topology",
       this.worldBridge.mesh_topology
     );
+    needsRebind ||= this.renderer.updateBuffer(
+      "lights",
+      this.worldBridge.lights
+    );
 
     this.worldBridge.updateCamera(this.canvas.width, this.canvas.height);
     this.renderer.updateSceneUniforms(this.worldBridge.cameraData, 0);

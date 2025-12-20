@@ -23,6 +23,7 @@ export class WebGPURenderer {
 
   // Standalone Buffers
   instanceBuffer!: GPUBuffer;
+  lightsBuffer!: GPUBuffer;
 
   // Texture Support
   texture!: GPUTexture;
@@ -221,7 +222,7 @@ export class WebGPURenderer {
     // 1.5x scaling policy
     let newSize = Math.ceil(size * 1.5);
     newSize = (newSize + 3) & ~3;
-    newSize = Math.max(newSize, 4);
+    newSize = Math.max(newSize, 16);
 
     return this.device.createBuffer({
       label,
@@ -230,9 +231,9 @@ export class WebGPURenderer {
     });
   }
 
-  // Handle generic buffers (topology, instances)
+  // Handle generic buffers (topology, instances, lights)
   updateBuffer(
-    type: "topology" | "instance",
+    type: "topology" | "instance" | "lights",
     data: Uint32Array | Float32Array
   ): boolean {
     const byteLen = data.byteLength;
@@ -249,7 +250,7 @@ export class WebGPURenderer {
         "TopologyBuffer"
       );
       buf = this.topologyBuffer;
-    } else {
+    } else if (type === "instance") {
       if (!this.instanceBuffer || this.instanceBuffer.size < byteLen)
         needsRebind = true;
       this.instanceBuffer = this.ensureBuffer(
@@ -258,6 +259,15 @@ export class WebGPURenderer {
         "InstanceBuffer"
       );
       buf = this.instanceBuffer;
+    } else {
+      if (!this.lightsBuffer || this.lightsBuffer.size < byteLen)
+        needsRebind = true;
+      this.lightsBuffer = this.ensureBuffer(
+        this.lightsBuffer,
+        byteLen,
+        "LightsBuffer"
+      );
+      buf = this.lightsBuffer;
     }
 
     this.device.queue.writeBuffer(buf, 0, data as any, 0, data.length);
@@ -368,7 +378,8 @@ export class WebGPURenderer {
       !this.accumulateBuffer ||
       !this.geometryBuffer ||
       !this.nodesBuffer ||
-      !this.sceneUniformBuffer
+      !this.sceneUniformBuffer ||
+      !this.lightsBuffer
     )
       return;
 
@@ -389,6 +400,7 @@ export class WebGPURenderer {
           resource: this.texture.createView({ dimension: "2d-array" }),
         },
         { binding: 8, resource: this.sampler },
+        { binding: 9, resource: { buffer: this.lightsBuffer } },
       ],
     });
   }

@@ -100,6 +100,7 @@ const uploadSceneBuffers = async () => {
   renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
   renderer.updateBuffer("topology", worldBridge.mesh_topology);
   renderer.updateBuffer("instance", worldBridge.instances);
+  renderer.updateBuffer("lights", worldBridge.lights); // Added
   renderer.updateSceneUniforms(worldBridge.cameraData, 0);
 };
 
@@ -135,6 +136,7 @@ const renderFrame = () => {
         "topology",
         worldBridge.mesh_topology
       );
+      needsRebind ||= renderer.updateBuffer("lights", worldBridge.lights); // Added
       worldBridge.hasNewGeometry = false;
     }
 

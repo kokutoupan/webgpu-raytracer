@@ -38,6 +38,11 @@ struct MeshTopology {
     data1: vec4<f32>
 }
 
+struct LightRef {
+    inst_idx: u32,
+    tri_idx: u32
+}
+
 struct BVHNode {
     min_b: vec3<f32>,
     left_first: f32, // [TLAS] Child/Inst Idx, [BLAS] Child/Tri Idx
@@ -70,6 +75,7 @@ struct Instance {
 @group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
 @group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; // Merged TLAS/BLAS
 @group(0) @binding(6) var<storage, read> instances: array<Instance>;
+@group(0) @binding(9) var<storage, read> lights: array<LightRef>;
 
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
@@ -275,105 +281,187 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     return res;
 }
 
+fn get_transform(inst: Instance) -> mat4x4<f32> {
+    return mat4x4<f32>(inst.transform_0, inst.transform_1, inst.transform_2, inst.transform_3);
+}
+
+fn sample_lights(origin: vec3<f32>, normal: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+    let num_lights = arrayLength(&lights);
+    if num_lights == 0u { return vec3(0.0); }
+
+    // Pick random light
+    let idx = u32(rand_pcg(rng) * f32(num_lights));
+    let light_ref = lights[idx];
+
+    let inst = instances[light_ref.inst_idx];
+    let tri = topology[light_ref.tri_idx];
+
+    // Get Triangle Vertices (Local)
+    let v0_local = get_pos(tri.v0);
+    let v1_local = get_pos(tri.v1);
+    let v2_local = get_pos(tri.v2);
+
+    // Transform to World
+    let transform = get_transform(inst);
+    let v0 = (transform * vec4(v0_local, 1.0)).xyz;
+    let v1 = (transform * vec4(v1_local, 1.0)).xyz;
+    let v2 = (transform * vec4(v2_local, 1.0)).xyz;
+
+    // Sample Point on Triangle
+    let r1 = rand_pcg(rng);
+    let r2 = rand_pcg(rng);
+    let sqrt_r1 = sqrt(r1);
+    let u = 1.0 - sqrt_r1;
+    let v = sqrt_r1 * (1.0 - r2);
+    let w = sqrt_r1 * r2;
+
+    let light_pos = u * v0 + v * v1 + w * v2;
+    let light_vec = light_pos - origin;
+    let dist_sq = dot(light_vec, light_vec);
+    let dist = sqrt(dist_sq);
+    let dir = light_vec / dist;
+
+    // Visibility Check
+    if dot(dir, normal) <= 0.0 { return vec3(0.0); }
+
+    let shadow_ray = Ray(origin + normal * 1e-3, dir);
+    let hit = intersect_tlas(shadow_ray, T_MIN, dist - 1e-3);
+
+    if hit.inst_idx != -1 {
+         // Occluded
+        return vec3(0.0);
+    }
+
+    // Geometry Factor
+    let light_normal = normalize(cross(v1 - v0, v2 - v0)); // Assuming consistent winding
+    let cos_theta_light = abs(dot(-dir, light_normal));
+    let cos_theta_surf = max(dot(normal, dir), 0.0);
+    let area = 0.5 * length(cross(v1 - v0, v2 - v0));
+
+    // Emission (Hardcoded multiplier for now to match ray_color)
+    let emission = tri.data0.rgb * 15.0; 
+
+    // PDF = 1 / (Area * num_lights)
+    // Contribution = Le * G * pdf_inv
+    // G = (cos_surf * cos_light) / dist_sq
+    // pdf_inv = Area * num_lights
+
+    let G = (cos_theta_surf * cos_theta_light) / dist_sq;
+    let weight = G * area * f32(num_lights);
+
+    return emission * weight;
+}
+
 fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3<f32>(1.0);
+    var radiance = vec3<f32>(0.0);
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
-        if hit.inst_idx < 0 { return vec3<f32>(0.0); }
+        if hit.inst_idx < 0 { break; }
 
         let inst = instances[u32(hit.inst_idx)];
         let tri_idx = u32(hit.tri_idx);
-
         let tri = topology[tri_idx];
+
         let i0 = tri.v0;
         let i1 = tri.v1;
         let i2 = tri.v2;
 
-        // Retrieve properties from separate geometry blocks
         let v0_pos = get_pos(i0);
         let v1_pos = get_pos(i1);
         let v2_pos = get_pos(i2);
 
-        // Normal Interpolation
+        // Interpolation Setup
         let inv = get_inv_transform(inst);
         let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
-
+        let s = r_local.origin - v0_pos;
         let e1 = v1_pos - v0_pos;
         let e2 = v2_pos - v0_pos;
         let h = cross(r_local.direction, e2);
         let a = dot(e1, h);
         let f = 1.0 / a;
-        let s = r_local.origin - v0_pos;
         let u = f * dot(s, h);
         let q = cross(s, e1);
         let v = f * dot(r_local.direction, q);
         let w = 1.0 - u - v;
 
-        // Load Normals
+        // Normal
         let n0 = get_normal(i0);
         let n1 = get_normal(i1);
         let n2 = get_normal(i2);
-
         let ln = normalize(n0 * w + n1 * u + n2 * v);
         let wn = normalize((vec4(ln, 0.0) * inv).xyz);
 
-        var n = wn;
-        let front = dot(ray.direction, n) < 0.0;
-        n = select(-n, n, front);
-
-        // Interpolate UV
+        var normal = wn;
+        let front = dot(ray.direction, normal) < 0.0;
+        normal = select(-normal, normal, front);
+        
+        // UV Interpolation
         let uv0 = get_uv(i0);
         let uv1 = get_uv(i1);
         let uv2 = get_uv(i2);
-
         let tex_uv = uv0 * w + uv1 * u + uv2 * v;
 
-        // Attributes
-        let attr = topology[tri_idx];
-        let albedo = attr.data0.rgb;
-        let mat_type = bitcast<u32>(attr.data0.w);
+        let hit_p = ray.origin + ray.direction * hit.t;
 
-        if mat_type == 3u { return select(vec3(0.), throughput * albedo, front); }
+        // Material
+        let albedo_color = tri.data0.rgb;
+        let mat_type = bitcast<u32>(tri.data0.w);
 
-        var scat = vec3(0.);
-        if mat_type == 0u {
-            scat = n + random_unit_vector(rng);
-            if length(scat) < 0.001 { scat = n; }
-        } else if mat_type == 1u {
-            scat = reflect(ray.direction, n) + attr.data1.x * random_unit_vector(rng);
-            if dot(scat, n) <= 0. { return vec3(0.); }
-        } else {
-            let ir = attr.data1.x;
-            let ratio = select(ir, 1.0 / ir, front);
-            let unit = normalize(ray.direction);
-            let cos_t = min(dot(-unit, n), 1.0);
-            let sin_t = sqrt(1.0 - cos_t * cos_t);
-            if ratio * sin_t > 1.0 || reflectance(cos_t, ratio) > rand_pcg(rng) {
-                scat = reflect(unit, n);
-            } else {
-                scat = ratio * (unit + cos_t * n) - sqrt(abs(1.0 - (1.0 - cos_t * cos_t) * ratio * ratio)) * n;
-            }
-        }
-
-        ray = Ray(ray.origin + hit.t * ray.direction + scat * 1e-4, scat);
-        let tex_idx = attr.data1.y;
+        let tex_idx = tri.data1.y;
         var tex_color = vec3(1.0);
         if tex_idx > -0.5 {
             tex_color = textureSampleLevel(tex, smp, tex_uv, i32(tex_idx), 0.0).rgb;
         }
-        let final_albedo = albedo * tex_color;
+        let albedo = albedo_color * tex_color;
 
-        throughput *= final_albedo;
+        let emitted = select(vec3(0.0), albedo * 15.0, mat_type == 3u);
 
-        if depth > 2u {
+        // 1. Emission
+        if depth == 0u || mat_type != 0u {
+            radiance += throughput * emitted;
+        }
+
+        if mat_type == 3u { break; }
+
+        // 2. NEE (Diffuse only)
+        if mat_type == 0u {
+            let Ld = sample_lights(hit_p, normal, rng);
+            let brdf = albedo * 0.318309886;
+            radiance += throughput * Ld * brdf;
+        }
+
+        // 3. Scatter
+        var scattered_dir: vec3<f32>;
+        if mat_type == 0u {
+            let target_p = hit_p + normal + random_unit_vector(rng);
+            scattered_dir = normalize(target_p - hit_p);
+            throughput *= albedo;
+        } else if mat_type == 1u {
+            let reflected = reflect(ray.direction, normal);
+            let fuzz = tri.data1.x;
+            scattered_dir = normalize(reflected + fuzz * random_in_unit_disk(rng));
+            if dot(scattered_dir, normal) <= 0.0 { break; }
+            throughput *= albedo;
+        } else {
+             // Dielectric simplified
+            scattered_dir = reflect(ray.direction, normal); // Placeholder
+            throughput *= albedo; 
+             break;
+        }
+
+        ray = Ray(hit_p + normal * 1e-4, scattered_dir);
+
+        // RR
+        if depth > 3u {
             let p = max(throughput.r, max(throughput.g, throughput.b));
             if rand_pcg(rng) > p { break; }
             throughput /= p;
         }
     }
-    return vec3(0.);
+    return radiance;
 }
 
 @compute @workgroup_size(8, 8)
