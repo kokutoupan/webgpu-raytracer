@@ -183,7 +183,7 @@ impl World {
         }
 
         // 3. Rebuild Geometry (Skinning & BLAS)
-        rebuilder::build_blas_and_vertices(
+        let emissive_map = rebuilder::build_blas_and_vertices(
             &self.scene.geometries,
             &self.scene.skins,
             &globals,
@@ -287,6 +287,13 @@ impl World {
     }
     pub fn mesh_topology_len(&self) -> usize {
         self.buffers.mesh_topology.len()
+    }
+
+    pub fn lights_ptr(&self) -> *const u32 {
+        self.buffers.lights.as_ptr()
+    }
+    pub fn lights_len(&self) -> usize {
+        self.buffers.lights.len()
     }
 
     pub fn camera_ptr(&self) -> *const f32 {
