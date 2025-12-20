@@ -137,6 +137,16 @@ fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
     return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
 }
 
+// 1.0を超えても綺麗に収める関数 (ACES近似)
+fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
+}
+
 // --- Intersection ---
 
 fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
@@ -334,12 +344,14 @@ fn sample_lights(origin: vec3<f32>, normal: vec3<f32>, rng: ptr<function, u32>) 
 
     // Geometry Factor
     let light_normal = normalize(cross(v1 - v0, v2 - v0)); // Assuming consistent winding
-    let cos_theta_light = abs(dot(-dir, light_normal));
+    let cos_light_raw = dot(-dir, light_normal);
+    if cos_light_raw <= 0.0 { return vec3(0.0); } // ★裏面なら光らない
+    let cos_theta_light = cos_light_raw;
     let cos_theta_surf = max(dot(normal, dir), 0.0);
     let area = 0.5 * length(cross(v1 - v0, v2 - v0));
 
     // Emission (Hardcoded multiplier for now to match ray_color)
-    let emission = tri.data0.rgb * 15.0; 
+    let emission = tri.data0.rgb * 2.0; 
 
     // PDF = 1 / (Area * num_lights)
     // Contribution = Le * G * pdf_inv
@@ -356,6 +368,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
+    
+    // ★追加: 直前の反射がスペキュラ（鏡面/屈折）だったか？
+    // 初期値 true にすることで、カメラから直接見えるライトは描画される
+    var specular_bounce = true;
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
@@ -368,12 +384,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let i0 = tri.v0;
         let i1 = tri.v1;
         let i2 = tri.v2;
-
         let v0_pos = get_pos(i0);
         let v1_pos = get_pos(i1);
         let v2_pos = get_pos(i2);
 
-        // Interpolation Setup
         let inv = get_inv_transform(inst);
         let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
         let s = r_local.origin - v0_pos;
@@ -387,7 +401,6 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let v = f * dot(r_local.direction, q);
         let w = 1.0 - u - v;
 
-        // Normal
         let n0 = get_normal(i0);
         let n1 = get_normal(i1);
         let n2 = get_normal(i2);
@@ -397,16 +410,13 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         var normal = wn;
         let front = dot(ray.direction, normal) < 0.0;
         normal = select(-normal, normal, front);
-        
-        // UV Interpolation
+
         let uv0 = get_uv(i0);
         let uv1 = get_uv(i1);
         let uv2 = get_uv(i2);
         let tex_uv = uv0 * w + uv1 * u + uv2 * v;
-
         let hit_p = ray.origin + ray.direction * hit.t;
 
-        // Material
         let albedo_color = tri.data0.rgb;
         let mat_type = bitcast<u32>(tri.data0.w);
 
@@ -417,20 +427,28 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         }
         let albedo = albedo_color * tex_color;
 
-        let emitted = select(vec3(0.0), albedo * 15.0, mat_type == 3u);
-
-        // 1. Emission
-        if depth == 0u || mat_type != 0u {
-            radiance += throughput * emitted;
+        // ★修正1: Emissionの計算
+        // ここでの判定には depth や mat_type を使わず、フラグを見る
+        if mat_type == 3u {
+            if specular_bounce {
+                let emitted = albedo * 15.0; // 強度15.0 (調整可能)
+                radiance += throughput * emitted;
+            }
+            break; // ライトに当たったら終了
         }
-
-        if mat_type == 3u { break; }
 
         // 2. NEE (Diffuse only)
         if mat_type == 0u {
             let Ld = sample_lights(hit_p, normal, rng);
-            let brdf = albedo * 0.318309886;
+            let brdf = albedo * 0.318309886; // albedo / PI
             radiance += throughput * Ld * brdf;
+
+            // ★重要: NEEを行ったので、次のバウンスでライトに当たっても発光を加算しない
+            specular_bounce = false;
+        } else {
+            // 鏡面反射やガラスの場合はNEEが効かないので、
+            // 次のバウンスでライトに当たったら発光を加算する
+            specular_bounce = true;
         }
 
         // 3. Scatter
@@ -446,15 +464,15 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             if dot(scattered_dir, normal) <= 0.0 { break; }
             throughput *= albedo;
         } else {
-             // Dielectric simplified
-            scattered_dir = reflect(ray.direction, normal); // Placeholder
+            // Dielectric
+            scattered_dir = reflect(ray.direction, normal);
             throughput *= albedo; 
-             break;
+            // ※本来は屈折処理が必要ですが、既存コードに合わせて省略
         }
 
         ray = Ray(hit_p + normal * 1e-4, scattered_dir);
 
-        // RR
+        // RR (変更なし)
         if depth > 3u {
             let p = max(throughput.r, max(throughput.g, throughput.b));
             if rand_pcg(rng) > p { break; }
@@ -489,7 +507,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if scene.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
     let new_acc = acc + vec4(col, 1.0);
     accumulateBuffer[p_idx] = new_acc;
-
-    let out = sqrt(clamp(new_acc.rgb / new_acc.a, vec3(0.), vec3(1.)));
+    let hdr_color = new_acc.rgb / new_acc.a;
+    let mapped = aces_tone_mapping(hdr_color);
+    let out = pow(mapped, vec3(1.0 / 2.2));
     textureStore(outputTex, vec2<i32>(id.xy), vec4(out, 1.));
 }

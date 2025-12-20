@@ -11,9 +11,10 @@ pub fn build_blas_and_vertices(
     global_transforms: &[Mat4],
     buffers: &mut RenderBuffers,
     blas_root_offsets: &mut Vec<u32>,
-) {
+) -> Vec<Vec<u32>> {
     buffers.clear();
     blas_root_offsets.clear();
+    let mut emissive_lists = Vec::new(); // Added
 
     let mut current_node_offset = 0;
 
@@ -127,6 +128,7 @@ pub fn build_blas_and_vertices(
         }
 
         // Pack Mesh Topology
+        let mut current_emissive = Vec::new();
         // Stride: 12 u32s (v0, v1, v2, pad, data0[4], data1[4])
         for (i, &old_id) in tri_ids.iter().enumerate() {
             let base_v = i * 3;
@@ -148,7 +150,15 @@ pub fn build_blas_and_vertices(
             for &f in attrs {
                 buffers.mesh_topology.push(f.to_bits());
             }
+
+            // Check for Light (Type = 3)
+            // attrs[3] is mat_type (float).
+            let mat_bits = attrs[3].to_bits();
+            if mat_bits == 3 {
+                current_emissive.push(current_topology_start + i as u32);
+            }
         }
+        emissive_lists.push(current_emissive);
 
         // Extend Global Buffers
         buffers.vertices.extend(v_vec4);
@@ -162,4 +172,5 @@ pub fn build_blas_and_vertices(
         current_node_offset += node_count;
         // current_tri_offset removed
     }
+    emissive_lists
 }

@@ -204,6 +204,14 @@ impl World {
 
             let geom_idx = inst.instance_id as usize;
             if geom_idx < self.blas_root_offsets.len() {
+                // Populate Lights Buffer
+                if let Some(tris) = emissive_map.get(geom_idx) {
+                    for &tri_idx in tris {
+                        self.buffers.lights.push(i as u32); // Instance Index
+                        self.buffers.lights.push(tri_idx);
+                    }
+                }
+
                 inst.blas_node_offset = self.blas_root_offsets[geom_idx];
 
                 let base = inst.blas_node_offset as usize * 8;

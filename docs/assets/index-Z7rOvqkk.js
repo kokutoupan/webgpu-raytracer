@@ -25,7 +25,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const K = "modulepreload", X = function(s) {
     return "/webgpu-raytracer/" + s;
-  }, H = {}, z = function(e, t, n) {
+  }, H = {}, G = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let p = function(u) {
@@ -397,7 +397,9 @@ fn sample_lights(origin: vec3<f32>, normal: vec3<f32>, rng: ptr<function, u32>) 
 
     // Geometry Factor
     let light_normal = normalize(cross(v1 - v0, v2 - v0)); // Assuming consistent winding
-    let cos_theta_light = abs(dot(-dir, light_normal));
+    let cos_light_raw = dot(-dir, light_normal);
+    if cos_light_raw <= 0.0 { return vec3(0.0); } // \u2605\u88CF\u9762\u306A\u3089\u5149\u3089\u306A\u3044
+    let cos_theta_light = cos_light_raw;
     let cos_theta_surf = max(dot(normal, dir), 0.0);
     let area = 0.5 * length(cross(v1 - v0, v2 - v0));
 
@@ -419,6 +421,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
+    
+    // \u2605\u8FFD\u52A0: \u76F4\u524D\u306E\u53CD\u5C04\u304C\u30B9\u30DA\u30AD\u30E5\u30E9\uFF08\u93E1\u9762/\u5C48\u6298\uFF09\u3060\u3063\u305F\u304B\uFF1F
+    // \u521D\u671F\u5024 true \u306B\u3059\u308B\u3053\u3068\u3067\u3001\u30AB\u30E1\u30E9\u304B\u3089\u76F4\u63A5\u898B\u3048\u308B\u30E9\u30A4\u30C8\u306F\u63CF\u753B\u3055\u308C\u308B
+    var specular_bounce = true;
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
@@ -431,12 +437,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let i0 = tri.v0;
         let i1 = tri.v1;
         let i2 = tri.v2;
-
         let v0_pos = get_pos(i0);
         let v1_pos = get_pos(i1);
         let v2_pos = get_pos(i2);
 
-        // Interpolation Setup
         let inv = get_inv_transform(inst);
         let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
         let s = r_local.origin - v0_pos;
@@ -450,7 +454,6 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let v = f * dot(r_local.direction, q);
         let w = 1.0 - u - v;
 
-        // Normal
         let n0 = get_normal(i0);
         let n1 = get_normal(i1);
         let n2 = get_normal(i2);
@@ -460,16 +463,13 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         var normal = wn;
         let front = dot(ray.direction, normal) < 0.0;
         normal = select(-normal, normal, front);
-        
-        // UV Interpolation
+
         let uv0 = get_uv(i0);
         let uv1 = get_uv(i1);
         let uv2 = get_uv(i2);
         let tex_uv = uv0 * w + uv1 * u + uv2 * v;
-
         let hit_p = ray.origin + ray.direction * hit.t;
 
-        // Material
         let albedo_color = tri.data0.rgb;
         let mat_type = bitcast<u32>(tri.data0.w);
 
@@ -480,27 +480,35 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         }
         let albedo = albedo_color * tex_color;
 
-        let emitted = select(vec3(0.0), albedo * 15.0, mat_type == 3u);
-
-        // 1. Emission
-        if depth == 0u || mat_type != 0u {
-            radiance += throughput * emitted;
+        // \u2605\u4FEE\u6B631: Emission\u306E\u8A08\u7B97
+        // \u3053\u3053\u3067\u306E\u5224\u5B9A\u306B\u306F depth \u3084 mat_type \u3092\u4F7F\u308F\u305A\u3001\u30D5\u30E9\u30B0\u3092\u898B\u308B
+        if mat_type == 3u {
+            if specular_bounce {
+                let emitted = albedo * 15.0; // \u5F37\u5EA615.0 (\u8ABF\u6574\u53EF\u80FD)
+                radiance += throughput * emitted;
+            }
+            break; // \u30E9\u30A4\u30C8\u306B\u5F53\u305F\u3063\u305F\u3089\u7D42\u4E86
         }
-
-        if mat_type == 3u { break; }
 
         // 2. NEE (Diffuse only)
         if mat_type == 0u {
             let Ld = sample_lights(hit_p, normal, rng);
-            let brdf = albedo * 0.318309886;
+            let brdf = albedo * 0.318309886; // albedo / PI
             radiance += throughput * Ld * brdf;
+
+            // \u2605\u91CD\u8981: NEE\u3092\u884C\u3063\u305F\u306E\u3067\u3001\u6B21\u306E\u30D0\u30A6\u30F3\u30B9\u3067\u30E9\u30A4\u30C8\u306B\u5F53\u305F\u3063\u3066\u3082\u767A\u5149\u3092\u52A0\u7B97\u3057\u306A\u3044
+            specular_bounce = false;
+        } else {
+            // \u93E1\u9762\u53CD\u5C04\u3084\u30AC\u30E9\u30B9\u306E\u5834\u5408\u306FNEE\u304C\u52B9\u304B\u306A\u3044\u306E\u3067\u3001
+            // \u6B21\u306E\u30D0\u30A6\u30F3\u30B9\u3067\u30E9\u30A4\u30C8\u306B\u5F53\u305F\u3063\u305F\u3089\u767A\u5149\u3092\u52A0\u7B97\u3059\u308B
+            specular_bounce = true;
         }
 
         // 3. Scatter
         var scattered_dir: vec3<f32>;
         if mat_type == 0u {
-            let target = hit_p + normal + random_unit_vector(rng);
-            scattered_dir = normalize(target - hit_p);
+            let target_p = hit_p + normal + random_unit_vector(rng);
+            scattered_dir = normalize(target_p - hit_p);
             throughput *= albedo;
         } else if mat_type == 1u {
             let reflected = reflect(ray.direction, normal);
@@ -509,15 +517,15 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             if dot(scattered_dir, normal) <= 0.0 { break; }
             throughput *= albedo;
         } else {
-             // Dielectric simplified
-            scattered_dir = reflect(ray.direction, normal); // Placeholder
+            // Dielectric
+            scattered_dir = reflect(ray.direction, normal);
             throughput *= albedo; 
-             break;
+            // \u203B\u672C\u6765\u306F\u5C48\u6298\u51E6\u7406\u304C\u5FC5\u8981\u3067\u3059\u304C\u3001\u65E2\u5B58\u30B3\u30FC\u30C9\u306B\u5408\u308F\u305B\u3066\u7701\u7565
         }
 
         ray = Ray(hit_p + normal * 1e-4, scattered_dir);
 
-        // RR
+        // RR (\u5909\u66F4\u306A\u3057)
         if depth > 3u {
             let p = max(throughput.r, max(throughput.g, throughput.b));
             if rand_pcg(rng) > p { break; }
@@ -727,7 +735,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (e && e.size >= t) return e;
       e && e.destroy();
       let r = Math.ceil(t * 1.5);
-      return r = r + 3 & -4, r = Math.max(r, 4), this.device.createBuffer({
+      return r = r + 3 & -4, r = Math.max(r, 16), this.device.createBuffer({
         label: n,
         size: r,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
@@ -843,7 +851,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function ee(s) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-sNLZz41n.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-SzjGTaR_.js", {
       name: s == null ? void 0 : s.name
     });
   }
@@ -978,7 +986,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       return this._vertices.length > 0;
     }
     printStats() {
-      console.log(`Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Topo=${this.mesh_topology.length / 12}, I=${this.instances.length / 16}, TLAS=${this.tlas.length / 8}, BLAS=${this.blas.length / 8}, Anim=${this._animations.length}`);
+      console.log(`Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Topo=${this.mesh_topology.length / 12}, I=${this.instances.length / 16}, TLAS=${this.tlas.length / 8}, BLAS=${this.blas.length / 8}, Anim=${this._animations.length}, Lights=${this._lights.length / 2}`);
     }
   }
   const f = {
@@ -1160,7 +1168,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: r, ArrayBufferTarget: i } = await z(async () => {
+      const { Muxer: r, ArrayBufferTarget: i } = await G(async () => {
         const { Muxer: p, ArrayBufferTarget: u } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: p,
@@ -1621,7 +1629,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     S++, T++, $++, h.compute(S), h.present();
     const e = performance.now();
     e - O >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, O = e);
-  }, G = async (s) => {
+  }, z = async (s) => {
     const e = a.sceneSelect.value, t = e !== "viewer";
     if (!t && (!y || !k)) return;
     const n = a.getRenderConfig(), r = t ? e : void 0, i = t ? "DUMMY" : y, o = t ? "obj" : k;
@@ -1638,7 +1646,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       fileType: "obj"
     }));
   }, le = async () => {
-    const s = Array.from(D.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await z(async () => {
+    const s = Array.from(D.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await G(async () => {
       const { Muxer: d, ArrayBufferTarget: p } = await import("./webm-muxer-MLtUgOCn.js");
       return {
         Muxer: d,
@@ -1702,7 +1710,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     console.log(`Worker ${s} is READY`), a.setStatus(`Worker ${s} Ready!`), _.set(s, "idle"), v === "host" && R.length > 0 && V(s);
   };
   g.onWorkerJoined = (s) => {
-    a.setStatus(`Worker Joined: ${s}`), _.set(s, "idle"), v === "host" && R.length > 0 && G(s);
+    a.setStatus(`Worker Joined: ${s}`), _.set(s, "idle"), v === "host" && R.length > 0 && z(s);
   };
   g.onRenderRequest = async (s, e, t) => {
     if (console.log(`[Worker] Received Render Request: Frames ${s} - ${s + e}`), M) {
@@ -1744,7 +1752,7 @@ Auto Scene Sync enabled.`)) return;
             count: t
           });
         }
-        L = R.length, s.forEach((e) => _.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${L} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await G()) : console.log("No workers yet. Waiting...");
+        L = R.length, s.forEach((e) => _.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${L} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await z()) : console.log("No workers yet. Waiting...");
       } else {
         m = false, a.setRecordingState(true);
         const s = a.getRenderConfig();

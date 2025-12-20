@@ -198,7 +198,7 @@ export class WorldBridge {
         this.mesh_topology.length / 12
       }, I=${this.instances.length / 16}, TLAS=${this.tlas.length / 8}, BLAS=${
         this.blas.length / 8
-      }, Anim=${this._animations.length}`
+      }, Anim=${this._animations.length}, Lights=${this._lights.length / 2}`
     );
   }
 }
