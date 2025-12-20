@@ -89,7 +89,8 @@ struct SceneUniforms {
     frame_count: u32,
     blas_base_idx: u32, // Start index of BLAS nodes in 'nodes' array
     vertex_count: u32,
-    rand_seed: u32
+    rand_seed: u32,
+    light_count: u32
 }
 
 struct MeshTopology {
@@ -198,6 +199,16 @@ fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
     var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
     r0 = r0 * r0;
     return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
+}
+
+// 1.0\u3092\u8D85\u3048\u3066\u3082\u7DBA\u9E97\u306B\u53CE\u3081\u308B\u95A2\u6570 (ACES\u8FD1\u4F3C)
+fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
 }
 
 // --- Intersection ---
@@ -349,7 +360,7 @@ fn get_transform(inst: Instance) -> mat4x4<f32> {
 }
 
 fn sample_lights(origin: vec3<f32>, normal: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
-    let num_lights = arrayLength(&lights);
+    let num_lights = scene.light_count;
     if num_lights == 0u { return vec3(0.0); }
 
     // Pick random light
@@ -404,7 +415,7 @@ fn sample_lights(origin: vec3<f32>, normal: vec3<f32>, rng: ptr<function, u32>) 
     let area = 0.5 * length(cross(v1 - v0, v2 - v0));
 
     // Emission (Hardcoded multiplier for now to match ray_color)
-    let emission = tri.data0.rgb * 15.0; 
+    let emission = tri.data0.rgb * 2.0; 
 
     // PDF = 1 / (Area * num_lights)
     // Contribution = Le * G * pdf_inv
@@ -560,8 +571,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if scene.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
     let new_acc = acc + vec4(col, 1.0);
     accumulateBuffer[p_idx] = new_acc;
-
-    let out = sqrt(clamp(new_acc.rgb / new_acc.a, vec3(0.), vec3(1.)));
+    let hdr_color = new_acc.rgb / new_acc.a;
+    let mapped = aces_tone_mapping(hdr_color);
+    let out = pow(mapped, vec3(1.0 / 2.2));
     textureStore(outputTex, vec2<i32>(id.xy), vec4(out, 1.));
 }
 `;
@@ -589,7 +601,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "blasOffset", 0);
       __publicField(this, "vertexCount", 0);
       __publicField(this, "seed", Math.floor(Math.random() * 16777215));
-      __publicField(this, "uniformMixedData", new Uint32Array(4));
+      __publicField(this, "uniformMixedData", new Uint32Array(8));
       this.canvas = e;
     }
     async init() {
@@ -760,8 +772,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let o = false;
       return (!this.nodesBuffer || this.nodesBuffer.size < i) && (o = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, i, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, e), this.device.queue.writeBuffer(this.nodesBuffer, n, t), this.blasOffset = e.length / 8, o;
     }
-    updateSceneUniforms(e, t) {
-      this.sceneUniformBuffer && (this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = 0, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData));
+    updateSceneUniforms(e, t, n) {
+      this.sceneUniformBuffer && (this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = 0, this.uniformMixedData[4] = n, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData));
     }
     recreateBindGroup() {
       !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || !this.lightsBuffer || (this.bindGroup = this.device.createBindGroup({
@@ -851,7 +863,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function ee(s) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-SzjGTaR_.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-BwHKOs2c.js", {
       name: s == null ? void 0 : s.name
     });
   }
@@ -879,6 +891,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "lastWidth", -1);
       __publicField(this, "lastHeight", -1);
       this.worker = new ee(), this.worker.onmessage = this.handleMessage.bind(this);
+    }
+    get lights() {
+      return this._lights;
+    }
+    get lightCount() {
+      return this._lights.length / 2;
     }
     async initWasm() {
       return new Promise((e) => {
@@ -963,9 +981,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     get mesh_topology() {
       return this._mesh_topology;
-    }
-    get lights() {
-      return this._lights;
     }
     get tlas() {
       return this._tlas;
@@ -1258,7 +1273,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     async updateSceneBuffers() {
       let e = false;
-      e || (e = this.renderer.updateCombinedBVH(this.worldBridge.tlas, this.worldBridge.blas)), e || (e = this.renderer.updateBuffer("instance", this.worldBridge.instances)), e || (e = this.renderer.updateCombinedGeometry(this.worldBridge.vertices, this.worldBridge.normals, this.worldBridge.uvs)), e || (e = this.renderer.updateBuffer("topology", this.worldBridge.mesh_topology)), e || (e = this.renderer.updateBuffer("lights", this.worldBridge.lights)), this.worldBridge.updateCamera(this.canvas.width, this.canvas.height), this.renderer.updateSceneUniforms(this.worldBridge.cameraData, 0), e && this.renderer.recreateBindGroup(), this.renderer.resetAccumulation();
+      e || (e = this.renderer.updateCombinedBVH(this.worldBridge.tlas, this.worldBridge.blas)), e || (e = this.renderer.updateBuffer("instance", this.worldBridge.instances)), e || (e = this.renderer.updateCombinedGeometry(this.worldBridge.vertices, this.worldBridge.normals, this.worldBridge.uvs)), e || (e = this.renderer.updateBuffer("topology", this.worldBridge.mesh_topology)), e || (e = this.renderer.updateBuffer("lights", this.worldBridge.lights)), this.worldBridge.updateCamera(this.canvas.width, this.canvas.height), this.renderer.updateSceneUniforms(this.worldBridge.cameraData, 0, this.worldBridge.lightCount), e && this.renderer.recreateBindGroup(), this.renderer.resetAccumulation();
     }
     async renderFrame(e, t) {
       let n = 0;
@@ -1605,30 +1620,30 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   let m = false, y = null, k = null, v = null, R = [], D = /* @__PURE__ */ new Map(), E = 0, L = 0, W = 0, x = null, _ = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), M = false, A = null;
-  const q = 20, a = new ne(), h = new Z(a.canvas), c = new te(), U = new re(h, c, a.canvas), g = new ie();
-  let S = 0, $ = 0, T = 0, O = performance.now();
+  const O = 20, a = new ne(), h = new Z(a.canvas), c = new te(), U = new re(h, c, a.canvas), g = new ie();
+  let S = 0, $ = 0, T = 0, q = performance.now();
   const ae = () => {
     const s = parseInt(a.inputDepth.value, 10) || f.defaultDepth, e = parseInt(a.inputSPP.value, 10) || f.defaultSPP;
     h.buildPipeline(s, e);
   }, N = () => {
     const { width: s, height: e } = a.getRenderConfig();
-    h.updateScreenSize(s, e), c.hasWorld && (c.updateCamera(s, e), h.updateSceneUniforms(c.cameraData, 0)), h.recreateBindGroup(), h.resetAccumulation(), S = 0, $ = 0;
+    h.updateScreenSize(s, e), c.hasWorld && (c.updateCamera(s, e), h.updateSceneUniforms(c.cameraData, 0, c.lightCount)), h.recreateBindGroup(), h.resetAccumulation(), S = 0, $ = 0;
   }, P = async (s, e = true) => {
     m = false, console.log(`Loading Scene: ${s}...`);
     let t, n;
     s === "viewer" && y && (k === "obj" ? t = y : k === "glb" && (n = new Uint8Array(y).slice(0))), await c.loadScene(s, t, n), c.printStats(), await h.loadTexturesFromWorld(c), await oe(), N(), a.updateAnimList(c.getAnimationList()), e && (m = true, a.updateRenderButton(true));
   }, oe = async () => {
-    h.updateCombinedGeometry(c.vertices, c.normals, c.uvs), h.updateCombinedBVH(c.tlas, c.blas), h.updateBuffer("topology", c.mesh_topology), h.updateBuffer("instance", c.instances), h.updateBuffer("lights", c.lights), h.updateSceneUniforms(c.cameraData, 0);
+    h.updateCombinedGeometry(c.vertices, c.normals, c.uvs), h.updateCombinedBVH(c.tlas, c.blas), h.updateBuffer("topology", c.mesh_topology), h.updateBuffer("instance", c.instances), h.updateBuffer("lights", c.lights), h.updateSceneUniforms(c.cameraData, 0, c.lightCount);
   }, I = () => {
     if (U.recording || (requestAnimationFrame(I), !m || !c.hasWorld)) return;
     let s = parseInt(a.inputUpdateInterval.value, 10) || 0;
     if (s > 0 && S >= s && c.update($ / (s || 1) / 60), c.hasNewData) {
       let t = false;
-      t || (t = h.updateCombinedBVH(c.tlas, c.blas)), t || (t = h.updateBuffer("instance", c.instances)), c.hasNewGeometry && (t || (t = h.updateCombinedGeometry(c.vertices, c.normals, c.uvs)), t || (t = h.updateBuffer("topology", c.mesh_topology)), t || (t = h.updateBuffer("lights", c.lights)), c.hasNewGeometry = false), c.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(c.cameraData, 0), t && h.recreateBindGroup(), h.resetAccumulation(), S = 0, c.hasNewData = false;
+      t || (t = h.updateCombinedBVH(c.tlas, c.blas)), t || (t = h.updateBuffer("instance", c.instances)), c.hasNewGeometry && (t || (t = h.updateCombinedGeometry(c.vertices, c.normals, c.uvs)), t || (t = h.updateBuffer("topology", c.mesh_topology)), t || (t = h.updateBuffer("lights", c.lights)), c.hasNewGeometry = false), c.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(c.cameraData, 0, c.lightCount), t && h.recreateBindGroup(), h.resetAccumulation(), S = 0, c.hasNewData = false;
     }
     S++, T++, $++, h.compute(S), h.present();
     const e = performance.now();
-    e - O >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, O = e);
+    e - q >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, q = e);
   }, z = async (s) => {
     const e = a.sceneSelect.value, t = e !== "viewer";
     if (!t && (!y || !k)) return;
@@ -1745,8 +1760,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (x = a.getRenderConfig(), W = Math.ceil(x.fps * x.duration), !confirm(`Distribute recording? (Workers: ${s.length})
 Auto Scene Sync enabled.`)) return;
         R = [], D.clear(), E = 0, C.clear();
-        for (let e = 0; e < W; e += q) {
-          const t = Math.min(q, W - e);
+        for (let e = 0; e < W; e += O) {
+          const t = Math.min(O, W - e);
           R.push({
             start: e,
             count: t

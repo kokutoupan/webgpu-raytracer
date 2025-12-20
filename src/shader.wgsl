@@ -26,7 +26,8 @@ struct SceneUniforms {
     frame_count: u32,
     blas_base_idx: u32, // Start index of BLAS nodes in 'nodes' array
     vertex_count: u32,
-    rand_seed: u32
+    rand_seed: u32,
+    light_count: u32
 }
 
 struct MeshTopology {
@@ -296,7 +297,7 @@ fn get_transform(inst: Instance) -> mat4x4<f32> {
 }
 
 fn sample_lights(origin: vec3<f32>, normal: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
-    let num_lights = arrayLength(&lights);
+    let num_lights = scene.light_count;
     if num_lights == 0u { return vec3(0.0); }
 
     // Pick random light
@@ -351,7 +352,7 @@ fn sample_lights(origin: vec3<f32>, normal: vec3<f32>, rng: ptr<function, u32>) 
     let area = 0.5 * length(cross(v1 - v0, v2 - v0));
 
     // Emission (Hardcoded multiplier for now to match ray_color)
-    let emission = tri.data0.rgb * 2.0; 
+    let emission = tri.data0.rgb * 1.0; 
 
     // PDF = 1 / (Area * num_lights)
     // Contribution = Le * G * pdf_inv

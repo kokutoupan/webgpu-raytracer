@@ -40,7 +40,7 @@ export class WebGPURenderer {
   private seed = Math.floor(Math.random() * 0xffffff);
 
   // Reuse to avoid allocation
-  private uniformMixedData = new Uint32Array(4);
+  private uniformMixedData = new Uint32Array(8);
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -352,7 +352,11 @@ export class WebGPURenderer {
     return needsRebind;
   }
 
-  updateSceneUniforms(cameraData: Float32Array, frameCount: number) {
+  updateSceneUniforms(
+    cameraData: Float32Array,
+    frameCount: number,
+    lightCount: number
+  ) {
     if (!this.sceneUniformBuffer) return;
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
@@ -363,7 +367,8 @@ export class WebGPURenderer {
     this.uniformMixedData[0] = frameCount;
     this.uniformMixedData[1] = this.blasOffset;
     this.uniformMixedData[2] = this.vertexCount;
-    this.uniformMixedData[3] = 0;
+    this.uniformMixedData[3] = 0; // Padding/Seed placeholder
+    this.uniformMixedData[4] = lightCount; // Added
 
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,

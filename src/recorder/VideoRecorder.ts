@@ -207,7 +207,11 @@ export class VideoRecorder {
     );
 
     this.worldBridge.updateCamera(this.canvas.width, this.canvas.height);
-    this.renderer.updateSceneUniforms(this.worldBridge.cameraData, 0);
+    this.renderer.updateSceneUniforms(
+      this.worldBridge.cameraData,
+      0,
+      this.worldBridge.lightCount
+    );
 
     if (needsRebind) this.renderer.recreateBindGroup();
     this.renderer.resetAccumulation();

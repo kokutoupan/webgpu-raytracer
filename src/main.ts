@@ -53,7 +53,11 @@ const updateResolution = () => {
 
   if (worldBridge.hasWorld) {
     worldBridge.updateCamera(width, height);
-    renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+    renderer.updateSceneUniforms(
+      worldBridge.cameraData,
+      0,
+      worldBridge.lightCount
+    );
   }
   renderer.recreateBindGroup();
   renderer.resetAccumulation();
@@ -101,7 +105,11 @@ const uploadSceneBuffers = async () => {
   renderer.updateBuffer("topology", worldBridge.mesh_topology);
   renderer.updateBuffer("instance", worldBridge.instances);
   renderer.updateBuffer("lights", worldBridge.lights); // Added
-  renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+  renderer.updateSceneUniforms(
+    worldBridge.cameraData,
+    0,
+    worldBridge.lightCount
+  );
 };
 
 // --- Render Loop ---
@@ -141,7 +149,11 @@ const renderFrame = () => {
     }
 
     worldBridge.updateCamera(ui.canvas.width, ui.canvas.height);
-    renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+    renderer.updateSceneUniforms(
+      worldBridge.cameraData,
+      0,
+      worldBridge.lightCount
+    );
 
     if (needsRebind) renderer.recreateBindGroup();
     renderer.resetAccumulation();

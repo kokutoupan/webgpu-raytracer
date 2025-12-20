@@ -11,6 +11,14 @@ export class WorldBridge {
   private _uvs = new Float32Array(0);
   private _mesh_topology = new Uint32Array(0); // Renamed
   private _lights = new Uint32Array(0); // Added
+
+  get lights() {
+    return this._lights;
+  }
+  get lightCount() {
+    return this._lights.length / 2;
+  } // Added
+
   private _tlas = new Float32Array(0);
   private _blas = new Float32Array(0);
   private _instances = new Float32Array(0);
@@ -170,9 +178,7 @@ export class WorldBridge {
   get mesh_topology() {
     return this._mesh_topology;
   }
-  get lights() {
-    return this._lights;
-  }
+
   get tlas() {
     return this._tlas;
   }
