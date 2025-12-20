@@ -432,17 +432,25 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         // ここでの判定には depth や mat_type を使わず、フラグを見る
         if mat_type == 3u {
             if specular_bounce {
-                let emitted = albedo * 15.0; // 強度15.0 (調整可能)
-                radiance += throughput * emitted;
+                let emitted = albedo * 1.; // 明るさ20
+
+                if depth == 0u {
+                    radiance += throughput * emitted;
+                } else {
+                    // ここも上限 10.0 程度にクランプ
+                    radiance += min(throughput * emitted, vec3(10.0));
+                }
             }
-            break; // ライトに当たったら終了
+            break;
         }
 
         // 2. NEE (Diffuse only)
         if mat_type == 0u {
             let Ld = sample_lights(hit_p, normal, rng);
             let brdf = albedo * 0.318309886; // albedo / PI
-            radiance += throughput * Ld * brdf;
+            let contribution = throughput * Ld * brdf;
+            let clamped = min(contribution, vec3(10.0));
+            radiance += clamped;
 
             // ★重要: NEEを行ったので、次のバウンスでライトに当たっても発光を加算しない
             specular_bounce = false;
@@ -466,9 +474,22 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             throughput *= albedo;
         } else {
             // Dielectric
-            scattered_dir = reflect(ray.direction, normal);
-            throughput *= albedo; 
-            // ※本来は屈折処理が必要ですが、既存コードに合わせて省略
+            let ir = tri.data1.x; // index of refraction (屈折率)
+            let ratio = select(ir, 1.0 / ir, front);
+            let unit = normalize(ray.direction);
+            let cos_t = min(dot(-unit, normal), 1.0);
+            let sin_t = sqrt(1.0 - cos_t * cos_t);
+
+            // 完全に反射するか (全反射)、フレネル反射するかを判定
+            if (ratio * sin_t > 1.0) || (reflectance(cos_t, ratio) > rand_pcg(rng)) {
+                scattered_dir = reflect(unit, normal);
+            } else {
+                // 屈折 (Refract)
+                scattered_dir = ratio * (unit + cos_t * normal) - sqrt(abs(1.0 - (1.0 - cos_t * cos_t) * ratio * ratio)) * normal;
+            }
+            
+            // 減衰なし（透明）
+            throughput *= albedo;
         }
 
         ray = Ray(hit_p + normal * 1e-4, scattered_dir);
