@@ -21,12 +21,14 @@ const getU32 = (ptr: number, len: number) => {
 const sendSceneData = () => {
   if (!world) return;
 
-  // Full Geometry extraction
   const vertices = getF32(world.vertices_ptr(), world.vertices_len());
   const normals = getF32(world.normals_ptr(), world.normals_len());
   const uvs = getF32(world.uvs_ptr(), world.uvs_len());
-  const indices = getU32(world.indices_ptr(), world.indices_len());
-  const attributes = getF32(world.attributes_ptr(), world.attributes_len());
+  // Removed indices/attributes separate fetch
+  const mesh_topology = getU32(
+    world.mesh_topology_ptr(),
+    world.mesh_topology_len()
+  );
 
   // BVH & Instances
   const tlas = getF32(world.tlas_ptr(), world.tlas_len());
@@ -41,7 +43,6 @@ const sendSceneData = () => {
   for (let i = 0; i < textureCount; i++) {
     const ptr = world.get_texture_ptr(i);
     const size = world.get_texture_size(i);
-    // Slice is critical here
     const texData = new Uint8Array(wasmMemory!.buffer, ptr, size).slice();
     textures.push(texData);
     transerableTextures.push(texData.buffer);
@@ -59,8 +60,7 @@ const sendSceneData = () => {
     vertices,
     normals,
     uvs,
-    indices,
-    attributes,
+    mesh_topology,
     tlas,
     blas,
     instances,
@@ -75,8 +75,7 @@ const sendSceneData = () => {
     vertices.buffer,
     normals.buffer,
     uvs.buffer,
-    indices.buffer,
-    attributes.buffer,
+    mesh_topology.buffer,
     tlas.buffer,
     blas.buffer,
     instances.buffer,
@@ -93,7 +92,7 @@ const sendUpdateResult = (includeGeometry = true) => {
   const instances = getF32(world.instances_ptr(), world.instances_len());
   const camera = getF32(world.camera_ptr(), 24);
 
-  let vertices, normals, uvs, indices, attributes;
+  let vertices, normals, uvs, mesh_topology;
   const transfers: any[] = [
     tlas.buffer,
     blas.buffer,
@@ -105,15 +104,16 @@ const sendUpdateResult = (includeGeometry = true) => {
     vertices = getF32(world.vertices_ptr(), world.vertices_len());
     normals = getF32(world.normals_ptr(), world.normals_len());
     uvs = getF32(world.uvs_ptr(), world.uvs_len());
-    indices = getU32(world.indices_ptr(), world.indices_len());
-    attributes = getF32(world.attributes_ptr(), world.attributes_len());
+    mesh_topology = getU32(
+      world.mesh_topology_ptr(),
+      world.mesh_topology_len()
+    );
 
     transfers.push(
       vertices.buffer,
       normals.buffer,
       uvs.buffer,
-      indices.buffer,
-      attributes.buffer
+      mesh_topology.buffer
     );
   }
 
@@ -126,8 +126,7 @@ const sendUpdateResult = (includeGeometry = true) => {
     vertices,
     normals,
     uvs,
-    indices,
-    attributes,
+    mesh_topology,
   };
 
   // Force cast to any because in Worker scope postMessage signature is different

@@ -18,8 +18,7 @@ export type MainMessage =
       vertices: Float32Array;
       normals: Float32Array;
       uvs: Float32Array;
-      indices: Uint32Array;
-      attributes: Float32Array;
+      mesh_topology: Uint32Array; // Consolidated indices + attributes
       tlas: Float32Array;
       blas: Float32Array;
       instances: Float32Array;
@@ -37,7 +36,6 @@ export type MainMessage =
       vertices?: Float32Array;
       normals?: Float32Array;
       uvs?: Float32Array;
-      indices?: Uint32Array;
-      attributes?: Float32Array; // Attributes might animate?
+      mesh_topology?: Uint32Array;
     }
   | { type: "TEXTURE_DATA"; index: number; data: Uint8Array };

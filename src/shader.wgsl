@@ -29,7 +29,11 @@ struct SceneUniforms {
     rand_seed: u32
 }
 
-struct TriangleAttributes {
+struct MeshTopology {
+    v0: u32,
+    v1: u32,
+    v2: u32,
+    pad: u32,
     data0: vec4<f32>,
     data1: vec4<f32>
 }
@@ -63,13 +67,12 @@ struct Instance {
 @group(0) @binding(2) var<uniform> scene: SceneUniforms;
 
 @group(0) @binding(3) var<storage, read> geometry: array<f32>; // [Pos(4)... | Norm(4)... | UV(2)...]
-@group(0) @binding(4) var<storage, read> indices: array<u32>;
-@group(0) @binding(5) var<storage, read> attributes: array<TriangleAttributes>;
-@group(0) @binding(6) var<storage, read> nodes: array<BVHNode>; // Merged TLAS/BLAS
-@group(0) @binding(7) var<storage, read> instances: array<Instance>;
+@group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
+@group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; // Merged TLAS/BLAS
+@group(0) @binding(6) var<storage, read> instances: array<Instance>;
 
-@group(0) @binding(8) var tex: texture_2d_array<f32>;
-@group(0) @binding(9) var smp: sampler;
+@group(0) @binding(7) var tex: texture_2d_array<f32>;
+@group(0) @binding(8) var smp: sampler;
 
 // --- Helpers ---
 
@@ -181,11 +184,11 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
             for (var i = 0u; i < count; i++) {
                 let tri_id = first + i;
                 let b = tri_id * 3u;
-                
-                // Get vertices from geometry buffer
-                let v0 = get_pos(indices[b]);
-                let v1 = get_pos(indices[b + 1u]);
-                let v2 = get_pos(indices[b + 2u]);
+
+                let tri = topology[tri_id];
+                let v0 = get_pos(tri.v0);
+                let v1 = get_pos(tri.v1);
+                let v2 = get_pos(tri.v2);
 
                 let t = hit_triangle_raw(v0, v1, v2, r, t_min, closest_t);
                 if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
@@ -283,9 +286,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let inst = instances[u32(hit.inst_idx)];
         let tri_idx = u32(hit.tri_idx);
 
-        let i0 = indices[tri_idx * 3u];
-        let i1 = indices[tri_idx * 3u + 1u];
-        let i2 = indices[tri_idx * 3u + 2u];
+        let tri = topology[tri_idx];
+        let i0 = tri.v0;
+        let i1 = tri.v1;
+        let i2 = tri.v2;
 
         // Retrieve properties from separate geometry blocks
         let v0_pos = get_pos(i0);
@@ -327,7 +331,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let tex_uv = uv0 * w + uv1 * u + uv2 * v;
 
         // Attributes
-        let attr = attributes[tri_idx];
+        let attr = topology[tri_idx];
         let albedo = attr.data0.rgb;
         let mat_type = bitcast<u32>(attr.data0.w);
 

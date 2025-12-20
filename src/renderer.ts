@@ -19,10 +19,9 @@ export class WebGPURenderer {
   // Geometry Buffers
   geometryBuffer!: GPUBuffer; // Merged (Pos + Normal + UV)
   nodesBuffer!: GPUBuffer; // Merged (TLAS + BLAS)
+  topologyBuffer!: GPUBuffer; // Merged (Indices + Attributes)
 
   // Standalone Buffers
-  indexBuffer!: GPUBuffer;
-  attrBuffer!: GPUBuffer;
   instanceBuffer!: GPUBuffer;
 
   // Texture Support
@@ -231,9 +230,9 @@ export class WebGPURenderer {
     });
   }
 
-  // Handle generic buffers (indices, attributes, instances)
+  // Handle generic buffers (topology, instances)
   updateBuffer(
-    type: "index" | "attr" | "instance",
+    type: "topology" | "instance",
     data: Uint32Array | Float32Array
   ): boolean {
     const byteLen = data.byteLength;
@@ -241,24 +240,15 @@ export class WebGPURenderer {
     let needsRebind = false;
     let buf: GPUBuffer | undefined;
 
-    if (type === "index") {
-      if (!this.indexBuffer || this.indexBuffer.size < byteLen)
+    if (type === "topology") {
+      if (!this.topologyBuffer || this.topologyBuffer.size < byteLen)
         needsRebind = true;
-      this.indexBuffer = this.ensureBuffer(
-        this.indexBuffer,
+      this.topologyBuffer = this.ensureBuffer(
+        this.topologyBuffer,
         byteLen,
-        "IndexBuffer"
+        "TopologyBuffer"
       );
-      buf = this.indexBuffer;
-    } else if (type === "attr") {
-      if (!this.attrBuffer || this.attrBuffer.size < byteLen)
-        needsRebind = true;
-      this.attrBuffer = this.ensureBuffer(
-        this.attrBuffer,
-        byteLen,
-        "AttrBuffer"
-      );
-      buf = this.attrBuffer;
+      buf = this.topologyBuffer;
     } else {
       if (!this.instanceBuffer || this.instanceBuffer.size < byteLen)
         needsRebind = true;
@@ -390,16 +380,15 @@ export class WebGPURenderer {
         { binding: 2, resource: { buffer: this.sceneUniformBuffer } },
 
         { binding: 3, resource: { buffer: this.geometryBuffer } },
-        { binding: 4, resource: { buffer: this.indexBuffer } },
-        { binding: 5, resource: { buffer: this.attrBuffer } },
-        { binding: 6, resource: { buffer: this.nodesBuffer } },
-        { binding: 7, resource: { buffer: this.instanceBuffer } },
+        { binding: 4, resource: { buffer: this.topologyBuffer } }, // Consolidated
+        { binding: 5, resource: { buffer: this.nodesBuffer } },
+        { binding: 6, resource: { buffer: this.instanceBuffer } },
 
         {
-          binding: 8,
+          binding: 7,
           resource: this.texture.createView({ dimension: "2d-array" }),
         },
-        { binding: 9, resource: this.sampler },
+        { binding: 8, resource: this.sampler },
       ],
     });
   }

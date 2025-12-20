@@ -33,7 +33,7 @@ pub struct World {
     blas_root_offsets: Vec<u32>,
     instance_blas_aabbs: Vec<crate::primitives::AABB>,
     raw_instances: Vec<Instance>,
-    
+
     // Animation State
     active_anim_index: usize,
 }
@@ -101,7 +101,7 @@ impl World {
     }
 
     // --- Animation Control ---
-    
+
     pub fn get_animation_count(&self) -> usize {
         self.scene.animations.len()
     }
@@ -117,7 +117,7 @@ impl World {
     pub fn set_animation(&mut self, index: usize) {
         if index < self.scene.animations.len() {
             self.active_anim_index = index;
-            // Immediate reset/apply could be done here if needed, 
+            // Immediate reset/apply could be done here if needed,
             // but update() loop handles it.
         }
     }
@@ -153,13 +153,13 @@ impl World {
             } else {
                 0
             };
-            
+
             let anim = &self.scene.animations[anim_idx];
             let duration = anim.duration;
 
             if time == 0.0 {
-                 let msg = format!(">> Playing Anim [{}]: '{}'", anim_idx, anim.name);
-                 web_sys::console::log_1(&msg.into());
+                let msg = format!(">> Playing Anim [{}]: '{}'", anim_idx, anim.name);
+                web_sys::console::log_1(&msg.into());
             }
 
             let t = if duration > 0.001 {
@@ -282,18 +282,11 @@ impl World {
         self.buffers.uvs.len()
     }
 
-    pub fn indices_ptr(&self) -> *const u32 {
-        self.buffers.indices.as_ptr()
+    pub fn mesh_topology_ptr(&self) -> *const u32 {
+        self.buffers.mesh_topology.as_ptr()
     }
-    pub fn indices_len(&self) -> usize {
-        self.buffers.indices.len()
-    }
-
-    pub fn attributes_ptr(&self) -> *const f32 {
-        self.buffers.attributes.as_ptr()
-    }
-    pub fn attributes_len(&self) -> usize {
-        self.buffers.attributes.len()
+    pub fn mesh_topology_len(&self) -> usize {
+        self.buffers.mesh_topology.len()
     }
 
     pub fn camera_ptr(&self) -> *const f32 {

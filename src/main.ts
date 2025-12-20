@@ -98,8 +98,7 @@ const uploadSceneBuffers = async () => {
     worldBridge.uvs
   );
   renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
-  renderer.updateBuffer("index", worldBridge.indices);
-  renderer.updateBuffer("attr", worldBridge.attributes);
+  renderer.updateBuffer("topology", worldBridge.mesh_topology);
   renderer.updateBuffer("instance", worldBridge.instances);
   renderer.updateSceneUniforms(worldBridge.cameraData, 0);
 };
@@ -132,8 +131,10 @@ const renderFrame = () => {
         worldBridge.normals,
         worldBridge.uvs
       );
-      needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
-      needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
+      needsRebind ||= renderer.updateBuffer(
+        "topology",
+        worldBridge.mesh_topology
+      );
       worldBridge.hasNewGeometry = false;
     }
 

@@ -9,8 +9,7 @@ export class WorldBridge {
   private _vertices = new Float32Array(0);
   private _normals = new Float32Array(0);
   private _uvs = new Float32Array(0);
-  private _indices = new Uint32Array(0);
-  private _attributes = new Float32Array(0);
+  private _mesh_topology = new Uint32Array(0); // Renamed
   private _tlas = new Float32Array(0);
   private _blas = new Float32Array(0);
   private _instances = new Float32Array(0);
@@ -48,8 +47,7 @@ export class WorldBridge {
         this._vertices = msg.vertices as any;
         this._normals = msg.normals as any;
         this._uvs = msg.uvs as any;
-        this._indices = msg.indices as any;
-        this._attributes = msg.attributes as any;
+        this._mesh_topology = msg.mesh_topology as any;
         this._tlas = msg.tlas as any;
         this._blas = msg.blas as any;
         this._instances = msg.instances as any;
@@ -74,8 +72,7 @@ export class WorldBridge {
         }
         if (msg.normals) this._normals = msg.normals as any;
         if (msg.uvs) this._uvs = msg.uvs as any;
-        if (msg.indices) this._indices = msg.indices as any;
-        if (msg.attributes) this._attributes = msg.attributes as any;
+        if (msg.mesh_topology) this._mesh_topology = msg.mesh_topology as any;
         this.hasNewData = true;
         this.pendingUpdate = false;
         this.updateResolvers.forEach((r) => r());
@@ -167,11 +164,8 @@ export class WorldBridge {
   get uvs() {
     return this._uvs;
   }
-  get indices() {
-    return this._indices;
-  }
-  get attributes() {
-    return this._attributes;
+  get mesh_topology() {
+    return this._mesh_topology;
   }
   get tlas() {
     return this._tlas;
@@ -194,13 +188,11 @@ export class WorldBridge {
 
   printStats() {
     console.log(
-      `Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Tri=${
-        this.indices.length / 3
-      }, I=${this.instances.length / 16}, A=${
-        this.attributes.length / 16
-      }, TLAS=${this.tlas.length / 8}, BLAS=${this.blas.length / 8}, Anim=${
-        this._animations.length
-      }`
+      `Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Topo=${
+        this.mesh_topology.length / 12
+      }, I=${this.instances.length / 16}, TLAS=${this.tlas.length / 8}, BLAS=${
+        this.blas.length / 8
+      }, Anim=${this._animations.length}`
     );
   }
 }

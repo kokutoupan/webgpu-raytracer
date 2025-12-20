@@ -198,12 +198,8 @@ export class VideoRecorder {
       this.worldBridge.uvs
     );
     needsRebind ||= this.renderer.updateBuffer(
-      "index",
-      this.worldBridge.indices
-    );
-    needsRebind ||= this.renderer.updateBuffer(
-      "attr",
-      this.worldBridge.attributes
+      "topology",
+      this.worldBridge.mesh_topology
     );
 
     this.worldBridge.updateCamera(this.canvas.width, this.canvas.height);
