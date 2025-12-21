@@ -437,8 +437,8 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
                 if depth == 0u {
                     radiance += throughput * emitted;
                 } else {
-                    // ここも上限 10.0 程度にクランプ
-                    radiance += min(throughput * emitted, vec3(10.0));
+                    // ここも上限 5.0 程度にクランプ
+                    radiance += min(throughput * emitted, vec3(3.0));
                 }
             }
             break;
@@ -449,7 +449,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
             let Ld = sample_lights(hit_p, normal, rng);
             let brdf = albedo * 0.318309886; // albedo / PI
             let contribution = throughput * Ld * brdf;
-            let clamped = min(contribution, vec3(10.0));
+            let clamped = min(contribution, vec3(3.0));
             radiance += clamped;
 
             // ★重要: NEEを行ったので、次のバウンスでライトに当たっても発光を加算しない
@@ -469,7 +469,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         } else if mat_type == 1u {
             let reflected = reflect(ray.direction, normal);
             let fuzz = tri.data1.x;
-            scattered_dir = normalize(reflected + fuzz * random_in_unit_disk(rng));
+            scattered_dir = normalize(reflected + fuzz * random_unit_vector(rng));
             if dot(scattered_dir, normal) <= 0.0 { break; }
             throughput *= albedo;
         } else {
