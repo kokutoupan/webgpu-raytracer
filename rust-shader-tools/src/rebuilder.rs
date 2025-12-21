@@ -11,12 +11,12 @@ pub fn build_blas_and_vertices(
     global_transforms: &[Mat4],
     buffers: &mut RenderBuffers,
     blas_root_offsets: &mut Vec<u32>,
-) {
+) -> Vec<Vec<u32>> {
     buffers.clear();
     blas_root_offsets.clear();
+    let mut emissive_lists = Vec::new(); // Added
 
     let mut current_node_offset = 0;
-    let mut current_tri_offset = 0;
 
     for geom in geometries {
         // Base Data
@@ -75,7 +75,7 @@ pub fn build_blas_and_vertices(
 
                 let p = mat.transform_point3(pos);
                 let n = mat.transform_vector3(norm).normalize_or_zero();
-                
+
                 // Sanitize NaNs
                 let p_safe = if p.is_nan() { Vec3::ZERO } else { p };
                 let n_safe = if n.is_nan() { Vec3::Z } else { n };
@@ -107,42 +107,70 @@ pub fn build_blas_and_vertices(
         // BLAS Build
         let mut builder = BVHBuilder::new(&v_vec4, &geom.indices);
         let (mut nodes, indices, tri_ids) = builder.build_with_ids();
-
         let v_offset = (buffers.vertices.len() / 4) as u32;
-        let global_indices: Vec<u32> = indices.iter().map(|&idx| idx + v_offset).collect();
 
+        // global_indices removed (unused)
         // Update Leaf Tri Indices
+        // Update Leaf Tri Indices
+        // For mesh_topology (stride 1 -> 1 struct per tri), leaf refers to "Primitive Index"
+        // In this case, primitive index is just the index in the topology array.
+        // Current BLAS holds `tri_offset` in mesh_topology.
+        let current_topology_start = (buffers.mesh_topology.len() / 12) as u32;
+
         for i in 0..(nodes.len() / 8) {
             if nodes[i * 8 + 7] > 0. {
                 // is_leaf
                 let lf = nodes[i * 8 + 3] as u32;
-                nodes[i * 8 + 3] = (lf + current_tri_offset) as f32;
+                // lf is the index in the *local* sorted_indices (chunks of 3).
+                // We want global index in mesh_topology.
+                nodes[i * 8 + 3] = (lf + current_topology_start) as f32;
             }
         }
 
-        // Reorder Attributes
-        let mut sorted_attrs = vec![0.0; geom.attributes.len()];
-        let stride = 8;
-        for (new_i, &old_id) in tri_ids.iter().enumerate() {
-            let src = old_id * stride;
-            let dst = new_i * stride;
-            if src + stride <= geom.attributes.len() {
-                sorted_attrs[dst..dst + stride]
-                    .copy_from_slice(&geom.attributes[src..src + stride]);
+        // Pack Mesh Topology
+        let mut current_emissive = Vec::new();
+        // Stride: 12 u32s (v0, v1, v2, pad, data0[4], data1[4])
+        for (i, &old_id) in tri_ids.iter().enumerate() {
+            let base_v = i * 3;
+            let v0 = indices[base_v] + v_offset;
+            let v1 = indices[base_v + 1] + v_offset;
+            let v2 = indices[base_v + 2] + v_offset;
+
+            // Attributes
+            let src_attr = old_id * 8;
+            let attrs = &geom.attributes[src_attr..src_attr + 8];
+
+            // 0..3: Indices + Pad
+            buffers.mesh_topology.push(v0);
+            buffers.mesh_topology.push(v1);
+            buffers.mesh_topology.push(v2);
+            buffers.mesh_topology.push(0); // Pad
+
+            // 4..11: Attributes (bitcast)
+            for &f in attrs {
+                buffers.mesh_topology.push(f.to_bits());
+            }
+
+            // Check for Light (Type = 3)
+            // attrs[3] is mat_type (float).
+            let mat_bits = attrs[3].to_bits();
+            if mat_bits == 3 {
+                current_emissive.push(current_topology_start + i as u32);
             }
         }
+        emissive_lists.push(current_emissive);
 
         // Extend Global Buffers
         buffers.vertices.extend(v_vec4);
         buffers.normals.extend(n_vec4);
-        buffers.uvs.extend(uv_vec2); // ★追加
-        buffers.indices.extend(global_indices);
-        buffers.attributes.extend(sorted_attrs);
+        buffers.uvs.extend(uv_vec2);
+        // buffers.indices / attributes removed
         buffers.blas_nodes.extend(nodes);
 
         blas_root_offsets.push(current_node_offset);
         let node_count = (buffers.blas_nodes.len() as u32 - current_node_offset * 8) / 8;
         current_node_offset += node_count;
-        current_tri_offset += (indices.len() / 3) as u32;
+        // current_tri_offset removed
     }
+    emissive_lists
 }

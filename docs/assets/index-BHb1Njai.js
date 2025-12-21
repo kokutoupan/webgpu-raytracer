@@ -25,11 +25,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const K = "modulepreload", X = function(s) {
     return "/webgpu-raytracer/" + s;
-  }, H = {}, G = function(e, t, n) {
+  }, H = {}, z = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let p = function(u) {
-        return Promise.all(u.map((y) => Promise.resolve(y).then((B) => ({
+        return Promise.all(u.map((b) => Promise.resolve(b).then((B) => ({
           status: "fulfilled",
           value: B
         }), (B) => ({
@@ -39,26 +39,26 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       };
       var o = p;
       document.getElementsByTagName("link");
-      const c = document.querySelector("meta[property=csp-nonce]"), d = (c == null ? void 0 : c.nonce) || (c == null ? void 0 : c.getAttribute("nonce"));
+      const l = document.querySelector("meta[property=csp-nonce]"), d = (l == null ? void 0 : l.nonce) || (l == null ? void 0 : l.getAttribute("nonce"));
       r = p(t.map((u) => {
         if (u = X(u), u in H) return;
         H[u] = true;
-        const y = u.endsWith(".css"), B = y ? '[rel="stylesheet"]' : "";
+        const b = u.endsWith(".css"), B = b ? '[rel="stylesheet"]' : "";
         if (document.querySelector(`link[href="${u}"]${B}`)) return;
         const w = document.createElement("link");
-        if (w.rel = y ? "stylesheet" : K, y || (w.as = "script"), w.crossOrigin = "", w.href = u, d && w.setAttribute("nonce", d), document.head.appendChild(w), y) return new Promise((J, Y) => {
+        if (w.rel = b ? "stylesheet" : K, b || (w.as = "script"), w.crossOrigin = "", w.href = u, d && w.setAttribute("nonce", d), document.head.appendChild(w), b) return new Promise((J, Y) => {
           w.addEventListener("load", J), w.addEventListener("error", () => Y(new Error(`Unable to preload CSS for ${u}`)));
         });
       }));
     }
-    function i(c) {
+    function i(l) {
       const d = new Event("vite:preloadError", {
         cancelable: true
       });
-      if (d.payload = c, window.dispatchEvent(d), !d.defaultPrevented) throw c;
+      if (d.payload = l, window.dispatchEvent(d), !d.defaultPrevented) throw l;
     }
-    return r.then((c) => {
-      for (const d of c || []) d.status === "rejected" && i(d.reason);
+    return r.then((l) => {
+      for (const d of l || []) d.status === "rejected" && i(d.reason);
       return e().catch(i);
     });
   }, Q = `// =========================================================
@@ -89,12 +89,22 @@ struct SceneUniforms {
     frame_count: u32,
     blas_base_idx: u32, // Start index of BLAS nodes in 'nodes' array
     vertex_count: u32,
-    rand_seed: u32
+    rand_seed: u32,
+    light_count: u32
 }
 
-struct TriangleAttributes {
+struct MeshTopology {
+    v0: u32,
+    v1: u32,
+    v2: u32,
+    pad: u32,
     data0: vec4<f32>,
     data1: vec4<f32>
+}
+
+struct LightRef {
+    inst_idx: u32,
+    tri_idx: u32
 }
 
 struct BVHNode {
@@ -126,13 +136,13 @@ struct Instance {
 @group(0) @binding(2) var<uniform> scene: SceneUniforms;
 
 @group(0) @binding(3) var<storage, read> geometry: array<f32>; // [Pos(4)... | Norm(4)... | UV(2)...]
-@group(0) @binding(4) var<storage, read> indices: array<u32>;
-@group(0) @binding(5) var<storage, read> attributes: array<TriangleAttributes>;
-@group(0) @binding(6) var<storage, read> nodes: array<BVHNode>; // Merged TLAS/BLAS
-@group(0) @binding(7) var<storage, read> instances: array<Instance>;
+@group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
+@group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; // Merged TLAS/BLAS
+@group(0) @binding(6) var<storage, read> instances: array<Instance>;
+@group(0) @binding(9) var<storage, read> lights: array<LightRef>;
 
-@group(0) @binding(8) var tex: texture_2d_array<f32>;
-@group(0) @binding(9) var smp: sampler;
+@group(0) @binding(7) var tex: texture_2d_array<f32>;
+@group(0) @binding(8) var smp: sampler;
 
 // --- Helpers ---
 
@@ -191,6 +201,16 @@ fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
     return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
 }
 
+// 1.0\u3092\u8D85\u3048\u3066\u3082\u7DBA\u9E97\u306B\u53CE\u3081\u308B\u95A2\u6570 (ACES\u8FD1\u4F3C)
+fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
+}
+
 // --- Intersection ---
 
 fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
@@ -244,11 +264,11 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
             for (var i = 0u; i < count; i++) {
                 let tri_id = first + i;
                 let b = tri_id * 3u;
-                
-                // Get vertices from geometry buffer
-                let v0 = get_pos(indices[b]);
-                let v1 = get_pos(indices[b + 1u]);
-                let v2 = get_pos(indices[b + 2u]);
+
+                let tri = topology[tri_id];
+                let v0 = get_pos(tri.v0);
+                let v1 = get_pos(tri.v1);
+                let v2 = get_pos(tri.v2);
 
                 let t = hit_triangle_raw(v0, v1, v2, r, t_min, closest_t);
                 if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
@@ -335,104 +355,216 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     return res;
 }
 
+fn get_transform(inst: Instance) -> mat4x4<f32> {
+    return mat4x4<f32>(inst.transform_0, inst.transform_1, inst.transform_2, inst.transform_3);
+}
+
+fn sample_lights(origin: vec3<f32>, normal: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+    let num_lights = scene.light_count;
+    if num_lights == 0u { return vec3(0.0); }
+
+    // Pick random light
+    let idx = u32(rand_pcg(rng) * f32(num_lights));
+    let light_ref = lights[idx];
+
+    let inst = instances[light_ref.inst_idx];
+    let tri = topology[light_ref.tri_idx];
+
+    // Get Triangle Vertices (Local)
+    let v0_local = get_pos(tri.v0);
+    let v1_local = get_pos(tri.v1);
+    let v2_local = get_pos(tri.v2);
+
+    // Transform to World
+    let transform = get_transform(inst);
+    let v0 = (transform * vec4(v0_local, 1.0)).xyz;
+    let v1 = (transform * vec4(v1_local, 1.0)).xyz;
+    let v2 = (transform * vec4(v2_local, 1.0)).xyz;
+
+    // Sample Point on Triangle
+    let r1 = rand_pcg(rng);
+    let r2 = rand_pcg(rng);
+    let sqrt_r1 = sqrt(r1);
+    let u = 1.0 - sqrt_r1;
+    let v = sqrt_r1 * (1.0 - r2);
+    let w = sqrt_r1 * r2;
+
+    let light_pos = u * v0 + v * v1 + w * v2;
+    let light_vec = light_pos - origin;
+    let dist_sq = dot(light_vec, light_vec);
+    let dist = sqrt(dist_sq);
+    let dir = light_vec / dist;
+
+    // Visibility Check
+    if dot(dir, normal) <= 0.0 { return vec3(0.0); }
+
+    let shadow_ray = Ray(origin + normal * 1e-3, dir);
+    let hit = intersect_tlas(shadow_ray, T_MIN, dist - 1e-3);
+
+    if hit.inst_idx != -1 {
+         // Occluded
+        return vec3(0.0);
+    }
+
+    // Geometry Factor
+    let light_normal = normalize(cross(v1 - v0, v2 - v0)); // Assuming consistent winding
+    let cos_light_raw = dot(-dir, light_normal);
+    if cos_light_raw <= 0.0 { return vec3(0.0); } // \u2605\u88CF\u9762\u306A\u3089\u5149\u3089\u306A\u3044
+    let cos_theta_light = cos_light_raw;
+    let cos_theta_surf = max(dot(normal, dir), 0.0);
+    let area = 0.5 * length(cross(v1 - v0, v2 - v0));
+
+    // Emission (Hardcoded multiplier for now to match ray_color)
+    let emission = tri.data0.rgb * 1.0; 
+
+    // PDF = 1 / (Area * num_lights)
+    // Contribution = Le * G * pdf_inv
+    // G = (cos_surf * cos_light) / dist_sq
+    // pdf_inv = Area * num_lights
+
+    let G = (cos_theta_surf * cos_theta_light) / dist_sq;
+    let weight = G * area * f32(num_lights);
+
+    return emission * weight;
+}
+
 fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3<f32>(1.0);
+    var radiance = vec3<f32>(0.0);
+    
+    // \u2605\u8FFD\u52A0: \u76F4\u524D\u306E\u53CD\u5C04\u304C\u30B9\u30DA\u30AD\u30E5\u30E9\uFF08\u93E1\u9762/\u5C48\u6298\uFF09\u3060\u3063\u305F\u304B\uFF1F
+    // \u521D\u671F\u5024 true \u306B\u3059\u308B\u3053\u3068\u3067\u3001\u30AB\u30E1\u30E9\u304B\u3089\u76F4\u63A5\u898B\u3048\u308B\u30E9\u30A4\u30C8\u306F\u63CF\u753B\u3055\u308C\u308B
+    var specular_bounce = true;
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
-        if hit.inst_idx < 0 { return vec3<f32>(0.0); }
+        if hit.inst_idx < 0 { break; }
 
         let inst = instances[u32(hit.inst_idx)];
         let tri_idx = u32(hit.tri_idx);
+        let tri = topology[tri_idx];
 
-        let i0 = indices[tri_idx * 3u];
-        let i1 = indices[tri_idx * 3u + 1u];
-        let i2 = indices[tri_idx * 3u + 2u];
-
-        // Retrieve properties from separate geometry blocks
+        let i0 = tri.v0;
+        let i1 = tri.v1;
+        let i2 = tri.v2;
         let v0_pos = get_pos(i0);
         let v1_pos = get_pos(i1);
         let v2_pos = get_pos(i2);
 
-        // Normal Interpolation
         let inv = get_inv_transform(inst);
         let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
-
+        let s = r_local.origin - v0_pos;
         let e1 = v1_pos - v0_pos;
         let e2 = v2_pos - v0_pos;
         let h = cross(r_local.direction, e2);
         let a = dot(e1, h);
         let f = 1.0 / a;
-        let s = r_local.origin - v0_pos;
         let u = f * dot(s, h);
         let q = cross(s, e1);
         let v = f * dot(r_local.direction, q);
         let w = 1.0 - u - v;
 
-        // Load Normals
         let n0 = get_normal(i0);
         let n1 = get_normal(i1);
         let n2 = get_normal(i2);
-
         let ln = normalize(n0 * w + n1 * u + n2 * v);
         let wn = normalize((vec4(ln, 0.0) * inv).xyz);
 
-        var n = wn;
-        let front = dot(ray.direction, n) < 0.0;
-        n = select(-n, n, front);
+        var normal = wn;
+        let front = dot(ray.direction, normal) < 0.0;
+        normal = select(-normal, normal, front);
 
-        // Interpolate UV
         let uv0 = get_uv(i0);
         let uv1 = get_uv(i1);
         let uv2 = get_uv(i2);
-
         let tex_uv = uv0 * w + uv1 * u + uv2 * v;
+        let hit_p = ray.origin + ray.direction * hit.t;
 
-        // Attributes
-        let attr = attributes[tri_idx];
-        let albedo = attr.data0.rgb;
-        let mat_type = bitcast<u32>(attr.data0.w);
+        let albedo_color = tri.data0.rgb;
+        let mat_type = bitcast<u32>(tri.data0.w);
 
-        if mat_type == 3u { return select(vec3(0.), throughput * albedo, front); }
-
-        var scat = vec3(0.);
-        if mat_type == 0u {
-            scat = n + random_unit_vector(rng);
-            if length(scat) < 0.001 { scat = n; }
-        } else if mat_type == 1u {
-            scat = reflect(ray.direction, n) + attr.data1.x * random_unit_vector(rng);
-            if dot(scat, n) <= 0. { return vec3(0.); }
-        } else {
-            let ir = attr.data1.x;
-            let ratio = select(ir, 1.0 / ir, front);
-            let unit = normalize(ray.direction);
-            let cos_t = min(dot(-unit, n), 1.0);
-            let sin_t = sqrt(1.0 - cos_t * cos_t);
-            if ratio * sin_t > 1.0 || reflectance(cos_t, ratio) > rand_pcg(rng) {
-                scat = reflect(unit, n);
-            } else {
-                scat = ratio * (unit + cos_t * n) - sqrt(abs(1.0 - (1.0 - cos_t * cos_t) * ratio * ratio)) * n;
-            }
-        }
-
-        ray = Ray(ray.origin + hit.t * ray.direction + scat * 1e-4, scat);
-        let tex_idx = attr.data1.y;
+        let tex_idx = tri.data1.y;
         var tex_color = vec3(1.0);
         if tex_idx > -0.5 {
             tex_color = textureSampleLevel(tex, smp, tex_uv, i32(tex_idx), 0.0).rgb;
         }
-        let final_albedo = albedo * tex_color;
+        let albedo = albedo_color * tex_color;
 
-        throughput *= final_albedo;
+        // \u2605\u4FEE\u6B631: Emission\u306E\u8A08\u7B97
+        // \u3053\u3053\u3067\u306E\u5224\u5B9A\u306B\u306F depth \u3084 mat_type \u3092\u4F7F\u308F\u305A\u3001\u30D5\u30E9\u30B0\u3092\u898B\u308B
+        if mat_type == 3u {
+            if specular_bounce {
+                let emitted = albedo * 1.; // \u660E\u308B\u305520
 
-        if depth > 2u {
+                if depth == 0u {
+                    radiance += throughput * emitted;
+                } else {
+                    // \u3053\u3053\u3082\u4E0A\u9650 5.0 \u7A0B\u5EA6\u306B\u30AF\u30E9\u30F3\u30D7
+                    radiance += min(throughput * emitted, vec3(3.0));
+                }
+            }
+            break;
+        }
+
+        // 2. NEE (Diffuse only)
+        if mat_type == 0u {
+            let Ld = sample_lights(hit_p, normal, rng);
+            let brdf = albedo * 0.318309886; // albedo / PI
+            let contribution = throughput * Ld * brdf;
+            let clamped = min(contribution, vec3(3.0));
+            radiance += clamped;
+
+            // \u2605\u91CD\u8981: NEE\u3092\u884C\u3063\u305F\u306E\u3067\u3001\u6B21\u306E\u30D0\u30A6\u30F3\u30B9\u3067\u30E9\u30A4\u30C8\u306B\u5F53\u305F\u3063\u3066\u3082\u767A\u5149\u3092\u52A0\u7B97\u3057\u306A\u3044
+            specular_bounce = false;
+        } else {
+            // \u93E1\u9762\u53CD\u5C04\u3084\u30AC\u30E9\u30B9\u306E\u5834\u5408\u306FNEE\u304C\u52B9\u304B\u306A\u3044\u306E\u3067\u3001
+            // \u6B21\u306E\u30D0\u30A6\u30F3\u30B9\u3067\u30E9\u30A4\u30C8\u306B\u5F53\u305F\u3063\u305F\u3089\u767A\u5149\u3092\u52A0\u7B97\u3059\u308B
+            specular_bounce = true;
+        }
+
+        // 3. Scatter
+        var scattered_dir: vec3<f32>;
+        if mat_type == 0u {
+            let target_p = hit_p + normal + random_unit_vector(rng);
+            scattered_dir = normalize(target_p - hit_p);
+            throughput *= albedo;
+        } else if mat_type == 1u {
+            let reflected = reflect(ray.direction, normal);
+            let fuzz = tri.data1.x;
+            scattered_dir = normalize(reflected + fuzz * random_unit_vector(rng));
+            if dot(scattered_dir, normal) <= 0.0 { break; }
+            throughput *= albedo;
+        } else {
+            // Dielectric
+            let ir = tri.data1.x; // index of refraction (\u5C48\u6298\u7387)
+            let ratio = select(ir, 1.0 / ir, front);
+            let unit = normalize(ray.direction);
+            let cos_t = min(dot(-unit, normal), 1.0);
+            let sin_t = sqrt(1.0 - cos_t * cos_t);
+
+            // \u5B8C\u5168\u306B\u53CD\u5C04\u3059\u308B\u304B (\u5168\u53CD\u5C04)\u3001\u30D5\u30EC\u30CD\u30EB\u53CD\u5C04\u3059\u308B\u304B\u3092\u5224\u5B9A
+            if (ratio * sin_t > 1.0) || (reflectance(cos_t, ratio) > rand_pcg(rng)) {
+                scattered_dir = reflect(unit, normal);
+            } else {
+                // \u5C48\u6298 (Refract)
+                scattered_dir = ratio * (unit + cos_t * normal) - sqrt(abs(1.0 - (1.0 - cos_t * cos_t) * ratio * ratio)) * normal;
+            }
+            
+            // \u6E1B\u8870\u306A\u3057\uFF08\u900F\u660E\uFF09
+            throughput *= albedo;
+        }
+
+        ray = Ray(hit_p + normal * 1e-4, scattered_dir);
+
+        // RR (\u5909\u66F4\u306A\u3057)
+        if depth > 3u {
             let p = max(throughput.r, max(throughput.g, throughput.b));
             if rand_pcg(rng) > p { break; }
             throughput /= p;
         }
     }
-    return vec3(0.);
+    return radiance;
 }
 
 @compute @workgroup_size(8, 8)
@@ -460,8 +592,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if scene.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
     let new_acc = acc + vec4(col, 1.0);
     accumulateBuffer[p_idx] = new_acc;
-
-    let out = sqrt(clamp(new_acc.rgb / new_acc.a, vec3(0.), vec3(1.)));
+    let hdr_color = new_acc.rgb / new_acc.a;
+    let mapped = aces_tone_mapping(hdr_color);
+    let out = pow(mapped, vec3(1.0 / 2.2));
     textureStore(outputTex, vec2<i32>(id.xy), vec4(out, 1.));
 }
 `;
@@ -478,9 +611,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "sceneUniformBuffer");
       __publicField(this, "geometryBuffer");
       __publicField(this, "nodesBuffer");
-      __publicField(this, "indexBuffer");
-      __publicField(this, "attrBuffer");
+      __publicField(this, "topologyBuffer");
       __publicField(this, "instanceBuffer");
+      __publicField(this, "lightsBuffer");
       __publicField(this, "texture");
       __publicField(this, "defaultTexture");
       __publicField(this, "sampler");
@@ -489,7 +622,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "blasOffset", 0);
       __publicField(this, "vertexCount", 0);
       __publicField(this, "seed", Math.floor(Math.random() * 16777215));
-      __publicField(this, "uniformMixedData", new Uint32Array(4));
+      __publicField(this, "uniformMixedData", new Uint32Array(8));
       this.canvas = e;
     }
     async init() {
@@ -592,11 +725,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (i) try {
           const o = new Blob([
             i
-          ]), c = await createImageBitmap(o, {
+          ]), l = await createImageBitmap(o, {
             resizeWidth: 1024,
             resizeHeight: 1024
           });
-          n.push(c);
+          n.push(l);
         } catch (o) {
           console.warn(`Failed tex ${r}`, o), n.push(await this.createFallbackBitmap());
         }
@@ -635,7 +768,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (e && e.size >= t) return e;
       e && e.destroy();
       let r = Math.ceil(t * 1.5);
-      return r = r + 3 & -4, r = Math.max(r, 4), this.device.createBuffer({
+      return r = r + 3 & -4, r = Math.max(r, 16), this.device.createBuffer({
         label: n,
         size: r,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
@@ -644,7 +777,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     updateBuffer(e, t) {
       const n = t.byteLength;
       let r = false, i;
-      return e === "index" ? ((!this.indexBuffer || this.indexBuffer.size < n) && (r = true), this.indexBuffer = this.ensureBuffer(this.indexBuffer, n, "IndexBuffer"), i = this.indexBuffer) : e === "attr" ? ((!this.attrBuffer || this.attrBuffer.size < n) && (r = true), this.attrBuffer = this.ensureBuffer(this.attrBuffer, n, "AttrBuffer"), i = this.attrBuffer) : ((!this.instanceBuffer || this.instanceBuffer.size < n) && (r = true), this.instanceBuffer = this.ensureBuffer(this.instanceBuffer, n, "InstanceBuffer"), i = this.instanceBuffer), this.device.queue.writeBuffer(i, 0, t, 0, t.length), r;
+      return e === "topology" ? ((!this.topologyBuffer || this.topologyBuffer.size < n) && (r = true), this.topologyBuffer = this.ensureBuffer(this.topologyBuffer, n, "TopologyBuffer"), i = this.topologyBuffer) : e === "instance" ? ((!this.instanceBuffer || this.instanceBuffer.size < n) && (r = true), this.instanceBuffer = this.ensureBuffer(this.instanceBuffer, n, "InstanceBuffer"), i = this.instanceBuffer) : ((!this.lightsBuffer || this.lightsBuffer.size < n) && (r = true), this.lightsBuffer = this.ensureBuffer(this.lightsBuffer, n, "LightsBuffer"), i = this.lightsBuffer), this.device.queue.writeBuffer(i, 0, t, 0, t.length), r;
     }
     updateCombinedGeometry(e, t, n) {
       const r = e.byteLength + t.byteLength + n.byteLength;
@@ -660,11 +793,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let o = false;
       return (!this.nodesBuffer || this.nodesBuffer.size < i) && (o = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, i, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, e), this.device.queue.writeBuffer(this.nodesBuffer, n, t), this.blasOffset = e.length / 8, o;
     }
-    updateSceneUniforms(e, t) {
-      this.sceneUniformBuffer && (this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = 0, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData));
+    updateSceneUniforms(e, t, n) {
+      this.sceneUniformBuffer && (this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = 0, this.uniformMixedData[4] = n, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData));
     }
     recreateBindGroup() {
-      !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || (this.bindGroup = this.device.createBindGroup({
+      !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || !this.lightsBuffer || (this.bindGroup = this.device.createBindGroup({
         layout: this.bindGroupLayout,
         entries: [
           {
@@ -692,36 +825,36 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           {
             binding: 4,
             resource: {
-              buffer: this.indexBuffer
+              buffer: this.topologyBuffer
             }
           },
           {
             binding: 5,
             resource: {
-              buffer: this.attrBuffer
+              buffer: this.nodesBuffer
             }
           },
           {
             binding: 6,
             resource: {
-              buffer: this.nodesBuffer
-            }
-          },
-          {
-            binding: 7,
-            resource: {
               buffer: this.instanceBuffer
             }
           },
           {
-            binding: 8,
+            binding: 7,
             resource: this.texture.createView({
               dimension: "2d-array"
             })
           },
           {
-            binding: 9,
+            binding: 8,
             resource: this.sampler
+          },
+          {
+            binding: 9,
+            resource: {
+              buffer: this.lightsBuffer
+            }
           }
         ]
       }));
@@ -751,7 +884,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function ee(s) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-HkP6ze7E.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-CWoZigv4.js", {
       name: s == null ? void 0 : s.name
     });
   }
@@ -762,8 +895,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "_vertices", new Float32Array(0));
       __publicField(this, "_normals", new Float32Array(0));
       __publicField(this, "_uvs", new Float32Array(0));
-      __publicField(this, "_indices", new Uint32Array(0));
-      __publicField(this, "_attributes", new Float32Array(0));
+      __publicField(this, "_mesh_topology", new Uint32Array(0));
+      __publicField(this, "_lights", new Uint32Array(0));
       __publicField(this, "_tlas", new Float32Array(0));
       __publicField(this, "_blas", new Float32Array(0));
       __publicField(this, "_instances", new Float32Array(0));
@@ -780,6 +913,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "lastHeight", -1);
       this.worker = new ee(), this.worker.onmessage = this.handleMessage.bind(this);
     }
+    get lights() {
+      return this._lights;
+    }
+    get lightCount() {
+      return this._lights.length / 2;
+    }
     async initWasm() {
       return new Promise((e) => {
         this.resolveReady = e, this.worker.postMessage({
@@ -795,10 +934,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           console.log("Main: Worker Ready"), (_a = this.resolveReady) == null ? void 0 : _a.call(this);
           break;
         case "SCENE_LOADED":
-          this._vertices = t.vertices, this._normals = t.normals, this._uvs = t.uvs, this._indices = t.indices, this._attributes = t.attributes, this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, this._textureCount = t.textureCount, this._textures = t.textures || [], this._animations = t.animations || [], this.hasNewData = true, this.hasNewGeometry = true, (_b = this.resolveSceneLoad) == null ? void 0 : _b.call(this);
+          this._vertices = t.vertices, this._normals = t.normals, this._uvs = t.uvs, this._mesh_topology = t.mesh_topology, this._lights = t.lights, this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, this._textureCount = t.textureCount, this._textures = t.textures || [], this._animations = t.animations || [], this.hasNewData = true, this.hasNewGeometry = true, (_b = this.resolveSceneLoad) == null ? void 0 : _b.call(this);
           break;
         case "UPDATE_RESULT":
-          this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._cameraData = t.camera, t.vertices && (this._vertices = t.vertices, this.hasNewGeometry = true), t.normals && (this._normals = t.normals), t.uvs && (this._uvs = t.uvs), t.indices && (this._indices = t.indices), t.attributes && (this._attributes = t.attributes), this.hasNewData = true, this.pendingUpdate = false, this.updateResolvers.forEach((n) => n()), this.updateResolvers = [];
+          this._tlas = t.tlas, this._blas = t.blas, this._instances = t.instances, this._lights = t.lights, this._cameraData = t.camera, t.vertices && (this._vertices = t.vertices, this.hasNewGeometry = true), t.normals && (this._normals = t.normals), t.uvs && (this._uvs = t.uvs), t.mesh_topology && (this._mesh_topology = t.mesh_topology), this.hasNewData = true, this.pendingUpdate = false, this.updateResolvers.forEach((n) => n()), this.updateResolvers = [];
           break;
       }
     }
@@ -861,11 +1000,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     get uvs() {
       return this._uvs;
     }
-    get indices() {
-      return this._indices;
-    }
-    get attributes() {
-      return this._attributes;
+    get mesh_topology() {
+      return this._mesh_topology;
     }
     get tlas() {
       return this._tlas;
@@ -886,7 +1022,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       return this._vertices.length > 0;
     }
     printStats() {
-      console.log(`Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Tri=${this.indices.length / 3}, I=${this.instances.length / 16}, A=${this.attributes.length / 16}, TLAS=${this.tlas.length / 8}, BLAS=${this.blas.length / 8}, Anim=${this._animations.length}`);
+      console.log(`Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Topo=${this.mesh_topology.length / 12}, I=${this.instances.length / 16}, TLAS=${this.tlas.length / 8}, BLAS=${this.blas.length / 8}, Anim=${this._animations.length}, Lights=${this._lights.length / 2}`);
     }
   }
   const f = {
@@ -1068,7 +1204,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: r, ArrayBufferTarget: i } = await G(async () => {
+      const { Muxer: r, ArrayBufferTarget: i } = await z(async () => {
         const { Muxer: p, ArrayBufferTarget: u } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: p,
@@ -1076,7 +1212,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         };
       }, []), o = Math.ceil(e.fps * e.duration);
       console.log(`Starting recording: ${o} frames @ ${e.fps}fps (VP9)`);
-      const c = new r({
+      const l = new r({
         target: new i(),
         video: {
           codec: "V_VP9",
@@ -1085,7 +1221,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           frameRate: e.fps
         }
       }), d = new VideoEncoder({
-        output: (p, u) => c.addVideoChunk(p, u),
+        output: (p, u) => l.addVideoChunk(p, u),
         error: (p) => console.error("VideoEncoder Error:", p)
       });
       d.configure({
@@ -1095,13 +1231,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         bitrate: 12e6
       });
       try {
-        await this.renderAndEncode(o, e, d, t, e.startFrame || 0), await d.flush(), c.finalize();
-        const { buffer: p } = c.target, u = new Blob([
+        await this.renderAndEncode(o, e, d, t, e.startFrame || 0), await d.flush(), l.finalize();
+        const { buffer: p } = l.target, u = new Blob([
           p
         ], {
           type: "video/webm"
-        }), y = URL.createObjectURL(u);
-        n(y, u);
+        }), b = URL.createObjectURL(u);
+        n(b, u);
       } catch (p) {
         throw console.error("Recording failed:", p), p;
       } finally {
@@ -1112,14 +1248,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (this.isRecording) throw new Error("Already recording");
       this.isRecording = true;
       const n = [], r = Math.ceil(e.fps * e.duration), i = new VideoEncoder({
-        output: (o, c) => {
+        output: (o, l) => {
           const d = new Uint8Array(o.byteLength);
           o.copyTo(d), n.push({
             type: o.type,
             timestamp: o.timestamp,
             duration: o.duration,
             data: d.buffer,
-            decoderConfig: c == null ? void 0 : c.decoderConfig
+            decoderConfig: l == null ? void 0 : l.decoderConfig
           });
         },
         error: (o) => console.error("VideoEncoder Error:", o)
@@ -1139,26 +1275,26 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async renderAndEncode(e, t, n, r, i = 0) {
       const o = i;
       this.worldBridge.update(o / t.fps), await this.worldBridge.waitForNextUpdate();
-      for (let c = 0; c < e; c++) {
-        r(c, e), await new Promise((u) => setTimeout(u, 0)), await this.updateSceneBuffers();
+      for (let l = 0; l < e; l++) {
+        r(l, e), await new Promise((u) => setTimeout(u, 0)), await this.updateSceneBuffers();
         let d = null;
-        if (c < e - 1) {
-          const u = i + c + 1;
+        if (l < e - 1) {
+          const u = i + l + 1;
           this.worldBridge.update(u / t.fps), d = this.worldBridge.waitForNextUpdate();
         }
         await this.renderFrame(t.spp, t.batch), n.encodeQueueSize > 5 && await n.flush();
         const p = new VideoFrame(this.canvas, {
-          timestamp: (i + c) * 1e6 / t.fps,
+          timestamp: (i + l) * 1e6 / t.fps,
           duration: 1e6 / t.fps
         });
         n.encode(p, {
-          keyFrame: c % t.fps === 0
+          keyFrame: l % t.fps === 0
         }), p.close(), d && await d;
       }
     }
     async updateSceneBuffers() {
       let e = false;
-      e || (e = this.renderer.updateCombinedBVH(this.worldBridge.tlas, this.worldBridge.blas)), e || (e = this.renderer.updateBuffer("instance", this.worldBridge.instances)), e || (e = this.renderer.updateCombinedGeometry(this.worldBridge.vertices, this.worldBridge.normals, this.worldBridge.uvs)), e || (e = this.renderer.updateBuffer("index", this.worldBridge.indices)), e || (e = this.renderer.updateBuffer("attr", this.worldBridge.attributes)), this.worldBridge.updateCamera(this.canvas.width, this.canvas.height), this.renderer.updateSceneUniforms(this.worldBridge.cameraData, 0), e && this.renderer.recreateBindGroup(), this.renderer.resetAccumulation();
+      e || (e = this.renderer.updateCombinedBVH(this.worldBridge.tlas, this.worldBridge.blas)), e || (e = this.renderer.updateBuffer("instance", this.worldBridge.instances)), e || (e = this.renderer.updateCombinedGeometry(this.worldBridge.vertices, this.worldBridge.normals, this.worldBridge.uvs)), e || (e = this.renderer.updateBuffer("topology", this.worldBridge.mesh_topology)), e || (e = this.renderer.updateBuffer("lights", this.worldBridge.lights)), this.worldBridge.updateCamera(this.canvas.width, this.canvas.height), this.renderer.updateSceneUniforms(this.worldBridge.cameraData, 0, this.worldBridge.lightCount), e && this.renderer.recreateBindGroup(), this.renderer.resetAccumulation();
     }
     async renderFrame(e, t) {
       let n = 0;
@@ -1243,14 +1379,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async sendRenderResult(e, t) {
       if (!this.dc || this.dc.readyState !== "open") return;
       let n = 0;
-      const r = e.map((c) => {
-        const d = c.data.byteLength;
+      const r = e.map((l) => {
+        const d = l.data.byteLength;
         return n += d, {
-          type: c.type,
-          timestamp: c.timestamp,
-          duration: c.duration,
+          type: l.type,
+          timestamp: l.timestamp,
+          duration: l.duration,
           size: d,
-          decoderConfig: c.decoderConfig
+          decoderConfig: l.decoderConfig
         };
       });
       console.log(`[RTC] Sending Render Result: ${n} bytes, ${e.length} chunks`), this.sendData({
@@ -1261,7 +1397,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       });
       const i = new Uint8Array(n);
       let o = 0;
-      for (const c of e) i.set(new Uint8Array(c.data), o), o += c.data.byteLength;
+      for (const l of e) i.set(new Uint8Array(l.data), o), o += l.data.byteLength;
       await this.sendBinaryChunks(i);
     }
     async sendBinaryChunks(e) {
@@ -1504,49 +1640,49 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       i && await i.sendRenderRequest(t, n, r);
     }
   }
-  let m = false, b = null, k = null, _ = null, R = [], D = /* @__PURE__ */ new Map(), A = 0, U = 0, W = 0, S = null, v = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), M = false, E = null;
-  const O = 20, a = new ne(), h = new Z(a.canvas), l = new te(), I = new re(h, l, a.canvas), g = new ie();
-  let x = 0, $ = 0, T = 0, q = performance.now();
+  let m = false, y = null, k = null, v = null, R = [], D = /* @__PURE__ */ new Map(), E = 0, L = 0, W = 0, x = null, _ = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), M = false, A = null;
+  const q = 20, a = new ne(), h = new Z(a.canvas), c = new te(), U = new re(h, c, a.canvas), g = new ie();
+  let S = 0, $ = 0, T = 0, O = performance.now();
   const ae = () => {
     const s = parseInt(a.inputDepth.value, 10) || f.defaultDepth, e = parseInt(a.inputSPP.value, 10) || f.defaultSPP;
     h.buildPipeline(s, e);
   }, N = () => {
     const { width: s, height: e } = a.getRenderConfig();
-    h.updateScreenSize(s, e), l.hasWorld && (l.updateCamera(s, e), h.updateSceneUniforms(l.cameraData, 0)), h.recreateBindGroup(), h.resetAccumulation(), x = 0, $ = 0;
+    h.updateScreenSize(s, e), c.hasWorld && (c.updateCamera(s, e), h.updateSceneUniforms(c.cameraData, 0, c.lightCount)), h.recreateBindGroup(), h.resetAccumulation(), S = 0, $ = 0;
   }, P = async (s, e = true) => {
     m = false, console.log(`Loading Scene: ${s}...`);
     let t, n;
-    s === "viewer" && b && (k === "obj" ? t = b : k === "glb" && (n = new Uint8Array(b).slice(0))), await l.loadScene(s, t, n), l.printStats(), await h.loadTexturesFromWorld(l), await oe(), N(), a.updateAnimList(l.getAnimationList()), e && (m = true, a.updateRenderButton(true));
+    s === "viewer" && y && (k === "obj" ? t = y : k === "glb" && (n = new Uint8Array(y).slice(0))), await c.loadScene(s, t, n), c.printStats(), await h.loadTexturesFromWorld(c), await oe(), N(), a.updateAnimList(c.getAnimationList()), e && (m = true, a.updateRenderButton(true));
   }, oe = async () => {
-    h.updateCombinedGeometry(l.vertices, l.normals, l.uvs), h.updateCombinedBVH(l.tlas, l.blas), h.updateBuffer("index", l.indices), h.updateBuffer("attr", l.attributes), h.updateBuffer("instance", l.instances), h.updateSceneUniforms(l.cameraData, 0);
-  }, L = () => {
-    if (I.recording || (requestAnimationFrame(L), !m || !l.hasWorld)) return;
+    h.updateCombinedGeometry(c.vertices, c.normals, c.uvs), h.updateCombinedBVH(c.tlas, c.blas), h.updateBuffer("topology", c.mesh_topology), h.updateBuffer("instance", c.instances), h.updateBuffer("lights", c.lights), h.updateSceneUniforms(c.cameraData, 0, c.lightCount);
+  }, I = () => {
+    if (U.recording || (requestAnimationFrame(I), !m || !c.hasWorld)) return;
     let s = parseInt(a.inputUpdateInterval.value, 10) || 0;
-    if (s > 0 && x >= s && l.update($ / (s || 1) / 60), l.hasNewData) {
+    if (s > 0 && S >= s && c.update($ / (s || 1) / 60), c.hasNewData) {
       let t = false;
-      t || (t = h.updateCombinedBVH(l.tlas, l.blas)), t || (t = h.updateBuffer("instance", l.instances)), l.hasNewGeometry && (t || (t = h.updateCombinedGeometry(l.vertices, l.normals, l.uvs)), t || (t = h.updateBuffer("index", l.indices)), t || (t = h.updateBuffer("attr", l.attributes)), l.hasNewGeometry = false), l.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(l.cameraData, 0), t && h.recreateBindGroup(), h.resetAccumulation(), x = 0, l.hasNewData = false;
+      t || (t = h.updateCombinedBVH(c.tlas, c.blas)), t || (t = h.updateBuffer("instance", c.instances)), c.hasNewGeometry && (t || (t = h.updateCombinedGeometry(c.vertices, c.normals, c.uvs)), t || (t = h.updateBuffer("topology", c.mesh_topology)), t || (t = h.updateBuffer("lights", c.lights)), c.hasNewGeometry = false), c.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(c.cameraData, 0, c.lightCount), t && h.recreateBindGroup(), h.resetAccumulation(), S = 0, c.hasNewData = false;
     }
-    x++, T++, $++, h.compute(x), h.present();
+    S++, T++, $++, h.compute(S), h.present();
     const e = performance.now();
-    e - q >= 1e3 && (a.updateStats(T, 1e3 / T, x), T = 0, q = e);
-  }, z = async (s) => {
+    e - O >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, O = e);
+  }, G = async (s) => {
     const e = a.sceneSelect.value, t = e !== "viewer";
-    if (!t && (!b || !k)) return;
-    const n = a.getRenderConfig(), r = t ? e : void 0, i = t ? "DUMMY" : b, o = t ? "obj" : k;
-    n.sceneName = r, s ? (console.log(`Sending scene to specific worker: ${s}`), v.set(s, "loading"), await g.sendSceneToWorker(s, i, o, n)) : (console.log("Broadcasting scene to all workers..."), g.getWorkerIds().forEach((c) => v.set(c, "loading")), await g.broadcastScene(i, o, n));
+    if (!t && (!y || !k)) return;
+    const n = a.getRenderConfig(), r = t ? e : void 0, i = t ? "DUMMY" : y, o = t ? "obj" : k;
+    n.sceneName = r, s ? (console.log(`Sending scene to specific worker: ${s}`), _.set(s, "loading"), await g.sendSceneToWorker(s, i, o, n)) : (console.log("Broadcasting scene to all workers..."), g.getWorkerIds().forEach((l) => _.set(l, "loading")), await g.broadcastScene(i, o, n));
   }, V = async (s) => {
-    if (v.get(s) !== "idle") {
-      console.log(`Worker ${s} is ${v.get(s)}, skipping assignment.`);
+    if (_.get(s) !== "idle") {
+      console.log(`Worker ${s} is ${_.get(s)}, skipping assignment.`);
       return;
     }
     if (R.length === 0) return;
     const e = R.shift();
-    e && (v.set(s, "busy"), C.set(s, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${s}`), await g.sendRenderRequest(s, e.start, e.count, {
-      ...S,
+    e && (_.set(s, "busy"), C.set(s, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${s}`), await g.sendRenderRequest(s, e.start, e.count, {
+      ...x,
       fileType: "obj"
     }));
-  }, ce = async () => {
-    const s = Array.from(D.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await G(async () => {
+  }, le = async () => {
+    const s = Array.from(D.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await z(async () => {
       const { Muxer: d, ArrayBufferTarget: p } = await import("./webm-muxer-MLtUgOCn.js");
       return {
         Muxer: d,
@@ -1556,9 +1692,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       target: new t(),
       video: {
         codec: "V_VP9",
-        width: S.width,
-        height: S.height,
-        frameRate: S.fps
+        width: x.width,
+        height: x.height,
+        frameRate: x.fps
       }
     });
     for (const d of s) {
@@ -1577,8 +1713,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       r
     ], {
       type: "video/webm"
-    }), o = URL.createObjectURL(i), c = document.createElement("a");
-    c.href = o, c.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(c), c.click(), document.body.removeChild(c), URL.revokeObjectURL(o), a.setStatus("Finished!");
+    }), o = URL.createObjectURL(i), l = document.createElement("a");
+    l.href = o, l.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(l), l.click(), document.body.removeChild(l), URL.revokeObjectURL(o), a.setStatus("Finished!");
   }, j = async (s, e, t) => {
     console.log(`[Worker] Starting Render: Frames ${s} - ${s + e}`), a.setStatus(`Remote Rendering: ${s}-${s + e}`), m = false;
     const n = {
@@ -1588,33 +1724,33 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     try {
       a.setRecordingState(true, `Remote: ${e} f`);
-      const r = await I.recordChunks(n, (i, o) => a.setRecordingState(true, `Remote: ${i}/${o}`));
+      const r = await U.recordChunks(n, (i, o) => a.setRecordingState(true, `Remote: ${i}/${o}`));
       console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await g.sendRenderResult(r, s), a.setRecordingState(false), a.setStatus("Idle");
     } catch (r) {
       console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
     } finally {
-      m = true, requestAnimationFrame(L);
+      m = true, requestAnimationFrame(I);
     }
-  }, le = async () => {
-    if (!E) return;
-    const { start: s, count: e, config: t } = E;
-    E = null, await j(s, e, t);
+  }, ce = async () => {
+    if (!A) return;
+    const { start: s, count: e, config: t } = A;
+    A = null, await j(s, e, t);
   };
   g.onStatusChange = (s) => a.setStatus(`Status: ${s}`);
   g.onWorkerLeft = (s) => {
-    console.log(`Worker Left: ${s}`), a.setStatus(`Worker Left: ${s}`), v.delete(s);
+    console.log(`Worker Left: ${s}`), a.setStatus(`Worker Left: ${s}`), _.delete(s);
     const e = C.get(s);
     e && (console.warn(`Worker ${s} failed job ${e.start}. Re-queueing.`), R.unshift(e), C.delete(s), a.setStatus(`Re-queued Job ${e.start}`));
   };
   g.onWorkerReady = (s) => {
-    console.log(`Worker ${s} is READY`), a.setStatus(`Worker ${s} Ready!`), v.set(s, "idle"), _ === "host" && R.length > 0 && V(s);
+    console.log(`Worker ${s} is READY`), a.setStatus(`Worker ${s} Ready!`), _.set(s, "idle"), v === "host" && R.length > 0 && V(s);
   };
   g.onWorkerJoined = (s) => {
-    a.setStatus(`Worker Joined: ${s}`), v.set(s, "idle"), _ === "host" && R.length > 0 && z(s);
+    a.setStatus(`Worker Joined: ${s}`), _.set(s, "idle"), v === "host" && R.length > 0 && G(s);
   };
   g.onRenderRequest = async (s, e, t) => {
     if (console.log(`[Worker] Received Render Request: Frames ${s} - ${s + e}`), M) {
-      console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${s}`), E = {
+      console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${s}`), A = {
         start: s,
         count: e,
         config: t
@@ -1624,10 +1760,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     await j(s, e, t);
   };
   g.onRenderResult = async (s, e, t) => {
-    console.log(`[Host] Received ${s.length} chunks for ${e} from ${t}`), D.set(e, s), A++, a.setStatus(`Distributed Progress: ${A} / ${U} jobs`), v.set(t, "idle"), C.delete(t), await V(t), A >= U && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
+    console.log(`[Host] Received ${s.length} chunks for ${e} from ${t}`), D.set(e, s), E++, a.setStatus(`Distributed Progress: ${E} / ${L} jobs`), _.set(t, "idle"), C.delete(t), await V(t), E >= L && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await le());
   };
   g.onSceneReceived = async (s, e) => {
-    console.log("Scene received successfully."), M = true, a.setRenderConfig(e), k = e.fileType, e.fileType, b = s, a.sceneSelect.value = e.sceneName || "viewer", await P(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), l.setAnimation(e.anim)), M = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), le();
+    console.log("Scene received successfully."), M = true, a.setRenderConfig(e), k = e.fileType, e.fileType, y = s, a.sceneSelect.value = e.sceneName || "viewer", await P(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), c.setAnimation(e.anim)), M = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), ce();
   };
   const de = () => {
     a.onRenderStart = () => {
@@ -1635,53 +1771,53 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }, a.onRenderStop = () => {
       m = false;
     }, a.onSceneSelect = (s) => P(s, false), a.onResolutionChange = N, a.onRecompile = (s, e) => {
-      m = false, h.buildPipeline(s, e), h.recreateBindGroup(), h.resetAccumulation(), x = 0, m = true;
+      m = false, h.buildPipeline(s, e), h.recreateBindGroup(), h.resetAccumulation(), S = 0, m = true;
     }, a.onFileSelect = async (s) => {
       var _a;
-      ((_a = s.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (b = await s.text(), k = "obj") : (b = await s.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", P("viewer", false);
-    }, a.onAnimSelect = (s) => l.setAnimation(s), a.onRecordStart = async () => {
-      if (!I.recording) if (_ === "host") {
+      ((_a = s.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (y = await s.text(), k = "obj") : (y = await s.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", P("viewer", false);
+    }, a.onAnimSelect = (s) => c.setAnimation(s), a.onRecordStart = async () => {
+      if (!U.recording) if (v === "host") {
         const s = g.getWorkerIds();
-        if (S = a.getRenderConfig(), W = Math.ceil(S.fps * S.duration), !confirm(`Distribute recording? (Workers: ${s.length})
+        if (x = a.getRenderConfig(), W = Math.ceil(x.fps * x.duration), !confirm(`Distribute recording? (Workers: ${s.length})
 Auto Scene Sync enabled.`)) return;
-        R = [], D.clear(), A = 0, C.clear();
-        for (let e = 0; e < W; e += O) {
-          const t = Math.min(O, W - e);
+        R = [], D.clear(), E = 0, C.clear();
+        for (let e = 0; e < W; e += q) {
+          const t = Math.min(q, W - e);
           R.push({
             start: e,
             count: t
           });
         }
-        U = R.length, s.forEach((e) => v.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${U} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await z()) : console.log("No workers yet. Waiting...");
+        L = R.length, s.forEach((e) => _.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${L} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await G()) : console.log("No workers yet. Waiting...");
       } else {
         m = false, a.setRecordingState(true);
         const s = a.getRenderConfig();
         try {
           const e = performance.now();
-          await I.record(s, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
+          await U.record(s, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
             const n = document.createElement("a");
             n.href = t, n.download = `raytrace_${Date.now()}.webm`, n.click(), URL.revokeObjectURL(t);
           }), console.log(`Recording took ${performance.now() - e}[ms]`);
         } catch {
           alert("Recording failed.");
         } finally {
-          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(L);
+          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(I);
         }
       }
     }, a.onConnectHost = () => {
-      _ === "host" ? (g.disconnect(), _ = null, a.setConnectionState(null)) : (g.connect("host"), _ = "host", a.setConnectionState("host"));
+      v === "host" ? (g.disconnect(), v = null, a.setConnectionState(null)) : (g.connect("host"), v = "host", a.setConnectionState("host"));
     }, a.onConnectWorker = () => {
-      _ === "worker" ? (g.disconnect(), _ = null, a.setConnectionState(null)) : (g.connect("worker"), _ = "worker", a.setConnectionState("worker"));
+      v === "worker" ? (g.disconnect(), v = null, a.setConnectionState(null)) : (g.connect("worker"), v = "worker", a.setConnectionState("worker"));
     }, a.setConnectionState(null);
   };
   async function ue() {
     try {
-      await h.init(), await l.initWasm();
+      await h.init(), await c.initWasm();
     } catch (s) {
       alert("Init failed: " + s);
       return;
     }
-    de(), ae(), N(), P("cornell", false), requestAnimationFrame(L);
+    de(), ae(), N(), P("cornell", false), requestAnimationFrame(I);
   }
   ue().catch(console.error);
 })();

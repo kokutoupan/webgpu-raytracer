@@ -19,11 +19,11 @@ export class WebGPURenderer {
   // Geometry Buffers
   geometryBuffer!: GPUBuffer; // Merged (Pos + Normal + UV)
   nodesBuffer!: GPUBuffer; // Merged (TLAS + BLAS)
+  topologyBuffer!: GPUBuffer; // Merged (Indices + Attributes)
 
   // Standalone Buffers
-  indexBuffer!: GPUBuffer;
-  attrBuffer!: GPUBuffer;
   instanceBuffer!: GPUBuffer;
+  lightsBuffer!: GPUBuffer;
 
   // Texture Support
   texture!: GPUTexture;
@@ -40,7 +40,7 @@ export class WebGPURenderer {
   private seed = Math.floor(Math.random() * 0xffffff);
 
   // Reuse to avoid allocation
-  private uniformMixedData = new Uint32Array(4);
+  private uniformMixedData = new Uint32Array(8);
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -222,7 +222,7 @@ export class WebGPURenderer {
     // 1.5x scaling policy
     let newSize = Math.ceil(size * 1.5);
     newSize = (newSize + 3) & ~3;
-    newSize = Math.max(newSize, 4);
+    newSize = Math.max(newSize, 16);
 
     return this.device.createBuffer({
       label,
@@ -231,9 +231,9 @@ export class WebGPURenderer {
     });
   }
 
-  // Handle generic buffers (indices, attributes, instances)
+  // Handle generic buffers (topology, instances, lights)
   updateBuffer(
-    type: "index" | "attr" | "instance",
+    type: "topology" | "instance" | "lights",
     data: Uint32Array | Float32Array
   ): boolean {
     const byteLen = data.byteLength;
@@ -241,25 +241,16 @@ export class WebGPURenderer {
     let needsRebind = false;
     let buf: GPUBuffer | undefined;
 
-    if (type === "index") {
-      if (!this.indexBuffer || this.indexBuffer.size < byteLen)
+    if (type === "topology") {
+      if (!this.topologyBuffer || this.topologyBuffer.size < byteLen)
         needsRebind = true;
-      this.indexBuffer = this.ensureBuffer(
-        this.indexBuffer,
+      this.topologyBuffer = this.ensureBuffer(
+        this.topologyBuffer,
         byteLen,
-        "IndexBuffer"
+        "TopologyBuffer"
       );
-      buf = this.indexBuffer;
-    } else if (type === "attr") {
-      if (!this.attrBuffer || this.attrBuffer.size < byteLen)
-        needsRebind = true;
-      this.attrBuffer = this.ensureBuffer(
-        this.attrBuffer,
-        byteLen,
-        "AttrBuffer"
-      );
-      buf = this.attrBuffer;
-    } else {
+      buf = this.topologyBuffer;
+    } else if (type === "instance") {
       if (!this.instanceBuffer || this.instanceBuffer.size < byteLen)
         needsRebind = true;
       this.instanceBuffer = this.ensureBuffer(
@@ -268,6 +259,15 @@ export class WebGPURenderer {
         "InstanceBuffer"
       );
       buf = this.instanceBuffer;
+    } else {
+      if (!this.lightsBuffer || this.lightsBuffer.size < byteLen)
+        needsRebind = true;
+      this.lightsBuffer = this.ensureBuffer(
+        this.lightsBuffer,
+        byteLen,
+        "LightsBuffer"
+      );
+      buf = this.lightsBuffer;
     }
 
     this.device.queue.writeBuffer(buf, 0, data as any, 0, data.length);
@@ -352,7 +352,11 @@ export class WebGPURenderer {
     return needsRebind;
   }
 
-  updateSceneUniforms(cameraData: Float32Array, frameCount: number) {
+  updateSceneUniforms(
+    cameraData: Float32Array,
+    frameCount: number,
+    lightCount: number
+  ) {
     if (!this.sceneUniformBuffer) return;
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
@@ -363,7 +367,8 @@ export class WebGPURenderer {
     this.uniformMixedData[0] = frameCount;
     this.uniformMixedData[1] = this.blasOffset;
     this.uniformMixedData[2] = this.vertexCount;
-    this.uniformMixedData[3] = 0;
+    this.uniformMixedData[3] = 0; // Padding/Seed placeholder
+    this.uniformMixedData[4] = lightCount; // Added
 
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
@@ -378,7 +383,8 @@ export class WebGPURenderer {
       !this.accumulateBuffer ||
       !this.geometryBuffer ||
       !this.nodesBuffer ||
-      !this.sceneUniformBuffer
+      !this.sceneUniformBuffer ||
+      !this.lightsBuffer
     )
       return;
 
@@ -390,16 +396,16 @@ export class WebGPURenderer {
         { binding: 2, resource: { buffer: this.sceneUniformBuffer } },
 
         { binding: 3, resource: { buffer: this.geometryBuffer } },
-        { binding: 4, resource: { buffer: this.indexBuffer } },
-        { binding: 5, resource: { buffer: this.attrBuffer } },
-        { binding: 6, resource: { buffer: this.nodesBuffer } },
-        { binding: 7, resource: { buffer: this.instanceBuffer } },
+        { binding: 4, resource: { buffer: this.topologyBuffer } }, // Consolidated
+        { binding: 5, resource: { buffer: this.nodesBuffer } },
+        { binding: 6, resource: { buffer: this.instanceBuffer } },
 
         {
-          binding: 8,
+          binding: 7,
           resource: this.texture.createView({ dimension: "2d-array" }),
         },
-        { binding: 9, resource: this.sampler },
+        { binding: 8, resource: this.sampler },
+        { binding: 9, resource: { buffer: this.lightsBuffer } },
       ],
     });
   }

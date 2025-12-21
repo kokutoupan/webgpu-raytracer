@@ -53,7 +53,11 @@ const updateResolution = () => {
 
   if (worldBridge.hasWorld) {
     worldBridge.updateCamera(width, height);
-    renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+    renderer.updateSceneUniforms(
+      worldBridge.cameraData,
+      0,
+      worldBridge.lightCount
+    );
   }
   renderer.recreateBindGroup();
   renderer.resetAccumulation();
@@ -98,10 +102,14 @@ const uploadSceneBuffers = async () => {
     worldBridge.uvs
   );
   renderer.updateCombinedBVH(worldBridge.tlas, worldBridge.blas);
-  renderer.updateBuffer("index", worldBridge.indices);
-  renderer.updateBuffer("attr", worldBridge.attributes);
+  renderer.updateBuffer("topology", worldBridge.mesh_topology);
   renderer.updateBuffer("instance", worldBridge.instances);
-  renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+  renderer.updateBuffer("lights", worldBridge.lights); // Added
+  renderer.updateSceneUniforms(
+    worldBridge.cameraData,
+    0,
+    worldBridge.lightCount
+  );
 };
 
 // --- Render Loop ---
@@ -132,13 +140,20 @@ const renderFrame = () => {
         worldBridge.normals,
         worldBridge.uvs
       );
-      needsRebind ||= renderer.updateBuffer("index", worldBridge.indices);
-      needsRebind ||= renderer.updateBuffer("attr", worldBridge.attributes);
+      needsRebind ||= renderer.updateBuffer(
+        "topology",
+        worldBridge.mesh_topology
+      );
+      needsRebind ||= renderer.updateBuffer("lights", worldBridge.lights); // Added
       worldBridge.hasNewGeometry = false;
     }
 
     worldBridge.updateCamera(ui.canvas.width, ui.canvas.height);
-    renderer.updateSceneUniforms(worldBridge.cameraData, 0);
+    renderer.updateSceneUniforms(
+      worldBridge.cameraData,
+      0,
+      worldBridge.lightCount
+    );
 
     if (needsRebind) renderer.recreateBindGroup();
     renderer.resetAccumulation();

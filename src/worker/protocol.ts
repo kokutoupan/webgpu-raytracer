@@ -18,26 +18,26 @@ export type MainMessage =
       vertices: Float32Array;
       normals: Float32Array;
       uvs: Float32Array;
-      indices: Uint32Array;
-      attributes: Float32Array;
+      mesh_topology: Uint32Array;
+      lights: Uint32Array; // Added
       tlas: Float32Array;
       blas: Float32Array;
       instances: Float32Array;
       camera: Float32Array;
       textureCount: number;
-      textures: Uint8Array[]; // Added
-      animations: string[]; // Added
+      textures: Uint8Array[];
+      animations: string[];
     }
   | {
       type: "UPDATE_RESULT";
       tlas: Float32Array;
       blas: Float32Array;
       instances: Float32Array;
+      lights: Uint32Array; // Added
       camera: Float32Array;
       vertices?: Float32Array;
       normals?: Float32Array;
       uvs?: Float32Array;
-      indices?: Uint32Array;
-      attributes?: Float32Array; // Attributes might animate?
+      mesh_topology?: Uint32Array;
     }
   | { type: "TEXTURE_DATA"; index: number; data: Uint8Array };
