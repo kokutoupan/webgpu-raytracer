@@ -653,7 +653,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
         v(0., 0., 555.),
         white,
         mat_type::METAL,
-        0.1,
+        0.15,
         -1.0,
     );
     // Ceiling
