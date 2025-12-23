@@ -37,8 +37,10 @@ struct MeshTopology {
     v1: u32,
     v2: u32,
     pad: u32,
-    data0: vec4<f32>, // rgb: Albedo, w: MaterialType (0:Diffuse, 1:Metal, 2:Glass, 3:Light)
-    data1: vec4<f32>  // x: Roughness/IOR, y: TexIdx
+    data0: vec4<f32>, // rgb: BaseColor, w: MaterialType (bitcast)
+    data1: vec4<f32>, // x: Metallic, y: Roughness, z: IOR, w: 0.0
+    data2: vec4<f32>, // x: BaseTex, y: MetRoughTex, z: NormalTex, w: EmissiveTex
+    data3: vec4<f32>  // rgb: EmissiveColor, w: OcclusionTex
 }
 
 struct LightRef {
@@ -160,11 +162,14 @@ fn rand_pcg(state: ptr<function, u32>) -> f32 {
     return f32((word >> 22u) ^ word) / 4294967295.0;
 }
 
-fn random_unit_vector(rng: ptr<function, u32>) -> vec3<f32> {
-    let z = rand_pcg(rng) * 2.0 - 1.0;
-    let a = rand_pcg(rng) * 2.0 * PI;
-    let r = sqrt(max(0.0, 1.0 - z * z));
-    return vec3<f32>(r * cos(a), r * sin(a), z);
+fn random_unit_vector(onb: ONB, rng: ptr<function, u32>) -> vec3<f32> {
+    let r1 = rand_pcg(rng);
+    let r2 = rand_pcg(rng);
+    let phi = 2.0 * PI * r1;
+    let cos_theta = sqrt(1.0 - r2);
+    let sin_theta = sqrt(r2);
+    let local_dir = vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+    return local_to_world(onb, local_dir);
 }
 
 fn random_in_unit_disk(rng: ptr<function, u32>) -> vec3<f32> {
@@ -187,7 +192,7 @@ fn local_to_world(onb: ONB, a: vec3<f32>) -> vec3<f32> {
 }
 
 // =========================================================
-//   BSDF: Diffuse
+//   BSDF Functions
 // =========================================================
 
 fn eval_diffuse(albedo: vec3<f32>) -> vec3<f32> {
@@ -195,45 +200,22 @@ fn eval_diffuse(albedo: vec3<f32>) -> vec3<f32> {
 }
 
 fn sample_diffuse(normal: vec3<f32>, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
-    // Cosine weighted sampling
-    let r1 = rand_pcg(rng);
-    let r2 = rand_pcg(rng);
-    let z = sqrt(1.0 - r2);
-    let phi = 2.0 * PI * r1;
-    let x = cos(phi) * sqrt(r2);
-    let y = sin(phi) * sqrt(r2);
-
     let onb = build_onb(normal);
-    let local_dir = vec3(x, y, z);
-    let world_dir = local_to_world(onb, local_dir);
-
-    let cos_theta = max(local_dir.z, 0.0); // local_dir.z is cos(theta)
-    let pdf = cos_theta / PI;
-
-    // throughput = bsdf * cosine / pdf
-    //            = (albedo/PI) * cos_theta / (cos_theta/PI)
-    //            = albedo
-
-    return ScatterResult(world_dir, pdf, albedo, false);
+    let dir = random_unit_vector(onb, rng);
+    let cos_theta = max(dot(normal, dir), 0.0);
+    return ScatterResult(dir, cos_theta / PI, albedo, false);
 }
 
-// =========================================================
-//   BSDF: GGX / Metal
-// =========================================================
-
-fn ggx_d(n_dot_h: f32, alpha: f32) -> f32 {
-    let a2 = alpha * alpha;
-    let d = (n_dot_h * n_dot_h) * (a2 - 1.0) + 1.0;
+// GGX
+fn ggx_d(n_dot_h: f32, a2: f32) -> f32 {
+    let d = (n_dot_h * a2 - n_dot_h) * n_dot_h + 1.0;
     return a2 / (PI * d * d);
 }
 
-fn ggx_g1(v_dot_n: f32, k: f32) -> f32 {
-    return v_dot_n / (v_dot_n * (1.0 - k) + k);
-}
-
-fn ggx_g(n_dot_l: f32, n_dot_v: f32, alpha: f32) -> f32 {
-    let k = (alpha + 1.0) * (alpha + 1.0) / 8.0;
-    return ggx_g1(n_dot_l, k) * ggx_g1(n_dot_v, k);
+fn ggx_g(n_dot_v: f32, n_dot_l: f32, a2: f32) -> f32 {
+    let g1_v = 2.0 * n_dot_v / (n_dot_v + sqrt(a2 + (1.0 - a2) * n_dot_v * n_dot_v));
+    let g1_l = 2.0 * n_dot_l / (n_dot_l + sqrt(a2 + (1.0 - a2) * n_dot_l * n_dot_l));
+    return g1_v * g1_l;
 }
 
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
@@ -242,170 +224,175 @@ fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
 
 fn eval_ggx(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
     let h = normalize(v + l);
-    let n_dot_l = max(dot(n, l), 0.0);
-    let n_dot_v = max(dot(n, v), 0.0);
+    let n_dot_v = max(dot(n, v), 1e-4);
+    let n_dot_l = max(dot(n, l), 1e-4);
+    let n_dot_h = max(dot(n, h), 1e-4);
+    let v_dot_h = max(dot(v, h), 1e-4);
 
-    if n_dot_l == 0.0 || n_dot_v == 0.0 { return vec3(0.0); }
+    let a2 = roughness * roughness;
+    let d = ggx_d(n_dot_h, a2);
+    let g = ggx_g(n_dot_v, n_dot_l, a2);
+    let f = fresnel_schlick(v_dot_h, f0);
 
-    let alpha = roughness * roughness;
-    let D = ggx_d(dot(n, h), alpha);
-    let G = ggx_g(n_dot_l, n_dot_v, alpha);
-    let F = fresnel_schlick(dot(h, v), f0);
-
-    return (D * G * F) / (4.0 * n_dot_v * n_dot_l);
+    return (d * g * f) / (4.0 * n_dot_v * n_dot_l);
 }
 
 fn sample_ggx(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
-    let r1 = rand_pcg(rng);
-    let r2 = rand_pcg(rng);
-    let alpha = roughness * roughness;
+    let a = roughness;
+    let u = vec2(rand_pcg(rng), rand_pcg(rng));
 
-    // Sample Microfacet Normal (H)
-    let phi = 2.0 * PI * r1;
-    let cos_theta = sqrt((1.0 - r2) / (r2 * (alpha * alpha - 1.0) + 1.0));
-    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+    let phi = 2.0 * PI * u.x;
+    let cos_theta = sqrt(max(0.0, (1.0 - u.y) / (1.0 + (a * a - 1.0) * u.y)));
+    let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
 
-    let local_h = vec3(sin_theta * cos(phi), sin_theta * sin(phi), cos_theta);
+    let h_local = vec3(sin_theta * cos(phi), sin_theta * sin(phi), cos_theta);
     let onb = build_onb(n);
-    let h = local_to_world(onb, local_h);
-
+    let h = local_to_world(onb, h_local);
     let l = reflect(-v, h);
 
     if dot(n, l) <= 0.0 {
-        // Absorbed
-        return ScatterResult(vec3(0.0), 0.0, vec3(0.0), true);
+        return ScatterResult(vec3(0.0), 0.0, vec3(0.0), false);
     }
 
-    let n_dot_l = max(dot(n, l), 0.0);
-    let n_dot_v = max(dot(n, v), 0.0);
-    let n_dot_h = max(dot(n, h), 0.0);
-    let v_dot_h = max(dot(v, h), 0.0);
+    let n_dot_v = max(dot(n, v), 1e-4);
+    let n_dot_l = max(dot(n, l), 1e-4);
+    let n_dot_h = max(dot(n, h), 1e-4);
+    let v_dot_h = max(dot(v, h), 1e-4);
 
-    let D = ggx_d(n_dot_h, alpha);
-    let G = ggx_g(n_dot_l, n_dot_v, alpha);
-    let F = fresnel_schlick(v_dot_h, f0);
+    let a2 = a * a;
+    let d = ggx_d(n_dot_h, a2);
+    let g = ggx_g(n_dot_v, n_dot_l, a2);
+    let f = fresnel_schlick(v_dot_h, f0);
 
-    let pdf = (D * n_dot_h) / (4.0 * v_dot_h);
-    let bsdf = (D * G * F) / (4.0 * n_dot_v * n_dot_l);
-    
-    // throughput = bsdf * cosine / pdf
-    let throughput = bsdf * n_dot_l / pdf;
+    let pdf = (d * n_dot_h) / (4.0 * v_dot_h);
+    let throughput = bsdf_to_throughput(d, g, f, n_dot_v, n_dot_l, n_dot_h, v_dot_h, pdf);
 
-    return ScatterResult(l, pdf, throughput, false); // GGX treated as non-specular for MIS? Usually yes for rough.
-    // However original code had: specular_bounce = false; // GGX is proper for MIS
+    return ScatterResult(l, pdf, throughput, false);
 }
 
-// =========================================================
-//   BSDF: Dielectric / Glass
-// =========================================================
-
-fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
-    let r0_sqrt = (1.0 - ref_idx) / (1.0 + ref_idx);
-    let r0 = r0_sqrt * r0_sqrt;
-    return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
+fn bsdf_to_throughput(d: f32, g: f32, f: vec3<f32>, n_dot_v: f32, n_dot_l: f32, n_dot_h: f32, v_dot_h: f32, pdf: f32) -> vec3<f32> {
+    if pdf <= 0.0 { return vec3(0.0); }
+    return (d * g * f) / (4.0 * n_dot_v * n_dot_l) * n_dot_l / pdf;
 }
 
-fn sample_dielectric(in_dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
-    let front_face = dot(in_dir, normal) < 0.0;
-    let n_eff = select(-normal, normal, front_face);
-    let ratio = select(ior, 1.0 / ior, front_face);
+// Dielectric
+fn reflectance_dielectric(cosine: f32, ref_idx: f32) -> f32 {
+    var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
+    return r0 + (1.0 - r0) * pow(1.0 - cosine, 5.0);
+}
 
-    let unit_in = normalize(in_dir);
-    let cos_t = min(dot(-unit_in, n_eff), 1.0);
-    let sin_t = sqrt(1.0 - cos_t * cos_t);
+fn sample_dielectric(dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
+    let front_face = dot(dir, normal) < 0.0;
+    let refraction_ratio = select(ior, 1.0 / ior, front_face);
+    let n = select(-normal, normal, front_face);
 
-    var out_dir = vec3(0.0);
+    let unit_dir = normalize(dir);
+    let cos_theta = min(dot(-unit_dir, n), 1.0);
+    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
-    if (ratio * sin_t > 1.0) || (reflectance(cos_t, ratio) > rand_pcg(rng)) {
-        out_dir = reflect(unit_in, n_eff);
+    let cannot_refract = refraction_ratio * sin_theta > 1.0;
+    var direction: vec3<f32>;
+
+    if cannot_refract || reflectance_dielectric(cos_theta, refraction_ratio) > rand_pcg(rng) {
+        direction = reflect(unit_dir, n);
     } else {
-        out_dir = ratio * (unit_in + cos_t * n_eff) - sqrt(abs(1.0 - (1.0 - cos_t * cos_t) * ratio * ratio)) * n_eff;
+        direction = refract(unit_dir, n, refraction_ratio);
     }
 
-    return ScatterResult(out_dir, 1.0, albedo, true); // Specular bounce (Delta)
+    return ScatterResult(direction, 1.0, albedo, true);
 }
 
 // =========================================================
-//   Direct Light Sampling (NEE)
+//   Direct Light Sampling
 // =========================================================
 
-fn power_heuristic(pdf_f: f32, pdf_g: f32) -> f32 {
-    let f2 = pdf_f * pdf_f;
-    let g2 = pdf_g * pdf_g;
-    return f2 / (f2 + g2);
-}
+fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample {
+    let light_count = scene.light_count;
+    if light_count == 0u {
+        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+    }
 
-fn sample_light_source(origin: vec3<f32>, rng: ptr<function, u32>) -> LightSample {
-    var res: LightSample;
-    res.L = vec3(0.0);
-    res.pdf = 0.0;
+    let light_pick_idx = u32(rand_pcg(rng) * f32(light_count));
+    let l_ref = lights[light_pick_idx];
 
-    let num_lights = scene.light_count;
-    if num_lights == 0u { return res; }
+    let tri = topology[l_ref.tri_idx];
+    let inst = instances[l_ref.inst_idx];
+    let m = get_transform(inst);
 
-    // Pick a random light
-    let idx = u32(rand_pcg(rng) * f32(num_lights));
-    let light_ref = lights[idx];
-    let inst = instances[light_ref.inst_idx];
-    let tri = topology[light_ref.tri_idx];
+    let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
+    let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
+    let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
 
-    let transform = get_transform(inst);
-    let v0 = (transform * vec4(get_pos(tri.v0), 1.0)).xyz;
-    let v1 = (transform * vec4(get_pos(tri.v1), 1.0)).xyz;
-    let v2 = (transform * vec4(get_pos(tri.v2), 1.0)).xyz;
-
-    // Sample triangle uniformly
     let r1 = rand_pcg(rng);
     let r2 = rand_pcg(rng);
     let sqrt_r1 = sqrt(r1);
     let u = 1.0 - sqrt_r1;
-    let v = sqrt_r1 * (1.0 - r2);
-    let w = sqrt_r1 * r2;
+    let v = r2 * sqrt_r1;
+    let w = 1.0 - u - v;
 
-    let light_pos = u * v0 + v * v1 + w * v2;
-    let to_light = light_pos - origin;
-    let dist_sq = dot(to_light, to_light);
-    res.dist = sqrt(dist_sq);
-    res.dir = to_light / res.dist;
+    let p = v0 * u + v1 * v + v2 * w;
+    let edge1 = v1 - v0;
+    let edge2 = v2 - v0;
+    let n_raw = normalize(cross(edge1, edge2));
+    let area = length(cross(edge1, edge2)) * 0.5;
 
-    let cross_v = cross(v1 - v0, v2 - v0);
-    let area = 0.5 * length(cross_v);
-    let light_normal = normalize(cross_v);
+    let l_dir = p - hit_p;
+    let dist_sq = dot(l_dir, l_dir);
+    let dist = sqrt(dist_sq);
+    let unit_l = l_dir / dist;
 
-    let cos_light = dot(-res.dir, light_normal);
+    let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
+    if cos_theta_l < 1e-6 {
+        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+    }
 
-    if cos_light <= 1e-4 { return res; }
+    // Albedo if light
+    let uv0 = get_uv(tri.v0);
+    let uv1 = get_uv(tri.v1);
+    let uv2 = get_uv(tri.v2);
+    let tex_uv = uv0 * u + uv1 * v + uv2 * w;
+    var L = tri.data0.rgb;
+    let base_tex = tri.data2.x;
+    if base_tex > -0.5 {
+        L *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
+    }
 
-    res.pdf = dist_sq / (area * cos_light * f32(num_lights));
-    res.L = tri.data0.rgb * 1.0;
+    let pdf = (dist_sq / (cos_theta_l * area)) / f32(light_count);
 
-    return res;
+    return LightSample(L, unit_l, dist, pdf);
 }
 
-fn get_light_pdf(origin: vec3<f32>, hit_tri_idx: u32, hit_inst_idx: u32, hit_t: f32, ray_dir: vec3<f32>) -> f32 {
-    let num_lights = scene.light_count;
-    if num_lights == 0u { return 0.0; }
+fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: vec3<f32>) -> f32 {
+    let tri = topology[tri_idx];
+    let inst = instances[inst_idx];
+    let m = get_transform(inst);
 
-    let tri = topology[hit_tri_idx];
-    let inst = instances[hit_inst_idx];
-    let transform = get_transform(inst);
-    let v0 = (transform * vec4(get_pos(tri.v0), 1.0)).xyz;
-    let v1 = (transform * vec4(get_pos(tri.v1), 1.0)).xyz;
-    let v2 = (transform * vec4(get_pos(tri.v2), 1.0)).xyz;
+    let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
+    let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
+    let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
 
-    let cross_v = cross(v1 - v0, v2 - v0);
-    let area = 0.5 * length(cross_v);
-    let light_normal = normalize(cross_v);
+    let edge1 = v1 - v0;
+    let edge2 = v2 - v0;
+    let area = length(cross(edge1, edge2)) * 0.5;
+    let normal = normalize(cross(edge1, edge2));
 
-    let cos_light = max(dot(-ray_dir, light_normal), 0.0);
-    if cos_light < 1e-4 { return 0.0; }
+    let cos_theta_l = max(dot(normal, -l_dir), 0.0);
+    if cos_theta_l < 1e-4 { return 0.0; }
 
-    let dist_sq = hit_t * hit_t;
-    return dist_sq / (area * cos_light * f32(num_lights));
+    let light_count = scene.light_count;
+    let dist_sq = t * t;
+    return (dist_sq / (cos_theta_l * area)) / f32(light_count);
+}
+
+fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
+    let a2 = pdf_a * pdf_a;
+    let b2 = pdf_b * pdf_b;
+    return a2 / (a2 + b2);
 }
 
 // =========================================================
-//   Intersection
+//   Intersection Functions
 // =========================================================
 
 fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
@@ -435,7 +422,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 24>;
     var stackptr = 0u;
 
     var idx = node_start_idx;
@@ -519,7 +506,16 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 }
 
 // =========================================================
-//   Main Path Tracer
+//   Tone Mapping
+// =========================================================
+
+fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
+    let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
+    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
+}
+
+// =========================================================
+//   Main Path Tracer Loop
 // =========================================================
 
 fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
@@ -532,10 +528,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
-        if hit.inst_idx < 0 { 
-            // Environment lighting could go here
-            break;
-        }
+        if hit.inst_idx < 0 { break; }
 
         let tri_idx = u32(hit.tri_idx);
         let inst_idx = u32(hit.inst_idx);
@@ -545,12 +538,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         // --- Geometry ---
         let inst = instances[inst_idx];
         let inv = get_inv_transform(inst);
-
         let v0_pos = get_pos(tri.v0);
         let v1_pos = get_pos(tri.v1);
         let v2_pos = get_pos(tri.v2);
-        
-        // Barycentric coords
+
         let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
         let s = r_local.origin - v0_pos;
         let e1 = v1_pos - v0_pos;
@@ -558,83 +549,106 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let h_val = cross(r_local.direction, e2);
         let a = dot(e1, h_val);
         let f_val = 1.0 / a;
-        let u = f_val * dot(s, h_val);
+        let u_bar = f_val * dot(s, h_val);
         let q = cross(s, e1);
-        let v = f_val * dot(r_local.direction, q);
-        let w = 1.0 - u - v;
+        let v_bar = f_val * dot(r_local.direction, q);
+        let w_bar = 1.0 - u_bar - v_bar;
 
         // Normals
         let n0 = get_normal(tri.v0);
         let n1 = get_normal(tri.v1);
         let n2 = get_normal(tri.v2);
-        let ln = normalize(n0 * w + n1 * u + n2 * v);
-        let wn = normalize((vec4(ln, 0.0) * inv).xyz);
-        var normal = wn;
-        let front_face = dot(ray.direction, normal) < 0.0;
-        normal = select(-normal, normal, front_face);
+        let ln = normalize(n0 * w_bar + n1 * u_bar + n2 * v_bar);
+        var normal = normalize((vec4(ln, 0.0) * inv).xyz);
 
         let hit_p = ray.origin + ray.direction * hit.t;
         
-        // Textures
+        // Textures & Attributes
         let uv0 = get_uv(tri.v0);
         let uv1 = get_uv(tri.v1);
         let uv2 = get_uv(tri.v2);
-        let tex_uv = uv0 * w + uv1 * u + uv2 * v;
-        let tex_idx = tri.data1.y;
+        let tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
+        
+        // 1. Base Color
         var albedo = tri.data0.rgb;
-        if tex_idx > -0.5 {
-            albedo *= textureSampleLevel(tex, smp, tex_uv, i32(tex_idx), 0.0).rgb;
+        let base_tex = tri.data2.x;
+        if base_tex > -0.5 {
+            albedo *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
+        }
+
+        // 2. Normal Map
+        let normal_tex = tri.data2.z;
+        if normal_tex > -0.5 {
+            let n_map = textureSampleLevel(tex, smp, tex_uv, i32(normal_tex), 0.0).rgb * 2.0 - 1.0;
+            let T = normalize(e1);
+            let B = normalize(cross(ln, T));
+            let ln_mapped = normalize(T * n_map.x + B * n_map.y + ln * n_map.z);
+            normal = normalize((vec4(ln_mapped, 0.0) * inv).xyz);
+        }
+
+        let front_face = dot(ray.direction, normal) < 0.0;
+        normal = select(-normal, normal, front_face);
+
+        // 3. Metallic / Roughness
+        var metallic = tri.data1.x;
+        var roughness = tri.data1.y;
+        let met_rough_tex = tri.data2.y;
+        if met_rough_tex > -0.5 {
+            let mr = textureSampleLevel(tex, smp, tex_uv, i32(met_rough_tex), 0.0).rgb;
+            metallic *= mr.b;
+            roughness *= mr.g;
+        }
+        roughness = max(roughness, 0.005);
+
+        // 4. Emissive
+        var emissive = tri.data3.rgb;
+        let em_tex = tri.data2.w;
+        if em_tex > -0.5 {
+            emissive *= textureSampleLevel(tex, smp, tex_uv, i32(em_tex), 0.0).rgb;
         }
 
         // --- Emission ---
-        if mat_type == 3u {
-            let emitted = albedo * 1.0;
+        if mat_type == 3u || length(emissive) > 1e-4 {
+            let em_val = select(emissive, albedo, mat_type == 3u);
             if specular_bounce {
-                radiance += min(throughput * emitted, vec3(5.0));
+                radiance += throughput * em_val;
             } else {
                 let light_pdf_val = get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction);
                 let weight = power_heuristic(prev_bsdf_pdf, light_pdf_val);
-                radiance += min(throughput * emitted * weight, vec3(3.0));
+                radiance += throughput * em_val * weight;
             }
-            break;
+            if mat_type == 3u { break; }
         }
 
         // --- Material Setup ---
-        var is_specular = (mat_type == 2u) || (mat_type == 1u && tri.data1.x < 0.1);
-        let roughness = max(tri.data1.x, 0.004);
-        var f0 = vec3(0.04);
-        if mat_type == 1u { f0 = albedo; } else if mat_type == 2u { f0 = albedo; } // Glass uses albedo for color/f0 tint
+        var f0 = mix(vec3(0.04), albedo, metallic);
+        var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1); 
 
         // --- NEE ---
         if !is_specular && mat_type != 2u {
             let light_s = sample_light_source(hit_p, rng);
             if light_s.pdf > 0.0 {
                 let shadow_ray = Ray(hit_p + normal * 1e-4, light_s.dir);
-                let shadow_hit = intersect_tlas(shadow_ray, T_MIN, light_s.dist - 1e-4);
+                let shadow_hit = intersect_tlas(shadow_ray, T_MIN, light_s.dist - 2e-4);
 
                 if shadow_hit.inst_idx == -1 {
                     var bsdf_val = vec3(0.0);
                     var bsdf_pdf_val = 0.0;
-
                     let L = light_s.dir;
                     let V = -ray.direction;
 
-                    if mat_type == 0u { // Diffuse
+                    if mat_type == 0u {
                         bsdf_val = eval_diffuse(albedo);
                         bsdf_pdf_val = max(dot(normal, L), 0.0) / PI;
-                    } else if mat_type == 1u { // Metal
+                    } else if mat_type == 1u {
                         bsdf_val = eval_ggx(normal, V, L, roughness, f0);
-                        // PDF approximation for GGX
                         let H = normalize(V + L);
-                        let a2 = roughness * roughness;
-                        let D = ggx_d(dot(normal, H), a2);
-                        bsdf_pdf_val = (D * max(dot(normal, H), 0.0)) / (4.0 * max(dot(V, H), 0.0));
+                        bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(V, H), 0.0));
                     }
 
                     if bsdf_pdf_val > 0.0 {
                         let weight = power_heuristic(light_s.pdf, bsdf_pdf_val);
-                        let contribution = throughput * bsdf_val * light_s.L * weight * max(dot(normal, L), 0.0) / light_s.pdf;
-                        radiance += min(contribution, vec3(3.0));
+                        radiance += throughput * bsdf_val * light_s.L * weight * max(dot(normal, L), 0.0) / light_s.pdf;
                     }
                 }
             }
@@ -642,18 +656,16 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
         // --- BSDF Sampling ---
         var scatter: ScatterResult;
-
         if mat_type == 0u {
             scatter = sample_diffuse(normal, albedo, rng);
         } else if mat_type == 1u {
             scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng);
-        } else { // Glass
-            scatter = sample_dielectric(ray.direction, normal, tri.data1.x, albedo, rng);
+        } else {
+            let ior = tri.data1.z;
+            scatter = sample_dielectric(ray.direction, normal, ior, albedo, rng);
         }
 
-        if scatter.pdf == 0.0 || (scatter.throughput.x + scatter.throughput.y + scatter.throughput.z) == 0.0 {
-            break;
-        }
+        if scatter.pdf <= 0.0 || length(scatter.throughput) <= 0.0 { break; }
 
         throughput *= scatter.throughput;
         ray = Ray(hit_p + normal * 1e-4, scatter.dir);
@@ -668,19 +680,6 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         }
     }
     return radiance;
-}
-
-// =========================================================
-//   Tone Mapping
-// =========================================================
-
-fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
 }
 
 // =========================================================
