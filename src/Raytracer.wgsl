@@ -1,5 +1,5 @@
 // =========================================================
-//   WebGPU Ray Tracer (TLAS & BLAS)
+//   WebGPU Ray Tracer (Raytracer.wgsl)
 // =========================================================
 
 const PI = 3.141592653589793;
@@ -29,7 +29,9 @@ struct SceneUniforms {
     blas_base_idx: u32,
     vertex_count: u32,
     rand_seed: u32,
-    light_count: u32
+    light_count: u32,
+    width: u32,
+    height: u32
 }
 
 struct MeshTopology {
@@ -105,7 +107,6 @@ struct ScatterResult {
 //   Bindings
 // =========================================================
 
-@group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> scene: SceneUniforms;
 
@@ -506,15 +507,6 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 }
 
 // =========================================================
-//   Tone Mapping
-// =========================================================
-
-fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
-    let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
-}
-
-// =========================================================
 //   Main Path Tracer Loop
 // =========================================================
 
@@ -688,9 +680,8 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let dims = textureDimensions(outputTex);
-    if id.x >= dims.x || id.y >= dims.y { return; }
-    let p_idx = id.y * dims.x + id.x;
+    if id.x >= scene.width || id.y >= scene.height { return; }
+    let p_idx = id.y * scene.width + id.x;
     var rng = init_rng(p_idx, scene.rand_seed);
 
     var col = vec3(0.);
@@ -700,8 +691,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let rd = scene.camera.lens_radius * random_in_unit_disk(&rng);
             off = scene.camera.u * rd.x + scene.camera.v * rd.y;
         }
-        let u = (f32(id.x) + rand_pcg(&rng)) / f32(dims.x);
-        let v = 1. - (f32(id.y) + rand_pcg(&rng)) / f32(dims.y);
+        let u = (f32(id.x) + rand_pcg(&rng)) / f32(scene.width);
+        let v = 1. - (f32(id.y) + rand_pcg(&rng)) / f32(scene.height);
         let d = scene.camera.lower_left_corner + u * scene.camera.horizontal + v * scene.camera.vertical - scene.camera.origin - off;
         col += ray_color(Ray(scene.camera.origin + off, d), &rng);
     }
@@ -709,10 +700,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var acc = vec4(0.);
     if scene.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
-    let new_acc = acc + vec4(col, 1.0);
-    accumulateBuffer[p_idx] = new_acc;
-    let hdr_color = new_acc.rgb / new_acc.a;
-    let mapped = aces_tone_mapping(hdr_color);
-    let out = pow(mapped, vec3(1.0 / 2.2));
-    textureStore(outputTex, vec2<i32>(id.xy), vec4(out, 1.));
+    accumulateBuffer[p_idx] = acc + vec4(col, 1.0);
 }

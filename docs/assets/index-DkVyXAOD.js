@@ -23,30 +23,30 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       fetch(r.href, i);
     }
   })();
-  const X = "modulepreload", K = function(s) {
+  const K = "modulepreload", X = function(s) {
     return "/webgpu-raytracer/" + s;
-  }, N = {}, z = function(e, t, n) {
+  }, H = {}, q = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let p = function(u) {
-        return Promise.all(u.map((b) => Promise.resolve(b).then((B) => ({
+        return Promise.all(u.map((y) => Promise.resolve(y).then((k) => ({
           status: "fulfilled",
-          value: B
-        }), (B) => ({
+          value: k
+        }), (k) => ({
           status: "rejected",
-          reason: B
+          reason: k
         }))));
       };
       var o = p;
       document.getElementsByTagName("link");
       const l = document.querySelector("meta[property=csp-nonce]"), d = (l == null ? void 0 : l.nonce) || (l == null ? void 0 : l.getAttribute("nonce"));
       r = p(t.map((u) => {
-        if (u = K(u), u in N) return;
-        N[u] = true;
-        const b = u.endsWith(".css"), B = b ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${u}"]${B}`)) return;
+        if (u = X(u), u in H) return;
+        H[u] = true;
+        const y = u.endsWith(".css"), k = y ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${u}"]${k}`)) return;
         const w = document.createElement("link");
-        if (w.rel = b ? "stylesheet" : X, b || (w.as = "script"), w.crossOrigin = "", w.href = u, d && w.setAttribute("nonce", d), document.head.appendChild(w), b) return new Promise((J, Y) => {
+        if (w.rel = y ? "stylesheet" : K, y || (w.as = "script"), w.crossOrigin = "", w.href = u, d && w.setAttribute("nonce", d), document.head.appendChild(w), y) return new Promise((J, Y) => {
           w.addEventListener("load", J), w.addEventListener("error", () => Y(new Error(`Unable to preload CSS for ${u}`)));
         });
       }));
@@ -62,7 +62,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return e().catch(i);
     });
   }, Q = `// =========================================================
-//   WebGPU Ray Tracer (TLAS & BLAS)
+//   WebGPU Ray Tracer (Raytracer.wgsl)
 // =========================================================
 
 const PI = 3.141592653589793;
@@ -92,7 +92,9 @@ struct SceneUniforms {
     blas_base_idx: u32,
     vertex_count: u32,
     rand_seed: u32,
-    light_count: u32
+    light_count: u32,
+    width: u32,
+    height: u32
 }
 
 struct MeshTopology {
@@ -100,8 +102,10 @@ struct MeshTopology {
     v1: u32,
     v2: u32,
     pad: u32,
-    data0: vec4<f32>, // rgb: Albedo, w: MaterialType (0:Diffuse, 1:Metal, 2:Glass, 3:Light)
-    data1: vec4<f32>  // x: Roughness/IOR, y: TexIdx
+    data0: vec4<f32>, // rgb: BaseColor, w: MaterialType (bitcast)
+    data1: vec4<f32>, // x: Metallic, y: Roughness, z: IOR, w: 0.0
+    data2: vec4<f32>, // x: BaseTex, y: MetRoughTex, z: NormalTex, w: EmissiveTex
+    data3: vec4<f32>  // rgb: EmissiveColor, w: OcclusionTex
 }
 
 struct LightRef {
@@ -166,7 +170,6 @@ struct ScatterResult {
 //   Bindings
 // =========================================================
 
-@group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> scene: SceneUniforms;
 
@@ -223,11 +226,14 @@ fn rand_pcg(state: ptr<function, u32>) -> f32 {
     return f32((word >> 22u) ^ word) / 4294967295.0;
 }
 
-fn random_unit_vector(rng: ptr<function, u32>) -> vec3<f32> {
-    let z = rand_pcg(rng) * 2.0 - 1.0;
-    let a = rand_pcg(rng) * 2.0 * PI;
-    let r = sqrt(max(0.0, 1.0 - z * z));
-    return vec3<f32>(r * cos(a), r * sin(a), z);
+fn random_unit_vector(onb: ONB, rng: ptr<function, u32>) -> vec3<f32> {
+    let r1 = rand_pcg(rng);
+    let r2 = rand_pcg(rng);
+    let phi = 2.0 * PI * r1;
+    let cos_theta = sqrt(1.0 - r2);
+    let sin_theta = sqrt(r2);
+    let local_dir = vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+    return local_to_world(onb, local_dir);
 }
 
 fn random_in_unit_disk(rng: ptr<function, u32>) -> vec3<f32> {
@@ -250,7 +256,7 @@ fn local_to_world(onb: ONB, a: vec3<f32>) -> vec3<f32> {
 }
 
 // =========================================================
-//   BSDF: Diffuse
+//   BSDF Functions
 // =========================================================
 
 fn eval_diffuse(albedo: vec3<f32>) -> vec3<f32> {
@@ -258,45 +264,22 @@ fn eval_diffuse(albedo: vec3<f32>) -> vec3<f32> {
 }
 
 fn sample_diffuse(normal: vec3<f32>, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
-    // Cosine weighted sampling
-    let r1 = rand_pcg(rng);
-    let r2 = rand_pcg(rng);
-    let z = sqrt(1.0 - r2);
-    let phi = 2.0 * PI * r1;
-    let x = cos(phi) * sqrt(r2);
-    let y = sin(phi) * sqrt(r2);
-
     let onb = build_onb(normal);
-    let local_dir = vec3(x, y, z);
-    let world_dir = local_to_world(onb, local_dir);
-
-    let cos_theta = max(local_dir.z, 0.0); // local_dir.z is cos(theta)
-    let pdf = cos_theta / PI;
-
-    // throughput = bsdf * cosine / pdf
-    //            = (albedo/PI) * cos_theta / (cos_theta/PI)
-    //            = albedo
-
-    return ScatterResult(world_dir, pdf, albedo, false);
+    let dir = random_unit_vector(onb, rng);
+    let cos_theta = max(dot(normal, dir), 0.0);
+    return ScatterResult(dir, cos_theta / PI, albedo, false);
 }
 
-// =========================================================
-//   BSDF: GGX / Metal
-// =========================================================
-
-fn ggx_d(n_dot_h: f32, alpha: f32) -> f32 {
-    let a2 = alpha * alpha;
-    let d = (n_dot_h * n_dot_h) * (a2 - 1.0) + 1.0;
+// GGX
+fn ggx_d(n_dot_h: f32, a2: f32) -> f32 {
+    let d = (n_dot_h * a2 - n_dot_h) * n_dot_h + 1.0;
     return a2 / (PI * d * d);
 }
 
-fn ggx_g1(v_dot_n: f32, k: f32) -> f32 {
-    return v_dot_n / (v_dot_n * (1.0 - k) + k);
-}
-
-fn ggx_g(n_dot_l: f32, n_dot_v: f32, alpha: f32) -> f32 {
-    let k = (alpha + 1.0) * (alpha + 1.0) / 8.0;
-    return ggx_g1(n_dot_l, k) * ggx_g1(n_dot_v, k);
+fn ggx_g(n_dot_v: f32, n_dot_l: f32, a2: f32) -> f32 {
+    let g1_v = 2.0 * n_dot_v / (n_dot_v + sqrt(a2 + (1.0 - a2) * n_dot_v * n_dot_v));
+    let g1_l = 2.0 * n_dot_l / (n_dot_l + sqrt(a2 + (1.0 - a2) * n_dot_l * n_dot_l));
+    return g1_v * g1_l;
 }
 
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
@@ -305,170 +288,175 @@ fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
 
 fn eval_ggx(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
     let h = normalize(v + l);
-    let n_dot_l = max(dot(n, l), 0.0);
-    let n_dot_v = max(dot(n, v), 0.0);
+    let n_dot_v = max(dot(n, v), 1e-4);
+    let n_dot_l = max(dot(n, l), 1e-4);
+    let n_dot_h = max(dot(n, h), 1e-4);
+    let v_dot_h = max(dot(v, h), 1e-4);
 
-    if n_dot_l == 0.0 || n_dot_v == 0.0 { return vec3(0.0); }
+    let a2 = roughness * roughness;
+    let d = ggx_d(n_dot_h, a2);
+    let g = ggx_g(n_dot_v, n_dot_l, a2);
+    let f = fresnel_schlick(v_dot_h, f0);
 
-    let alpha = roughness * roughness;
-    let D = ggx_d(dot(n, h), alpha);
-    let G = ggx_g(n_dot_l, n_dot_v, alpha);
-    let F = fresnel_schlick(dot(h, v), f0);
-
-    return (D * G * F) / (4.0 * n_dot_v * n_dot_l);
+    return (d * g * f) / (4.0 * n_dot_v * n_dot_l);
 }
 
 fn sample_ggx(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
-    let r1 = rand_pcg(rng);
-    let r2 = rand_pcg(rng);
-    let alpha = roughness * roughness;
+    let a = roughness;
+    let u = vec2(rand_pcg(rng), rand_pcg(rng));
 
-    // Sample Microfacet Normal (H)
-    let phi = 2.0 * PI * r1;
-    let cos_theta = sqrt((1.0 - r2) / (r2 * (alpha * alpha - 1.0) + 1.0));
-    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+    let phi = 2.0 * PI * u.x;
+    let cos_theta = sqrt(max(0.0, (1.0 - u.y) / (1.0 + (a * a - 1.0) * u.y)));
+    let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
 
-    let local_h = vec3(sin_theta * cos(phi), sin_theta * sin(phi), cos_theta);
+    let h_local = vec3(sin_theta * cos(phi), sin_theta * sin(phi), cos_theta);
     let onb = build_onb(n);
-    let h = local_to_world(onb, local_h);
-
+    let h = local_to_world(onb, h_local);
     let l = reflect(-v, h);
 
     if dot(n, l) <= 0.0 {
-        // Absorbed
-        return ScatterResult(vec3(0.0), 0.0, vec3(0.0), true);
+        return ScatterResult(vec3(0.0), 0.0, vec3(0.0), false);
     }
 
-    let n_dot_l = max(dot(n, l), 0.0);
-    let n_dot_v = max(dot(n, v), 0.0);
-    let n_dot_h = max(dot(n, h), 0.0);
-    let v_dot_h = max(dot(v, h), 0.0);
+    let n_dot_v = max(dot(n, v), 1e-4);
+    let n_dot_l = max(dot(n, l), 1e-4);
+    let n_dot_h = max(dot(n, h), 1e-4);
+    let v_dot_h = max(dot(v, h), 1e-4);
 
-    let D = ggx_d(n_dot_h, alpha);
-    let G = ggx_g(n_dot_l, n_dot_v, alpha);
-    let F = fresnel_schlick(v_dot_h, f0);
+    let a2 = a * a;
+    let d = ggx_d(n_dot_h, a2);
+    let g = ggx_g(n_dot_v, n_dot_l, a2);
+    let f = fresnel_schlick(v_dot_h, f0);
 
-    let pdf = (D * n_dot_h) / (4.0 * v_dot_h);
-    let bsdf = (D * G * F) / (4.0 * n_dot_v * n_dot_l);
-    
-    // throughput = bsdf * cosine / pdf
-    let throughput = bsdf * n_dot_l / pdf;
+    let pdf = (d * n_dot_h) / (4.0 * v_dot_h);
+    let throughput = bsdf_to_throughput(d, g, f, n_dot_v, n_dot_l, n_dot_h, v_dot_h, pdf);
 
-    return ScatterResult(l, pdf, throughput, false); // GGX treated as non-specular for MIS? Usually yes for rough.
-    // However original code had: specular_bounce = false; // GGX is proper for MIS
+    return ScatterResult(l, pdf, throughput, false);
 }
 
-// =========================================================
-//   BSDF: Dielectric / Glass
-// =========================================================
-
-fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
-    let r0_sqrt = (1.0 - ref_idx) / (1.0 + ref_idx);
-    let r0 = r0_sqrt * r0_sqrt;
-    return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
+fn bsdf_to_throughput(d: f32, g: f32, f: vec3<f32>, n_dot_v: f32, n_dot_l: f32, n_dot_h: f32, v_dot_h: f32, pdf: f32) -> vec3<f32> {
+    if pdf <= 0.0 { return vec3(0.0); }
+    return (d * g * f) / (4.0 * n_dot_v * n_dot_l) * n_dot_l / pdf;
 }
 
-fn sample_dielectric(in_dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
-    let front_face = dot(in_dir, normal) < 0.0;
-    let n_eff = select(-normal, normal, front_face);
-    let ratio = select(ior, 1.0 / ior, front_face);
+// Dielectric
+fn reflectance_dielectric(cosine: f32, ref_idx: f32) -> f32 {
+    var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
+    return r0 + (1.0 - r0) * pow(1.0 - cosine, 5.0);
+}
 
-    let unit_in = normalize(in_dir);
-    let cos_t = min(dot(-unit_in, n_eff), 1.0);
-    let sin_t = sqrt(1.0 - cos_t * cos_t);
+fn sample_dielectric(dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
+    let front_face = dot(dir, normal) < 0.0;
+    let refraction_ratio = select(ior, 1.0 / ior, front_face);
+    let n = select(-normal, normal, front_face);
 
-    var out_dir = vec3(0.0);
+    let unit_dir = normalize(dir);
+    let cos_theta = min(dot(-unit_dir, n), 1.0);
+    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
-    if (ratio * sin_t > 1.0) || (reflectance(cos_t, ratio) > rand_pcg(rng)) {
-        out_dir = reflect(unit_in, n_eff);
+    let cannot_refract = refraction_ratio * sin_theta > 1.0;
+    var direction: vec3<f32>;
+
+    if cannot_refract || reflectance_dielectric(cos_theta, refraction_ratio) > rand_pcg(rng) {
+        direction = reflect(unit_dir, n);
     } else {
-        out_dir = ratio * (unit_in + cos_t * n_eff) - sqrt(abs(1.0 - (1.0 - cos_t * cos_t) * ratio * ratio)) * n_eff;
+        direction = refract(unit_dir, n, refraction_ratio);
     }
 
-    return ScatterResult(out_dir, 1.0, albedo, true); // Specular bounce (Delta)
+    return ScatterResult(direction, 1.0, albedo, true);
 }
 
 // =========================================================
-//   Direct Light Sampling (NEE)
+//   Direct Light Sampling
 // =========================================================
 
-fn power_heuristic(pdf_f: f32, pdf_g: f32) -> f32 {
-    let f2 = pdf_f * pdf_f;
-    let g2 = pdf_g * pdf_g;
-    return f2 / (f2 + g2);
-}
+fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample {
+    let light_count = scene.light_count;
+    if light_count == 0u {
+        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+    }
 
-fn sample_light_source(origin: vec3<f32>, rng: ptr<function, u32>) -> LightSample {
-    var res: LightSample;
-    res.L = vec3(0.0);
-    res.pdf = 0.0;
+    let light_pick_idx = u32(rand_pcg(rng) * f32(light_count));
+    let l_ref = lights[light_pick_idx];
 
-    let num_lights = scene.light_count;
-    if num_lights == 0u { return res; }
+    let tri = topology[l_ref.tri_idx];
+    let inst = instances[l_ref.inst_idx];
+    let m = get_transform(inst);
 
-    // Pick a random light
-    let idx = u32(rand_pcg(rng) * f32(num_lights));
-    let light_ref = lights[idx];
-    let inst = instances[light_ref.inst_idx];
-    let tri = topology[light_ref.tri_idx];
+    let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
+    let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
+    let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
 
-    let transform = get_transform(inst);
-    let v0 = (transform * vec4(get_pos(tri.v0), 1.0)).xyz;
-    let v1 = (transform * vec4(get_pos(tri.v1), 1.0)).xyz;
-    let v2 = (transform * vec4(get_pos(tri.v2), 1.0)).xyz;
-
-    // Sample triangle uniformly
     let r1 = rand_pcg(rng);
     let r2 = rand_pcg(rng);
     let sqrt_r1 = sqrt(r1);
     let u = 1.0 - sqrt_r1;
-    let v = sqrt_r1 * (1.0 - r2);
-    let w = sqrt_r1 * r2;
+    let v = r2 * sqrt_r1;
+    let w = 1.0 - u - v;
 
-    let light_pos = u * v0 + v * v1 + w * v2;
-    let to_light = light_pos - origin;
-    let dist_sq = dot(to_light, to_light);
-    res.dist = sqrt(dist_sq);
-    res.dir = to_light / res.dist;
+    let p = v0 * u + v1 * v + v2 * w;
+    let edge1 = v1 - v0;
+    let edge2 = v2 - v0;
+    let n_raw = normalize(cross(edge1, edge2));
+    let area = length(cross(edge1, edge2)) * 0.5;
 
-    let cross_v = cross(v1 - v0, v2 - v0);
-    let area = 0.5 * length(cross_v);
-    let light_normal = normalize(cross_v);
+    let l_dir = p - hit_p;
+    let dist_sq = dot(l_dir, l_dir);
+    let dist = sqrt(dist_sq);
+    let unit_l = l_dir / dist;
 
-    let cos_light = dot(-res.dir, light_normal);
+    let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
+    if cos_theta_l < 1e-6 {
+        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+    }
 
-    if cos_light <= 1e-4 { return res; }
+    // Albedo if light
+    let uv0 = get_uv(tri.v0);
+    let uv1 = get_uv(tri.v1);
+    let uv2 = get_uv(tri.v2);
+    let tex_uv = uv0 * u + uv1 * v + uv2 * w;
+    var L = tri.data0.rgb;
+    let base_tex = tri.data2.x;
+    if base_tex > -0.5 {
+        L *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
+    }
 
-    res.pdf = dist_sq / (area * cos_light * f32(num_lights));
-    res.L = tri.data0.rgb * 1.0;
+    let pdf = (dist_sq / (cos_theta_l * area)) / f32(light_count);
 
-    return res;
+    return LightSample(L, unit_l, dist, pdf);
 }
 
-fn get_light_pdf(origin: vec3<f32>, hit_tri_idx: u32, hit_inst_idx: u32, hit_t: f32, ray_dir: vec3<f32>) -> f32 {
-    let num_lights = scene.light_count;
-    if num_lights == 0u { return 0.0; }
+fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: vec3<f32>) -> f32 {
+    let tri = topology[tri_idx];
+    let inst = instances[inst_idx];
+    let m = get_transform(inst);
 
-    let tri = topology[hit_tri_idx];
-    let inst = instances[hit_inst_idx];
-    let transform = get_transform(inst);
-    let v0 = (transform * vec4(get_pos(tri.v0), 1.0)).xyz;
-    let v1 = (transform * vec4(get_pos(tri.v1), 1.0)).xyz;
-    let v2 = (transform * vec4(get_pos(tri.v2), 1.0)).xyz;
+    let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
+    let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
+    let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
 
-    let cross_v = cross(v1 - v0, v2 - v0);
-    let area = 0.5 * length(cross_v);
-    let light_normal = normalize(cross_v);
+    let edge1 = v1 - v0;
+    let edge2 = v2 - v0;
+    let area = length(cross(edge1, edge2)) * 0.5;
+    let normal = normalize(cross(edge1, edge2));
 
-    let cos_light = max(dot(-ray_dir, light_normal), 0.0);
-    if cos_light < 1e-4 { return 0.0; }
+    let cos_theta_l = max(dot(normal, -l_dir), 0.0);
+    if cos_theta_l < 1e-4 { return 0.0; }
 
-    let dist_sq = hit_t * hit_t;
-    return dist_sq / (area * cos_light * f32(num_lights));
+    let light_count = scene.light_count;
+    let dist_sq = t * t;
+    return (dist_sq / (cos_theta_l * area)) / f32(light_count);
+}
+
+fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
+    let a2 = pdf_a * pdf_a;
+    let b2 = pdf_b * pdf_b;
+    return a2 / (a2 + b2);
 }
 
 // =========================================================
-//   Intersection
+//   Intersection Functions
 // =========================================================
 
 fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
@@ -498,7 +486,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 32>;
+    var stack: array<u32, 24>;
     var stackptr = 0u;
 
     var idx = node_start_idx;
@@ -582,7 +570,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 }
 
 // =========================================================
-//   Main Path Tracer
+//   Main Path Tracer Loop
 // =========================================================
 
 fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
@@ -595,10 +583,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
-        if hit.inst_idx < 0 { 
-            // Environment lighting could go here
-            break;
-        }
+        if hit.inst_idx < 0 { break; }
 
         let tri_idx = u32(hit.tri_idx);
         let inst_idx = u32(hit.inst_idx);
@@ -608,12 +593,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         // --- Geometry ---
         let inst = instances[inst_idx];
         let inv = get_inv_transform(inst);
-
         let v0_pos = get_pos(tri.v0);
         let v1_pos = get_pos(tri.v1);
         let v2_pos = get_pos(tri.v2);
-        
-        // Barycentric coords
+
         let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
         let s = r_local.origin - v0_pos;
         let e1 = v1_pos - v0_pos;
@@ -621,83 +604,106 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         let h_val = cross(r_local.direction, e2);
         let a = dot(e1, h_val);
         let f_val = 1.0 / a;
-        let u = f_val * dot(s, h_val);
+        let u_bar = f_val * dot(s, h_val);
         let q = cross(s, e1);
-        let v = f_val * dot(r_local.direction, q);
-        let w = 1.0 - u - v;
+        let v_bar = f_val * dot(r_local.direction, q);
+        let w_bar = 1.0 - u_bar - v_bar;
 
         // Normals
         let n0 = get_normal(tri.v0);
         let n1 = get_normal(tri.v1);
         let n2 = get_normal(tri.v2);
-        let ln = normalize(n0 * w + n1 * u + n2 * v);
-        let wn = normalize((vec4(ln, 0.0) * inv).xyz);
-        var normal = wn;
-        let front_face = dot(ray.direction, normal) < 0.0;
-        normal = select(-normal, normal, front_face);
+        let ln = normalize(n0 * w_bar + n1 * u_bar + n2 * v_bar);
+        var normal = normalize((vec4(ln, 0.0) * inv).xyz);
 
         let hit_p = ray.origin + ray.direction * hit.t;
         
-        // Textures
+        // Textures & Attributes
         let uv0 = get_uv(tri.v0);
         let uv1 = get_uv(tri.v1);
         let uv2 = get_uv(tri.v2);
-        let tex_uv = uv0 * w + uv1 * u + uv2 * v;
-        let tex_idx = tri.data1.y;
+        let tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
+        
+        // 1. Base Color
         var albedo = tri.data0.rgb;
-        if tex_idx > -0.5 {
-            albedo *= textureSampleLevel(tex, smp, tex_uv, i32(tex_idx), 0.0).rgb;
+        let base_tex = tri.data2.x;
+        if base_tex > -0.5 {
+            albedo *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
+        }
+
+        // 2. Normal Map
+        let normal_tex = tri.data2.z;
+        if normal_tex > -0.5 {
+            let n_map = textureSampleLevel(tex, smp, tex_uv, i32(normal_tex), 0.0).rgb * 2.0 - 1.0;
+            let T = normalize(e1);
+            let B = normalize(cross(ln, T));
+            let ln_mapped = normalize(T * n_map.x + B * n_map.y + ln * n_map.z);
+            normal = normalize((vec4(ln_mapped, 0.0) * inv).xyz);
+        }
+
+        let front_face = dot(ray.direction, normal) < 0.0;
+        normal = select(-normal, normal, front_face);
+
+        // 3. Metallic / Roughness
+        var metallic = tri.data1.x;
+        var roughness = tri.data1.y;
+        let met_rough_tex = tri.data2.y;
+        if met_rough_tex > -0.5 {
+            let mr = textureSampleLevel(tex, smp, tex_uv, i32(met_rough_tex), 0.0).rgb;
+            metallic *= mr.b;
+            roughness *= mr.g;
+        }
+        roughness = max(roughness, 0.005);
+
+        // 4. Emissive
+        var emissive = tri.data3.rgb;
+        let em_tex = tri.data2.w;
+        if em_tex > -0.5 {
+            emissive *= textureSampleLevel(tex, smp, tex_uv, i32(em_tex), 0.0).rgb;
         }
 
         // --- Emission ---
-        if mat_type == 3u {
-            let emitted = albedo * 1.0;
+        if mat_type == 3u || length(emissive) > 1e-4 {
+            let em_val = select(emissive, albedo, mat_type == 3u);
             if specular_bounce {
-                radiance += min(throughput * emitted, vec3(5.0));
+                radiance += throughput * em_val;
             } else {
                 let light_pdf_val = get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction);
                 let weight = power_heuristic(prev_bsdf_pdf, light_pdf_val);
-                radiance += min(throughput * emitted * weight, vec3(3.0));
+                radiance += throughput * em_val * weight;
             }
-            break;
+            if mat_type == 3u { break; }
         }
 
         // --- Material Setup ---
-        var is_specular = (mat_type == 2u) || (mat_type == 1u && tri.data1.x < 0.1);
-        let roughness = max(tri.data1.x, 0.004);
-        var f0 = vec3(0.04);
-        if mat_type == 1u { f0 = albedo; } else if mat_type == 2u { f0 = albedo; } // Glass uses albedo for color/f0 tint
+        var f0 = mix(vec3(0.04), albedo, metallic);
+        var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1); 
 
         // --- NEE ---
         if !is_specular && mat_type != 2u {
             let light_s = sample_light_source(hit_p, rng);
             if light_s.pdf > 0.0 {
                 let shadow_ray = Ray(hit_p + normal * 1e-4, light_s.dir);
-                let shadow_hit = intersect_tlas(shadow_ray, T_MIN, light_s.dist - 1e-4);
+                let shadow_hit = intersect_tlas(shadow_ray, T_MIN, light_s.dist - 2e-4);
 
                 if shadow_hit.inst_idx == -1 {
                     var bsdf_val = vec3(0.0);
                     var bsdf_pdf_val = 0.0;
-
                     let L = light_s.dir;
                     let V = -ray.direction;
 
-                    if mat_type == 0u { // Diffuse
+                    if mat_type == 0u {
                         bsdf_val = eval_diffuse(albedo);
                         bsdf_pdf_val = max(dot(normal, L), 0.0) / PI;
-                    } else if mat_type == 1u { // Metal
+                    } else if mat_type == 1u {
                         bsdf_val = eval_ggx(normal, V, L, roughness, f0);
-                        // PDF approximation for GGX
                         let H = normalize(V + L);
-                        let a2 = roughness * roughness;
-                        let D = ggx_d(dot(normal, H), a2);
-                        bsdf_pdf_val = (D * max(dot(normal, H), 0.0)) / (4.0 * max(dot(V, H), 0.0));
+                        bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(V, H), 0.0));
                     }
 
                     if bsdf_pdf_val > 0.0 {
                         let weight = power_heuristic(light_s.pdf, bsdf_pdf_val);
-                        let contribution = throughput * bsdf_val * light_s.L * weight * max(dot(normal, L), 0.0) / light_s.pdf;
-                        radiance += min(contribution, vec3(3.0));
+                        radiance += throughput * bsdf_val * light_s.L * weight * max(dot(normal, L), 0.0) / light_s.pdf;
                     }
                 }
             }
@@ -705,18 +711,16 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
         // --- BSDF Sampling ---
         var scatter: ScatterResult;
-
         if mat_type == 0u {
             scatter = sample_diffuse(normal, albedo, rng);
         } else if mat_type == 1u {
             scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng);
-        } else { // Glass
-            scatter = sample_dielectric(ray.direction, normal, tri.data1.x, albedo, rng);
+        } else {
+            let ior = tri.data1.z;
+            scatter = sample_dielectric(ray.direction, normal, ior, albedo, rng);
         }
 
-        if scatter.pdf == 0.0 || (scatter.throughput.x + scatter.throughput.y + scatter.throughput.z) == 0.0 {
-            break;
-        }
+        if scatter.pdf <= 0.0 || length(scatter.throughput) <= 0.0 { break; }
 
         throughput *= scatter.throughput;
         ray = Ray(hit_p + normal * 1e-4, scatter.dir);
@@ -734,27 +738,13 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 }
 
 // =========================================================
-//   Tone Mapping
-// =========================================================
-
-fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
-}
-
-// =========================================================
 //   Compute Main
 // =========================================================
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let dims = textureDimensions(outputTex);
-    if id.x >= dims.x || id.y >= dims.y { return; }
-    let p_idx = id.y * dims.x + id.x;
+    if id.x >= scene.width || id.y >= scene.height { return; }
+    let p_idx = id.y * scene.width + id.x;
     var rng = init_rng(p_idx, scene.rand_seed);
 
     var col = vec3(0.);
@@ -764,8 +754,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let rd = scene.camera.lens_radius * random_in_unit_disk(&rng);
             off = scene.camera.u * rd.x + scene.camera.v * rd.y;
         }
-        let u = (f32(id.x) + rand_pcg(&rng)) / f32(dims.x);
-        let v = 1. - (f32(id.y) + rand_pcg(&rng)) / f32(dims.y);
+        let u = (f32(id.x) + rand_pcg(&rng)) / f32(scene.width);
+        let v = 1. - (f32(id.y) + rand_pcg(&rng)) / f32(scene.height);
         let d = scene.camera.lower_left_corner + u * scene.camera.horizontal + v * scene.camera.vertical - scene.camera.origin - off;
         col += ray_color(Ray(scene.camera.origin + off, d), &rng);
     }
@@ -773,21 +763,59 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var acc = vec4(0.);
     if scene.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
-    let new_acc = acc + vec4(col, 1.0);
-    accumulateBuffer[p_idx] = new_acc;
-    let hdr_color = new_acc.rgb / new_acc.a;
+    accumulateBuffer[p_idx] = acc + vec4(col, 1.0);
+}
+`, Z = `// =========================================================
+//   Post Process (PostProcess.wgsl)
+// =========================================================
+
+struct SceneUniforms {
+    camera_pad: array<vec4<f32>, 6>, // Skip camera data (96 bytes)
+    frame_count: u32,
+    blas_base_idx: u32,
+    vertex_count: u32,
+    rand_seed: u32,
+    light_count: u32,
+    width: u32,
+    height: u32
+}
+
+@group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(1) var<storage, read> accumulateBuffer: array<vec4<f32>>;
+@group(0) @binding(2) var<uniform> scene: SceneUniforms;
+
+fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
+    let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
+    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
+}
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= scene.width || id.y >= scene.height { return; }
+    let p_idx = id.y * scene.width + id.x;
+
+    let acc = accumulateBuffer[p_idx];
+    if acc.a <= 0.0 {
+        textureStore(outputTex, vec2<i32>(id.xy), vec4(0., 0., 0., 1.));
+        return;
+    }
+
+    let hdr_color = acc.rgb / acc.a;
     let mapped = aces_tone_mapping(hdr_color);
     let out = pow(mapped, vec3(1.0 / 2.2));
     textureStore(outputTex, vec2<i32>(id.xy), vec4(out, 1.));
 }
 `;
-  class Z {
+  class ee {
     constructor(e) {
       __publicField(this, "device");
       __publicField(this, "context");
       __publicField(this, "pipeline");
+      __publicField(this, "postprocessPipeline");
       __publicField(this, "bindGroupLayout");
+      __publicField(this, "postprocessBindGroupLayout");
       __publicField(this, "bindGroup");
+      __publicField(this, "postprocessBindGroup");
       __publicField(this, "renderTarget");
       __publicField(this, "renderTargetView");
       __publicField(this, "accumulateBuffer");
@@ -878,6 +906,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           entryPoint: "main"
         }
       }), this.bindGroupLayout = this.pipeline.getBindGroupLayout(0);
+      const i = this.device.createShaderModule({
+        label: "PostProcess",
+        code: Z
+      });
+      this.postprocessPipeline = this.device.createComputePipeline({
+        label: "PostProcess Pipeline",
+        layout: "auto",
+        compute: {
+          module: i,
+          entryPoint: "main"
+        }
+      }), this.postprocessBindGroupLayout = this.postprocessPipeline.getBindGroupLayout(0);
     }
     updateScreenSize(e, t) {
       this.canvas.width = e, this.canvas.height = t, this.renderTarget && this.renderTarget.destroy(), this.renderTarget = this.device.createTexture({
@@ -977,16 +1017,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       return (!this.nodesBuffer || this.nodesBuffer.size < i) && (o = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, i, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, e), this.device.queue.writeBuffer(this.nodesBuffer, n, t), this.blasOffset = e.length / 8, o;
     }
     updateSceneUniforms(e, t, n) {
-      this.sceneUniformBuffer && (this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = 0, this.uniformMixedData[4] = n, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData));
+      this.sceneUniformBuffer && (this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = 0, this.uniformMixedData[4] = n, this.uniformMixedData[5] = this.canvas.width, this.uniformMixedData[6] = this.canvas.height, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData));
     }
     recreateBindGroup() {
       !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || !this.lightsBuffer || (this.bindGroup = this.device.createBindGroup({
         layout: this.bindGroupLayout,
         entries: [
-          {
-            binding: 0,
-            resource: this.renderTargetView
-          },
           {
             binding: 1,
             resource: {
@@ -1040,10 +1076,30 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             }
           }
         ]
+      }), this.postprocessBindGroup = this.device.createBindGroup({
+        layout: this.postprocessBindGroupLayout,
+        entries: [
+          {
+            binding: 0,
+            resource: this.renderTargetView
+          },
+          {
+            binding: 1,
+            resource: {
+              buffer: this.accumulateBuffer
+            }
+          },
+          {
+            binding: 2,
+            resource: {
+              buffer: this.sceneUniformBuffer
+            }
+          }
+        ]
       }));
     }
     compute(e) {
-      if (!this.bindGroup) return;
+      if (!this.bindGroup || !this.postprocessBindGroup) return;
       this.seed++, this.uniformMixedData[0] = e, this.uniformMixedData[3] = this.seed, this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.uniformMixedData);
       const t = Math.ceil(this.canvas.width / 8), n = Math.ceil(this.canvas.height / 8), r = this.device.createCommandEncoder(), i = r.beginComputePass();
       i.setPipeline(this.pipeline), i.setBindGroup(0, this.bindGroup), i.dispatchWorkgroups(t, n), i.end(), this.device.queue.submit([
@@ -1051,9 +1107,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       ]);
     }
     present() {
-      if (!this.renderTarget) return;
-      const e = this.device.createCommandEncoder();
-      e.copyTextureToTexture({
+      if (!this.renderTarget || !this.postprocessBindGroup) return;
+      const e = Math.ceil(this.canvas.width / 8), t = Math.ceil(this.canvas.height / 8), n = this.device.createCommandEncoder(), r = n.beginComputePass();
+      r.setPipeline(this.postprocessPipeline), r.setBindGroup(0, this.postprocessBindGroup), r.dispatchWorkgroups(e, t), r.end(), n.copyTextureToTexture({
         texture: this.renderTarget
       }, {
         texture: this.context.getCurrentTexture()
@@ -1062,16 +1118,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         height: this.canvas.height,
         depthOrArrayLayers: 1
       }), this.device.queue.submit([
-        e.finish()
+        n.finish()
       ]);
     }
   }
-  function ee(s) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-5FPBqopa.js", {
+  function te(s) {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-BGTA25rB.js", {
       name: s == null ? void 0 : s.name
     });
   }
-  class te {
+  class ne {
     constructor() {
       __publicField(this, "worker");
       __publicField(this, "resolveReady", null);
@@ -1094,7 +1150,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "updateResolvers", []);
       __publicField(this, "lastWidth", -1);
       __publicField(this, "lastHeight", -1);
-      this.worker = new ee(), this.worker.onmessage = this.handleMessage.bind(this);
+      this.worker = new te(), this.worker.onmessage = this.handleMessage.bind(this);
     }
     get lights() {
       return this._lights;
@@ -1239,7 +1295,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       statusDiv: "status"
     }
   };
-  class ne {
+  class re {
     constructor() {
       __publicField(this, "canvas");
       __publicField(this, "btnRender");
@@ -1373,7 +1429,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       this.inputWidth.value = e.width.toString(), this.inputHeight.value = e.height.toString(), this.inputRecFps.value = e.fps.toString(), this.inputRecDur.value = e.duration.toString(), this.inputRecSpp.value = e.spp.toString(), this.inputRecBatch.value = e.batch.toString();
     }
   }
-  class re {
+  class se {
     constructor(e, t, n) {
       __publicField(this, "isRecording", false);
       __publicField(this, "renderer");
@@ -1387,7 +1443,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: r, ArrayBufferTarget: i } = await z(async () => {
+      const { Muxer: r, ArrayBufferTarget: i } = await q(async () => {
         const { Muxer: p, ArrayBufferTarget: u } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: p,
@@ -1419,8 +1475,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           p
         ], {
           type: "video/webm"
-        }), b = URL.createObjectURL(u);
-        n(b, u);
+        }), y = URL.createObjectURL(u);
+        n(y, u);
       } catch (p) {
         throw console.error("Recording failed:", p), p;
       } finally {
@@ -1488,7 +1544,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
   }
-  const se = {
+  const ie = {
     iceServers: [
       {
         urls: "stun:stun.l.google.com:19302"
@@ -1511,7 +1567,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "onDataChannelOpen", null);
       __publicField(this, "onAckReceived", null);
       __publicField(this, "onWorkerReady", null);
-      this.remoteId = e, this.sendSignal = t, this.pc = new RTCPeerConnection(se), this.pc.onicecandidate = (n) => {
+      this.remoteId = e, this.sendSignal = t, this.pc = new RTCPeerConnection(ie), this.pc.onicecandidate = (n) => {
         n.candidate && this.sendSignal({
           type: "candidate",
           candidate: n.candidate.toJSON(),
@@ -1689,7 +1745,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       this.dc && (this.dc.close(), this.dc = null), this.pc && this.pc.close(), console.log(`[RTC] Connection closed: ${this.remoteId}`);
     }
   }
-  class ie {
+  class ae {
     constructor() {
       __publicField(this, "ws", null);
       __publicField(this, "myRole", null);
@@ -1823,49 +1879,49 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       i && await i.sendRenderRequest(t, n, r);
     }
   }
-  let _ = false, y = null, k = null, v = null, R = [], A = /* @__PURE__ */ new Map(), D = 0, P = 0, M = 0, S = null, m = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, E = null;
-  const q = 20, a = new ne(), h = new Z(a.canvas), c = new te(), L = new re(h, c, a.canvas), g = new ie();
-  let x = 0, $ = 0, T = 0, G = performance.now();
-  const ae = () => {
+  let _ = false, b = null, B = null, v = null, x = [], P = /* @__PURE__ */ new Map(), E = 0, A = 0, W = 0, S = null, m = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), I = false, D = null;
+  const z = 20, a = new re(), h = new ee(a.canvas), c = new ne(), L = new se(h, c, a.canvas), g = new ae();
+  let R = 0, $ = 0, T = 0, G = performance.now();
+  const oe = () => {
     const s = parseInt(a.inputDepth.value, 10) || f.defaultDepth, e = parseInt(a.inputSPP.value, 10) || f.defaultSPP;
     h.buildPipeline(s, e);
-  }, H = () => {
+  }, N = () => {
     const { width: s, height: e } = a.getRenderConfig();
-    h.updateScreenSize(s, e), c.hasWorld && (c.updateCamera(s, e), h.updateSceneUniforms(c.cameraData, 0, c.lightCount)), h.recreateBindGroup(), h.resetAccumulation(), x = 0, $ = 0;
+    h.updateScreenSize(s, e), c.hasWorld && (c.updateCamera(s, e), h.updateSceneUniforms(c.cameraData, 0, c.lightCount)), h.recreateBindGroup(), h.resetAccumulation(), R = 0, $ = 0;
   }, U = async (s, e = true) => {
     _ = false, console.log(`Loading Scene: ${s}...`);
     let t, n;
-    s === "viewer" && y && (k === "obj" ? t = y : k === "glb" && (n = new Uint8Array(y).slice(0))), await c.loadScene(s, t, n), c.printStats(), await h.loadTexturesFromWorld(c), await oe(), H(), a.updateAnimList(c.getAnimationList()), e && (_ = true, a.updateRenderButton(true));
-  }, oe = async () => {
+    s === "viewer" && b && (B === "obj" ? t = b : B === "glb" && (n = new Uint8Array(b).slice(0))), await c.loadScene(s, t, n), c.printStats(), await h.loadTexturesFromWorld(c), await le(), N(), a.updateAnimList(c.getAnimationList()), e && (_ = true, a.updateRenderButton(true));
+  }, le = async () => {
     h.updateCombinedGeometry(c.vertices, c.normals, c.uvs), h.updateCombinedBVH(c.tlas, c.blas), h.updateBuffer("topology", c.mesh_topology), h.updateBuffer("instance", c.instances), h.updateBuffer("lights", c.lights), h.updateSceneUniforms(c.cameraData, 0, c.lightCount);
-  }, I = () => {
-    if (L.recording || (requestAnimationFrame(I), !_ || !c.hasWorld)) return;
+  }, M = () => {
+    if (L.recording || (requestAnimationFrame(M), !_ || !c.hasWorld)) return;
     let s = parseInt(a.inputUpdateInterval.value, 10) || 0;
-    if (s > 0 && x >= s && c.update($ / (s || 1) / 60), c.hasNewData) {
+    if (s > 0 && R >= s && c.update($ / (s || 1) / 60), c.hasNewData) {
       let t = false;
-      t || (t = h.updateCombinedBVH(c.tlas, c.blas)), t || (t = h.updateBuffer("instance", c.instances)), c.hasNewGeometry && (t || (t = h.updateCombinedGeometry(c.vertices, c.normals, c.uvs)), t || (t = h.updateBuffer("topology", c.mesh_topology)), t || (t = h.updateBuffer("lights", c.lights)), c.hasNewGeometry = false), c.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(c.cameraData, 0, c.lightCount), t && h.recreateBindGroup(), h.resetAccumulation(), x = 0, c.hasNewData = false;
+      t || (t = h.updateCombinedBVH(c.tlas, c.blas)), t || (t = h.updateBuffer("instance", c.instances)), c.hasNewGeometry && (t || (t = h.updateCombinedGeometry(c.vertices, c.normals, c.uvs)), t || (t = h.updateBuffer("topology", c.mesh_topology)), t || (t = h.updateBuffer("lights", c.lights)), c.hasNewGeometry = false), c.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(c.cameraData, 0, c.lightCount), t && h.recreateBindGroup(), h.resetAccumulation(), R = 0, c.hasNewData = false;
     }
-    x++, T++, $++, h.compute(x), h.present();
+    R++, T++, $++, h.compute(R), h.present();
     const e = performance.now();
-    e - G >= 1e3 && (a.updateStats(T, 1e3 / T, x), T = 0, G = e);
+    e - G >= 1e3 && (a.updateStats(T, 1e3 / T, R), T = 0, G = e);
   }, O = async (s) => {
     const e = a.sceneSelect.value, t = e !== "viewer";
-    if (!t && (!y || !k)) return;
-    const n = a.getRenderConfig(), r = t ? e : void 0, i = t ? "DUMMY" : y, o = t ? "obj" : k;
+    if (!t && (!b || !B)) return;
+    const n = a.getRenderConfig(), r = t ? e : void 0, i = t ? "DUMMY" : b, o = t ? "obj" : B;
     n.sceneName = r, s ? (console.log(`Sending scene to specific worker: ${s}`), m.set(s, "loading"), await g.sendSceneToWorker(s, i, o, n)) : (console.log("Broadcasting scene to all workers..."), g.getWorkerIds().forEach((l) => m.set(l, "loading")), await g.broadcastScene(i, o, n));
   }, V = async (s) => {
     if (m.get(s) !== "idle") {
       console.log(`Worker ${s} is ${m.get(s)}, skipping assignment.`);
       return;
     }
-    if (R.length === 0) return;
-    const e = R.shift();
+    if (x.length === 0) return;
+    const e = x.shift();
     e && (m.set(s, "busy"), C.set(s, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${s}`), await g.sendRenderRequest(s, e.start, e.count, {
       ...S,
       fileType: "obj"
     }));
-  }, le = async () => {
-    const s = Array.from(A.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await z(async () => {
+  }, ce = async () => {
+    const s = Array.from(P.keys()).sort((d, p) => d - p), { Muxer: e, ArrayBufferTarget: t } = await q(async () => {
       const { Muxer: d, ArrayBufferTarget: p } = await import("./webm-muxer-MLtUgOCn.js");
       return {
         Muxer: d,
@@ -1881,7 +1937,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     });
     for (const d of s) {
-      const p = A.get(d);
+      const p = P.get(d);
       if (p) for (const u of p) n.addVideoChunk(new EncodedVideoChunk({
         type: u.type,
         timestamp: u.timestamp,
@@ -1912,28 +1968,28 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     } catch (r) {
       console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
     } finally {
-      _ = true, requestAnimationFrame(I);
+      _ = true, requestAnimationFrame(M);
     }
-  }, ce = async () => {
-    if (!E) return;
-    const { start: s, count: e, config: t } = E;
-    E = null, await j(s, e, t);
+  }, de = async () => {
+    if (!D) return;
+    const { start: s, count: e, config: t } = D;
+    D = null, await j(s, e, t);
   };
   g.onStatusChange = (s) => a.setStatus(`Status: ${s}`);
   g.onWorkerLeft = (s) => {
     console.log(`Worker Left: ${s}`), a.setStatus(`Worker Left: ${s}`), m.delete(s);
     const e = C.get(s);
-    e && (console.warn(`Worker ${s} failed job ${e.start}. Re-queueing.`), R.unshift(e), C.delete(s), a.setStatus(`Re-queued Job ${e.start}`));
+    e && (console.warn(`Worker ${s} failed job ${e.start}. Re-queueing.`), x.unshift(e), C.delete(s), a.setStatus(`Re-queued Job ${e.start}`));
   };
   g.onWorkerReady = (s) => {
-    console.log(`Worker ${s} is READY`), a.setStatus(`Worker ${s} Ready!`), m.set(s, "idle"), v === "host" && R.length > 0 && V(s);
+    console.log(`Worker ${s} is READY`), a.setStatus(`Worker ${s} Ready!`), m.set(s, "idle"), v === "host" && x.length > 0 && V(s);
   };
   g.onWorkerJoined = (s) => {
-    a.setStatus(`Worker Joined: ${s}`), m.set(s, "idle"), v === "host" && R.length > 0 && O(s);
+    a.setStatus(`Worker Joined: ${s}`), m.set(s, "idle"), v === "host" && x.length > 0 && O(s);
   };
   g.onRenderRequest = async (s, e, t) => {
-    if (console.log(`[Worker] Received Render Request: Frames ${s} - ${s + e}`), W) {
-      console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${s}`), E = {
+    if (console.log(`[Worker] Received Render Request: Frames ${s} - ${s + e}`), I) {
+      console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${s}`), D = {
         start: s,
         count: e,
         config: t
@@ -1943,35 +1999,35 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     await j(s, e, t);
   };
   g.onRenderResult = async (s, e, t) => {
-    console.log(`[Host] Received ${s.length} chunks for ${e} from ${t}`), A.set(e, s), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), m.set(t, "idle"), C.delete(t), await V(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await le());
+    console.log(`[Host] Received ${s.length} chunks for ${e} from ${t}`), P.set(e, s), E++, a.setStatus(`Distributed Progress: ${E} / ${A} jobs`), m.set(t, "idle"), C.delete(t), await V(t), E >= A && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
   };
   g.onSceneReceived = async (s, e) => {
-    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, y = s, a.sceneSelect.value = e.sceneName || "viewer", await U(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), c.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), ce();
+    console.log("Scene received successfully."), I = true, a.setRenderConfig(e), B = e.fileType, e.fileType, b = s, a.sceneSelect.value = e.sceneName || "viewer", await U(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), c.setAnimation(e.anim)), I = false, console.log("Scene Loaded. Sending WORKER_READY."), await g.sendWorkerReady(), de();
   };
-  const de = () => {
+  const ue = () => {
     a.onRenderStart = () => {
       _ = true;
     }, a.onRenderStop = () => {
       _ = false;
-    }, a.onSceneSelect = (s) => U(s, false), a.onResolutionChange = H, a.onRecompile = (s, e) => {
-      _ = false, h.buildPipeline(s, e), h.recreateBindGroup(), h.resetAccumulation(), x = 0, _ = true;
+    }, a.onSceneSelect = (s) => U(s, false), a.onResolutionChange = N, a.onRecompile = (s, e) => {
+      _ = false, h.buildPipeline(s, e), h.recreateBindGroup(), h.resetAccumulation(), R = 0, _ = true;
     }, a.onFileSelect = async (s) => {
       var _a;
-      ((_a = s.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (y = await s.text(), k = "obj") : (y = await s.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", U("viewer", false);
+      ((_a = s.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (b = await s.text(), B = "obj") : (b = await s.arrayBuffer(), B = "glb"), a.sceneSelect.value = "viewer", U("viewer", false);
     }, a.onAnimSelect = (s) => c.setAnimation(s), a.onRecordStart = async () => {
       if (!L.recording) if (v === "host") {
         const s = g.getWorkerIds();
-        if (S = a.getRenderConfig(), M = Math.ceil(S.fps * S.duration), !confirm(`Distribute recording? (Workers: ${s.length})
+        if (S = a.getRenderConfig(), W = Math.ceil(S.fps * S.duration), !confirm(`Distribute recording? (Workers: ${s.length})
 Auto Scene Sync enabled.`)) return;
-        R = [], A.clear(), D = 0, C.clear();
-        for (let e = 0; e < M; e += q) {
-          const t = Math.min(q, M - e);
-          R.push({
+        x = [], P.clear(), E = 0, C.clear();
+        for (let e = 0; e < W; e += z) {
+          const t = Math.min(z, W - e);
+          x.push({
             start: e,
             count: t
           });
         }
-        P = R.length, s.forEach((e) => m.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${P} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await O()) : console.log("No workers yet. Waiting...");
+        A = x.length, s.forEach((e) => m.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${A} jobs (Waiting for workers...)`), s.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await O()) : console.log("No workers yet. Waiting...");
       } else {
         _ = false, a.setRecordingState(true);
         const s = a.getRenderConfig();
@@ -1984,7 +2040,7 @@ Auto Scene Sync enabled.`)) return;
         } catch {
           alert("Recording failed.");
         } finally {
-          a.setRecordingState(false), _ = true, a.updateRenderButton(true), requestAnimationFrame(I);
+          a.setRecordingState(false), _ = true, a.updateRenderButton(true), requestAnimationFrame(M);
         }
       }
     }, a.onConnectHost = () => {
@@ -1993,14 +2049,14 @@ Auto Scene Sync enabled.`)) return;
       v === "worker" ? (g.disconnect(), v = null, a.setConnectionState(null)) : (g.connect("worker"), v = "worker", a.setConnectionState("worker"));
     }, a.setConnectionState(null);
   };
-  async function ue() {
+  async function he() {
     try {
       await h.init(), await c.initWasm();
     } catch (s) {
       alert("Init failed: " + s);
       return;
     }
-    de(), ae(), H(), U("cornell", false), requestAnimationFrame(I);
+    ue(), oe(), N(), U("cornell", false), requestAnimationFrame(M);
   }
-  ue().catch(console.error);
+  he().catch(console.error);
 })();
