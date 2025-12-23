@@ -1,12 +1,15 @@
-// src/renderer.ts
-import shaderCodeRaw from "./shader.wgsl?raw";
+import raytracerCodeRaw from "./Raytracer.wgsl?raw";
+import postprocessCodeRaw from "./PostProcess.wgsl?raw";
 
 export class WebGPURenderer {
   device!: GPUDevice;
   context!: GPUCanvasContext;
   pipeline!: GPUComputePipeline;
+  postprocessPipeline!: GPUComputePipeline;
   bindGroupLayout!: GPUBindGroupLayout;
+  postprocessBindGroupLayout!: GPUBindGroupLayout;
   bindGroup!: GPUBindGroup;
+  postprocessBindGroup!: GPUBindGroup;
 
   // Screen Resources
   renderTarget!: GPUTexture;
@@ -105,23 +108,38 @@ export class WebGPURenderer {
   }
 
   buildPipeline(depth: number, spp: number) {
-    let code = shaderCodeRaw;
-    code = code.replace(
+    let raytraceCode = raytracerCodeRaw;
+    raytraceCode = raytraceCode.replace(
       /const\s+MAX_DEPTH\s*=\s*\d+u;/,
       `const MAX_DEPTH = ${depth}u;`
     );
-    code = code.replace(/const\s+SPP\s*=\s*\d+u;/, `const SPP = ${spp}u;`);
+    raytraceCode = raytraceCode.replace(
+      /const\s+SPP\s*=\s*\d+u;/,
+      `const SPP = ${spp}u;`
+    );
 
-    const shaderModule = this.device.createShaderModule({
+    const raytraceModule = this.device.createShaderModule({
       label: "RayTracing",
-      code,
+      code: raytraceCode,
     });
     this.pipeline = this.device.createComputePipeline({
       label: "Main Pipeline",
       layout: "auto",
-      compute: { module: shaderModule, entryPoint: "main" },
+      compute: { module: raytraceModule, entryPoint: "main" },
     });
     this.bindGroupLayout = this.pipeline.getBindGroupLayout(0);
+
+    const postprocessModule = this.device.createShaderModule({
+      label: "PostProcess",
+      code: postprocessCodeRaw,
+    });
+    this.postprocessPipeline = this.device.createComputePipeline({
+      label: "PostProcess Pipeline",
+      layout: "auto",
+      compute: { module: postprocessModule, entryPoint: "main" },
+    });
+    this.postprocessBindGroupLayout =
+      this.postprocessPipeline.getBindGroupLayout(0);
   }
 
   updateScreenSize(width: number, height: number) {
@@ -368,7 +386,9 @@ export class WebGPURenderer {
     this.uniformMixedData[1] = this.blasOffset;
     this.uniformMixedData[2] = this.vertexCount;
     this.uniformMixedData[3] = 0; // Padding/Seed placeholder
-    this.uniformMixedData[4] = lightCount; // Added
+    this.uniformMixedData[4] = lightCount;
+    this.uniformMixedData[5] = this.canvas.width;
+    this.uniformMixedData[6] = this.canvas.height;
 
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
@@ -391,15 +411,12 @@ export class WebGPURenderer {
     this.bindGroup = this.device.createBindGroup({
       layout: this.bindGroupLayout,
       entries: [
-        { binding: 0, resource: this.renderTargetView },
         { binding: 1, resource: { buffer: this.accumulateBuffer } },
         { binding: 2, resource: { buffer: this.sceneUniformBuffer } },
-
         { binding: 3, resource: { buffer: this.geometryBuffer } },
-        { binding: 4, resource: { buffer: this.topologyBuffer } }, // Consolidated
+        { binding: 4, resource: { buffer: this.topologyBuffer } },
         { binding: 5, resource: { buffer: this.nodesBuffer } },
         { binding: 6, resource: { buffer: this.instanceBuffer } },
-
         {
           binding: 7,
           resource: this.texture.createView({ dimension: "2d-array" }),
@@ -408,11 +425,20 @@ export class WebGPURenderer {
         { binding: 9, resource: { buffer: this.lightsBuffer } },
       ],
     });
+
+    this.postprocessBindGroup = this.device.createBindGroup({
+      layout: this.postprocessBindGroupLayout,
+      entries: [
+        { binding: 0, resource: this.renderTargetView },
+        { binding: 1, resource: { buffer: this.accumulateBuffer } },
+        { binding: 2, resource: { buffer: this.sceneUniformBuffer } },
+      ],
+    });
   }
 
   // ★ 名前を変更: render -> compute
   compute(frameCount: number) {
-    if (!this.bindGroup) return;
+    if (!this.bindGroup || !this.postprocessBindGroup) return;
 
     this.seed++;
 
@@ -429,25 +455,34 @@ export class WebGPURenderer {
     const dispatchY = Math.ceil(this.canvas.height / 8);
 
     const commandEncoder = this.device.createCommandEncoder();
-    const pass = commandEncoder.beginComputePass();
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
-    pass.dispatchWorkgroups(dispatchX, dispatchY);
-    pass.end();
 
-    // ★ copyTextureToTexture はここでは行わない
-    // 計算結果(renderTarget)はGPUメモリ内に残る
+    // 1. Raytrace Pass
+    const rayPass = commandEncoder.beginComputePass();
+    rayPass.setPipeline(this.pipeline);
+    rayPass.setBindGroup(0, this.bindGroup);
+    rayPass.dispatchWorkgroups(dispatchX, dispatchY);
+    rayPass.end();
 
     this.device.queue.submit([commandEncoder.finish()]);
   }
 
   // ★ 新設: 画面への転送のみを行うメソッド
   present() {
-    if (!this.renderTarget) return;
+    if (!this.renderTarget || !this.postprocessBindGroup) return;
+
+    const dispatchX = Math.ceil(this.canvas.width / 8);
+    const dispatchY = Math.ceil(this.canvas.height / 8);
 
     const commandEncoder = this.device.createCommandEncoder();
 
-    // ここで初めてCanvasのテクスチャを取得してコピー
+    // 1. Postprocess Pass (Normalizes and tone maps accumulateBuffer into renderTarget)
+    const postPass = commandEncoder.beginComputePass();
+    postPass.setPipeline(this.postprocessPipeline);
+    postPass.setBindGroup(0, this.postprocessBindGroup);
+    postPass.dispatchWorkgroups(dispatchX, dispatchY);
+    postPass.end();
+
+    // 2. Copy renderTarget to Canvas
     commandEncoder.copyTextureToTexture(
       { texture: this.renderTarget },
       { texture: this.context.getCurrentTexture() },

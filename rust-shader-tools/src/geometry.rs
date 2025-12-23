@@ -65,19 +65,45 @@ impl Geometry {
         (self.vertices.len() / 4 - 1) as u32
     }
 
-    pub fn push_attributes(&mut self, color: Vec3, mat_type: u32, extra: f32, texture_index: f32) {
+    pub fn push_attributes(
+        &mut self,
+        base_color: Vec3,
+        mat_type: u32,
+        metallic: f32,
+        roughness: f32,
+        ior: f32,
+        emissive_color: Vec3,
+        tex_indices: [f32; 4], // base, met_rough, normal, emissive
+        occlusion_tex: f32,
+    ) {
         let mat_bits = f32::from_bits(mat_type);
-        self.attributes
-            .extend_from_slice(&[color.x, color.y, color.z, mat_bits, extra, texture_index, 0.0, 0.0]);
+        // Stride 12 (to match 16-word layout with 4 indices)
+        // data0: rgba (BaseColor + MatType)
+        // data1: metallic, roughness, ior, padding/extra
+        // data2: base_tex, met_rough_tex, normal_tex, emissive_tex
+        // data3: emissive_color (rgb), occlusion_tex
+        self.attributes.extend_from_slice(&[
+            base_color.x,
+            base_color.y,
+            base_color.z,
+            mat_bits,
+            metallic,
+            roughness,
+            ior,
+            0.0, // extra/padding
+            tex_indices[0],
+            tex_indices[1],
+            tex_indices[2],
+            tex_indices[3],
+            emissive_color.x,
+            emissive_color.y,
+            emissive_color.z,
+            occlusion_tex,
+        ]);
     }
 
     pub fn from_mesh(mesh: &Mesh) -> Self {
-        let mut geo = Self::new();
-        // デフォルトのマテリアル
-        let color = vec3(0.8, 0.8, 0.8);
-        let mat_type = 0; // LAMBERTIAN
-        let extra = 0.0;
-        let texture_index = -1.0;
+        let mut geo = Geometry::new();
 
         for (i, v) in mesh.vertices.iter().enumerate() {
             let n = mesh.normals.get(i).copied().unwrap_or(vec3(0., 1., 0.));
@@ -88,7 +114,16 @@ impl Geometry {
         for chunk in mesh.indices.chunks(3) {
             if chunk.len() == 3 {
                 geo.indices.extend_from_slice(chunk);
-                geo.push_attributes(color, mat_type, extra, texture_index);
+                geo.push_attributes(
+                    Vec3::new(1.0, 1.0, 1.0),
+                    crate::scene::material::LAMBERTIAN,
+                    0.0,
+                    1.0,
+                    1.5,
+                    Vec3::ZERO,
+                    [-1.0, -1.0, -1.0, -1.0],
+                    -1.0,
+                );
             }
         }
         geo
@@ -147,7 +182,23 @@ impl Geometry {
         let i2 = self.push_vertex(v2, normal, vec2(0., 1.));
 
         self.indices.extend_from_slice(&[i0, i1, i2]);
-        self.push_attributes(color, mat_type, extra, texture_index);
+
+        let (metallic, roughness, ior) = match mat_type {
+            1 => (1.0, extra, 1.5), // METAL
+            2 => (0.0, 0.0, extra), // DIELECTRIC
+            _ => (0.0, 1.0, 1.5),   // LAMBERTIAN / LIGHT
+        };
+
+        self.push_attributes(
+            color,
+            mat_type,
+            metallic,
+            roughness,
+            ior,
+            Vec3::ZERO,
+            [texture_index, -1.0, -1.0, -1.0],
+            -1.0,
+        );
     }
 
     pub fn add_sphere(
@@ -184,12 +235,40 @@ impl Geometry {
                 if i != 0 {
                     self.indices
                         .extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
-                    self.push_attributes(color, mat_type, extra, texture_index);
+                    let (metallic, roughness, ior) = match mat_type {
+                        1 => (1.0, extra, 1.5),
+                        2 => (0.0, 0.0, extra),
+                        _ => (0.0, 1.0, 1.5),
+                    };
+                    self.push_attributes(
+                        color,
+                        mat_type,
+                        metallic,
+                        roughness,
+                        ior,
+                        Vec3::ZERO,
+                        [texture_index, -1.0, -1.0, -1.0],
+                        -1.0,
+                    );
                 }
                 if i != (stacks - 1) {
                     self.indices
                         .extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
-                    self.push_attributes(color, mat_type, extra, texture_index);
+                    let (metallic, roughness, ior) = match mat_type {
+                        1 => (1.0, extra, 1.5),
+                        2 => (0.0, 0.0, extra),
+                        _ => (0.0, 1.0, 1.5),
+                    };
+                    self.push_attributes(
+                        color,
+                        mat_type,
+                        metallic,
+                        roughness,
+                        ior,
+                        Vec3::ZERO,
+                        [texture_index, -1.0, -1.0, -1.0],
+                        -1.0,
+                    );
                 }
             }
         }
@@ -227,7 +306,21 @@ impl Geometry {
                 self.indices.push(chunk[0] + start_offset);
                 self.indices.push(chunk[1] + start_offset);
                 self.indices.push(chunk[2] + start_offset);
-                self.push_attributes(color, mat_type, extra, texture_index);
+                let (metallic, roughness, ior) = match mat_type {
+                    1 => (1.0, extra, 1.5),
+                    2 => (0.0, 0.0, extra),
+                    _ => (0.0, 1.0, 1.5),
+                };
+                self.push_attributes(
+                    color,
+                    mat_type,
+                    metallic,
+                    roughness,
+                    ior,
+                    Vec3::ZERO,
+                    [texture_index, -1.0, -1.0, -1.0],
+                    -1.0,
+                );
             }
         }
     }

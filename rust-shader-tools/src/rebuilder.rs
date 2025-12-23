@@ -115,7 +115,7 @@ pub fn build_blas_and_vertices(
         // For mesh_topology (stride 1 -> 1 struct per tri), leaf refers to "Primitive Index"
         // In this case, primitive index is just the index in the topology array.
         // Current BLAS holds `tri_offset` in mesh_topology.
-        let current_topology_start = (buffers.mesh_topology.len() / 12) as u32;
+        let current_topology_start = (buffers.mesh_topology.len() / 20) as u32;
 
         for i in 0..(nodes.len() / 8) {
             if nodes[i * 8 + 7] > 0. {
@@ -129,7 +129,8 @@ pub fn build_blas_and_vertices(
 
         // Pack Mesh Topology
         let mut current_emissive = Vec::new();
-        // Stride: 12 u32s (v0, v1, v2, pad, data0[4], data1[4])
+        // Stride: 16 u32s (v0, v1, v2, pad, data0[4], data1[4], data2[4], data3[4])
+        // Attribute part is 12 floats.
         for (i, &old_id) in tri_ids.iter().enumerate() {
             let base_v = i * 3;
             let v0 = indices[base_v] + v_offset;
@@ -137,8 +138,8 @@ pub fn build_blas_and_vertices(
             let v2 = indices[base_v + 2] + v_offset;
 
             // Attributes
-            let src_attr = old_id * 8;
-            let attrs = &geom.attributes[src_attr..src_attr + 8];
+            let src_attr = old_id * 16;
+            let attrs = &geom.attributes[src_attr..src_attr + 16];
 
             // 0..3: Indices + Pad
             buffers.mesh_topology.push(v0);
@@ -146,7 +147,9 @@ pub fn build_blas_and_vertices(
             buffers.mesh_topology.push(v2);
             buffers.mesh_topology.push(0); // Pad
 
-            // 4..11: Attributes (bitcast)
+            // 4..19: Attributes (16 floats total now? Wait, stride in geometry was 16?)
+            // Let's re-verify geometry.rs push_attributes.
+            // data0..data3 = 16 floats.
             for &f in attrs {
                 buffers.mesh_topology.push(f.to_bits());
             }

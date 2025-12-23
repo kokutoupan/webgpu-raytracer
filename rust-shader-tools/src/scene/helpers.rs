@@ -21,11 +21,35 @@ pub fn add_quad(
     let i2 = geom.push_vertex(c, n, vec2(1., 1.));
     let i3 = geom.push_vertex(d, n, vec2(0., 1.));
 
+    let (metallic, roughness, ior) = match mat_type {
+        1 => (1.0, extra, 1.5), // METAL
+        2 => (0.0, 0.0, extra), // DIELECTRIC
+        _ => (0.0, 1.0, 1.5),   // LAMBERTIAN / LIGHT
+    };
+
     geom.indices.extend_from_slice(&[i0, i1, i2]);
-    geom.push_attributes(color, mat_type, extra, texture_index);
+    geom.push_attributes(
+        color,
+        mat_type,
+        metallic,
+        roughness,
+        ior,
+        Vec3::ZERO,
+        [texture_index, -1.0, -1.0, -1.0],
+        -1.0,
+    );
 
     geom.indices.extend_from_slice(&[i0, i2, i3]);
-    geom.push_attributes(color, mat_type, extra, texture_index);
+    geom.push_attributes(
+        color,
+        mat_type,
+        metallic,
+        roughness,
+        ior,
+        Vec3::ZERO,
+        [texture_index, -1.0, -1.0, -1.0],
+        -1.0,
+    );
 }
 
 pub fn create_box(
