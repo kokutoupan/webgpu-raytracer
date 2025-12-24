@@ -42,8 +42,15 @@ export class WebGPURenderer {
 
   private seed = Math.floor(Math.random() * 0xffffff);
 
+  // TAA Resources
+  historyTextures: GPUTexture[] = [];
+  historyTextureViews: GPUTextureView[] = [];
+  historyIndex = 0;
+  prevCameraData: Float32Array = new Float32Array(24);
+  jitter = { x: 0, y: 0 };
+
   // Reuse to avoid allocation
-  private uniformMixedData = new Uint32Array(8);
+  private uniformMixedData = new Uint32Array(12);
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -72,10 +79,10 @@ export class WebGPURenderer {
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
-    // Uniform Buffer: Camera(96) + Frame(4) + BLAS_Idx(4) + Pad(8) = 112
-    // Aligned to 16 bytes.
+    // Uniform Buffer: Current Camera(96) + Prev Camera(96) + Mixed(48) = 240
+    // Mixed: frame(4), blas(4), vertex(4), seed(4), light(4), w(4), h(4), jitterX(4), jitterY(4), pad(12)
     this.sceneUniformBuffer = this.device.createBuffer({
-      size: 128, // Round up to be safe
+      size: 256,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -160,6 +167,20 @@ export class WebGPURenderer {
       size: this.bufferSize,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+
+    // Create history textures for TAA (Stored in Linear HDR)
+    for (let i = 0; i < 2; i++) {
+      if (this.historyTextures[i]) this.historyTextures[i].destroy();
+      this.historyTextures[i] = this.device.createTexture({
+        size: [width, height],
+        format: "rgba16float",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.STORAGE_BINDING |
+          GPUTextureUsage.COPY_DST,
+      });
+      this.historyTextureViews[i] = this.historyTextures[i].createView();
+    }
   }
 
   resetAccumulation() {
@@ -375,26 +396,64 @@ export class WebGPURenderer {
     frameCount: number,
     lightCount: number
   ) {
+    this.lightCount = lightCount;
     if (!this.sceneUniformBuffer) return;
+
+    // Halton jitter for TAA
+    const getHalton = (index: number, base: number) => {
+      let f = 1;
+      let r = 0;
+      while (index > 0) {
+        f = f / base;
+        r = r + f * (index % base);
+        index = Math.floor(index / base);
+      }
+      return r;
+    };
+
+    // Low SPP (1-4) often benefits from jitter.
+    // If SPP is high, jitter might be less critical but still good for temporal stability.
+    const jitterX = getHalton((frameCount % 16) + 1, 2) - 0.5;
+    const jitterY = getHalton((frameCount % 16) + 1, 3) - 0.5;
+    this.jitter = {
+      x: jitterX / this.canvas.width,
+      y: jitterY / this.canvas.height,
+    };
+
+    // Write Current Camera
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
       0,
       cameraData as any
     );
+    // Write Previous Camera
+    this.device.queue.writeBuffer(
+      this.sceneUniformBuffer,
+      96,
+      this.prevCameraData as any
+    );
 
     this.uniformMixedData[0] = frameCount;
     this.uniformMixedData[1] = this.blasOffset;
     this.uniformMixedData[2] = this.vertexCount;
-    this.uniformMixedData[3] = 0; // Padding/Seed placeholder
+    this.uniformMixedData[3] = this.seed;
     this.uniformMixedData[4] = lightCount;
     this.uniformMixedData[5] = this.canvas.width;
     this.uniformMixedData[6] = this.canvas.height;
+    this.uniformMixedData[7] = 0; // Padding for 8-byte alignment of jitter
+
+    const floatView = new Float32Array(this.uniformMixedData.buffer);
+    floatView[8] = this.jitter.x;
+    floatView[9] = this.jitter.y;
 
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
-      96,
-      this.uniformMixedData
+      192, // After Current(96) and Prev(96)
+      this.uniformMixedData as any
     );
+
+    // Save current camera for next frame
+    this.prevCameraData.set(cameraData);
   }
 
   recreateBindGroup() {
@@ -432,23 +491,67 @@ export class WebGPURenderer {
         { binding: 0, resource: this.renderTargetView },
         { binding: 1, resource: { buffer: this.accumulateBuffer } },
         { binding: 2, resource: { buffer: this.sceneUniformBuffer } },
+        {
+          binding: 3,
+          resource: this.historyTextureViews[1 - this.historyIndex],
+        }, // Previous frame (Read)
+        { binding: 4, resource: this.sampler },
+        {
+          binding: 5,
+          resource: this.historyTextureViews[this.historyIndex],
+        }, // Current frame (Write)
       ],
     });
   }
+
+  private totalFrames = 0;
+
+  private lightCount = 0;
 
   // ★ 名前を変更: render -> compute
   compute(frameCount: number) {
     if (!this.bindGroup || !this.postprocessBindGroup) return;
 
+    this.totalFrames++;
     this.seed++;
+
+    // Halton jitter for TAA (Persistent counter)
+    const getHalton = (index: number, base: number) => {
+      let f = 1;
+      let r = 0;
+      while (index > 0) {
+        f = f / base;
+        r = r + f * (index % base);
+        index = Math.floor(index / base);
+      }
+      return r;
+    };
+
+    const jitterX = getHalton((this.totalFrames % 16) + 1, 2) - 0.5;
+    const jitterY = getHalton((this.totalFrames % 16) + 1, 3) - 0.5;
+    this.jitter = {
+      x: jitterX / this.canvas.width,
+      y: jitterY / this.canvas.height,
+    };
 
     // Uniformの更新
     this.uniformMixedData[0] = frameCount;
+    this.uniformMixedData[1] = this.blasOffset;
+    this.uniformMixedData[2] = this.vertexCount;
     this.uniformMixedData[3] = this.seed;
+    this.uniformMixedData[4] = this.lightCount; // RESTORE: Use cached lightCount
+    this.uniformMixedData[5] = this.canvas.width;
+    this.uniformMixedData[6] = this.canvas.height;
+    this.uniformMixedData[7] = 0; // Padding
+
+    const floatView = new Float32Array(this.uniformMixedData.buffer);
+    floatView[8] = this.jitter.x;
+    floatView[9] = this.jitter.y;
+
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,
-      96,
-      this.uniformMixedData
+      192,
+      this.uniformMixedData as any
     );
 
     const dispatchX = Math.ceil(this.canvas.width / 8);
@@ -494,5 +597,9 @@ export class WebGPURenderer {
     );
 
     this.device.queue.submit([commandEncoder.finish()]);
+
+    // Swap history index
+    this.historyIndex = 1 - this.historyIndex;
+    this.recreateBindGroup(); // To update history binding
   }
 }
