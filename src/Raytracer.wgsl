@@ -14,24 +14,26 @@ const SPP = 1u;
 // =========================================================
 
 struct Camera {
-    origin: vec3<f32>,
-    lens_radius: f32,
-    lower_left_corner: vec3<f32>,
-    horizontal: vec3<f32>,
-    vertical: vec3<f32>,
-    u: vec3<f32>,
-    v: vec3<f32>
+    origin: vec4<f32>, // w: lens_radius
+    lower_left_corner: vec4<f32>,
+    horizontal: vec4<f32>,
+    vertical: vec4<f32>,
+    u: vec4<f32>,
+    v: vec4<f32>
 }
 
 struct SceneUniforms {
     camera: Camera,
+    prev_camera: Camera,
     frame_count: u32,
     blas_base_idx: u32,
     vertex_count: u32,
     rand_seed: u32,
     light_count: u32,
     width: u32,
-    height: u32
+    height: u32,
+    pad: u32,
+    jitter: vec2<f32>,
 }
 
 struct MeshTopology {
@@ -687,14 +689,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var col = vec3(0.);
     for (var s = 0u; s < SPP; s++) {
         var off = vec3(0.);
-        if scene.camera.lens_radius > 0. {
-            let rd = scene.camera.lens_radius * random_in_unit_disk(&rng);
-            off = scene.camera.u * rd.x + scene.camera.v * rd.y;
+        if scene.camera.origin.w > 0. {
+            let rd = scene.camera.origin.w * random_in_unit_disk(&rng);
+            off = scene.camera.u.xyz * rd.x + scene.camera.v.xyz * rd.y;
         }
-        let u = (f32(id.x) + rand_pcg(&rng)) / f32(scene.width);
-        let v = 1. - (f32(id.y) + rand_pcg(&rng)) / f32(scene.height);
-        let d = scene.camera.lower_left_corner + u * scene.camera.horizontal + v * scene.camera.vertical - scene.camera.origin - off;
-        col += ray_color(Ray(scene.camera.origin + off, d), &rng);
+        let u = (f32(id.x) + rand_pcg(&rng) + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+        let v = 1. - (f32(id.y) + rand_pcg(&rng) + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+        let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
+        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
     }
     col /= f32(SPP);
 
