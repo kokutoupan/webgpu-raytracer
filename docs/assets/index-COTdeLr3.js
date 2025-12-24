@@ -756,8 +756,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let rd = scene.camera.origin.w * random_in_unit_disk(&rng);
             off = scene.camera.u.xyz * rd.x + scene.camera.v.xyz * rd.y;
         }
-        let u = (f32(id.x) + 0.5 + (rand_pcg(&rng) - 0.5) * 0.2 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
-        let v = 1. - (f32(id.y) + 0.5 + (rand_pcg(&rng) - 0.5) * 0.2 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+        let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+        let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
         col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
     }
@@ -875,7 +875,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // 3. TAA Blend (HDR Feedback)
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
     let uv = (vec2<f32>(id.xy) + 0.5) / dims;
-    let samples_history = textureSampleLevel(historyTex, smp, uv + scene.jitter, 0.0).rgb;
+    let samples_history = textureSampleLevel(historyTex, smp, uv, 0.0).rgb;
     
     // Neighborhood Clamping
     var min_c = center_color;
