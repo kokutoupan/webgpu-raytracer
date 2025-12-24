@@ -106,7 +106,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // 3. TAA Blend (HDR Feedback)
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
     let uv = (vec2<f32>(id.xy) + 0.5) / dims;
-    let samples_history = textureSampleLevel(historyTex, smp, uv + scene.jitter, 0.0).rgb;
+    let samples_history = textureSampleLevel(historyTex, smp, uv, 0.0).rgb;
     
     // Neighborhood Clamping
     var min_c = center_color;
