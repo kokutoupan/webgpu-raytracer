@@ -70,16 +70,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     let center_lum = luminance(center_color_raw);
-    let threshold = max(max_neighbor_lum * 2.0, 1.0);
+    let threshold = max(max_neighbor_lum * 2.5, 1.0); // Slightly more relaxed for sharpness
     var center_color = center_color_raw;
     if center_lum > threshold {
         center_color *= (threshold / center_lum);
     }
 
-    // 2. Bilateral Filter
-    let SIGMA_S = 1.0;
-    let SIGMA_R = 0.15;
-    let RADIUS = 2;
+    // 2. Bilateral Filter (Sharpened/Reduced radius)
+    let SIGMA_S = 0.5; // Tighter spatial filter
+    let SIGMA_R = 0.1; // Tighter range filter
+    let RADIUS = 1;    // 3x3 only
 
     var filtered_sum = vec3(0.0);
     var total_weight = 0.0;
@@ -101,13 +101,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    let hdr_color = filtered_sum / max(total_weight, 1e-4);
+    let denoised_hdr = filtered_sum / max(total_weight, 1e-4);
     
     // 3. TAA Blend (HDR Feedback)
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
     let uv = (vec2<f32>(id.xy) + 0.5) / dims;
-    
-    // Previous frame was jittered by scene.jitter (approx)
     let samples_history = textureSampleLevel(historyTex, smp, uv + scene.jitter, 0.0).rgb;
     
     // Neighborhood Clamping
@@ -125,21 +123,26 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let clamped_history = clamp(samples_history, min_c, max_c);
 
-    // If frame_count is 1 (fresh accumulation), history is invalid or black.
-    // However, in our system, accumulation buffer itself handles persistence.
-    // TAA here acts as an extra denoiser/AA.
-    var alpha = 0.1;
-    if scene.frame_count <= 1u {
-        alpha = 1.0; // Reset history if fresh start
-    }
+    var alpha = 0.15; // Increased alpha for more sharpness/current frame detail
+    if scene.frame_count <= 1u { alpha = 1.0; }
 
-    let final_hdr = mix(clamped_history, hdr_color, alpha);
+    let final_hdr = mix(clamped_history, denoised_hdr, alpha);
 
     // Save HDR for next frame
     textureStore(historyOutput, vec2<i32>(id.xy), vec4(final_hdr, 1.0));
 
-    // Display Output
+    // 4. Tonemapping and Sharpening Filter
     let mapped = aces_tone_mapping(final_hdr);
-    let ldr_out = pow(mapped, vec3<f32>(1.0 / 2.2));
+
+    // Simple cross-sharpening (Unsharp mask)
+    // Sample cross neighbors from the tonemapped result would be expensive (re-calculating neighbors)
+    // So we just do a simple pass on 'mapped' itself using derived neighborhood if possible,
+    // but better to just output here. 
+    // Wait, let's just use a basic sharpen calculation:
+    // We already have 'center_color' and 'denoised_hdr'.
+    let edge_detect = center_color - denoised_hdr;
+    let sharpened = mapped + aces_tone_mapping(edge_detect) * 0.3;
+
+    let ldr_out = pow(clamp(sharpened, vec3(0.0), vec3(1.0)), vec3<f32>(1.0 / 2.2));
     textureStore(outputTex, vec2<i32>(id.xy), vec4(ldr_out, 1.0));
 }
