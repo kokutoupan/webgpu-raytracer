@@ -718,14 +718,14 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
     );
 
     // // Front Light
-    // geom_env.add_sphere(
-    //     vec3(0., 3., -4.5),
-    //     1.0,
-    //     vec3(5., 5., 5.),
-    //     mat_type::LIGHT,
-    //     0.,
-    //     -1.0,
-    // );
+    geom_env.add_sphere(
+        vec3(0., 3., -4.5),
+        1.0,
+        vec3(15., 15., 15.),
+        mat_type::LIGHT,
+        0.,
+        -1.0,
+    );
 
     // Geometry 1: Model (if OBJ loaded or placeholder if neither)
     // NOTE: GLB models are appended as separate geometries in loader.rs,
