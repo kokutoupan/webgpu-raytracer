@@ -25,11 +25,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const X = "modulepreload", K = function(i) {
     return "/webgpu-raytracer/" + i;
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-  }, $ = {}, O = function(e, t, n) {
-========
-  }, $ = {}, z = function(e, t, n) {
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
+  }, H = {}, O = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let h = function(u) {
@@ -45,19 +41,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       document.getElementsByTagName("link");
       const l = document.querySelector("meta[property=csp-nonce]"), c = (l == null ? void 0 : l.nonce) || (l == null ? void 0 : l.getAttribute("nonce"));
       r = h(t.map((u) => {
-        if (u = K(u), u in $) return;
-        $[u] = true;
+        if (u = K(u), u in H) return;
+        H[u] = true;
         const g = u.endsWith(".css"), b = g ? '[rel="stylesheet"]' : "";
         if (document.querySelector(`link[href="${u}"]${b}`)) return;
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-        const m = document.createElement("link");
-        if (m.rel = g ? "stylesheet" : X, g || (m.as = "script"), m.crossOrigin = "", m.href = u, c && m.setAttribute("nonce", c), document.head.appendChild(m), g) return new Promise((Y, J) => {
-          m.addEventListener("load", Y), m.addEventListener("error", () => J(new Error(`Unable to preload CSS for ${u}`)));
-========
         const v = document.createElement("link");
         if (v.rel = g ? "stylesheet" : X, g || (v.as = "script"), v.crossOrigin = "", v.href = u, c && v.setAttribute("nonce", c), document.head.appendChild(v), g) return new Promise((J, Y) => {
           v.addEventListener("load", J), v.addEventListener("error", () => Y(new Error(`Unable to preload CSS for ${u}`)));
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
         });
       }));
     }
@@ -772,12 +762,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-<<<<<<< HEAD:docs/assets/index-DYtrnWqt.js
         col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
-=======
-
-        col += ray_color(Ray(scene.camera.origin.xyz + off, d), p_idx, &rng);
->>>>>>> e6ec005 (fix: fireflyの 善):docs/assets/index-y32EGk3P.js
     }
     col /= f32(SPP);
     accumulateBuffer[p_idx] = vec4(col, 1.0);
@@ -1282,9 +1267,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!this.bindGroup || !this.postprocessBindGroup) return;
       this.totalFrames++;
       const t = (u, g) => {
-        let b = 1, m = 0;
-        for (; u > 0; ) b = b / g, m = m + b * (u % g), u = Math.floor(u / g);
-        return m;
+        let b = 1, v = 0;
+        for (; u > 0; ) b = b / g, v = v + b * (u % g), u = Math.floor(u / g);
+        return v;
       }, n = t(this.totalFrames % 16 + 1, 2) - 0.5, r = t(this.totalFrames % 16 + 1, 3) - 0.5;
       this.prevJitter.x = this.jitter.x, this.prevJitter.y = this.jitter.y, this.jitter = {
         x: n / this.canvas.width,
@@ -1314,11 +1299,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function te(i) {
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-BGTA25rB.js", {
-========
     return new Worker("/webgpu-raytracer/assets/wasm-worker-BESrBICk.js", {
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
       name: i == null ? void 0 : i.name
     });
   }
@@ -1746,11 +1727,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     ]
   };
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
   class F {
-========
-  class H {
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -2003,11 +1980,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       switch (e.type) {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
           const t = new F(e.workerId, (n) => this.sendSignal(n));
-========
-          const t = new H(e.workerId, (n) => this.sendSignal(n));
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
           this.workers.set(e.workerId, t), t.onDataChannelOpen = () => {
             var _a2;
             console.log(`[Host] Open for ${e.workerId}`), t.sendData({
@@ -2048,11 +2021,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       var _a, _b, _c;
       switch (e.type) {
         case "offer":
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
           e.fromId && (this.hostClient = new F(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
-========
-          e.fromId && (this.hostClient = new H(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
             var _a2, _b2;
             (_a2 = this.hostClient) == null ? void 0 : _a2.sendData({
               type: "HELLO",
@@ -2086,39 +2055,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       s && await s.sendRenderRequest(t, n, r);
     }
   }
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-  let v = false, w = null, k = null, x = null, R = [], E = /* @__PURE__ */ new Map(), D = 0, P = 0, L = 0, B = null, y = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
-  const G = 20, a = new re(), f = new ee(a.canvas), d = new ne(), M = new ie(f, d, a.canvas), _ = new ae();
+  let m = false, w = null, k = null, x = null, R = [], E = /* @__PURE__ */ new Map(), D = 0, P = 0, L = 0, B = null, y = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
+  const G = 20, a = new re(), f = new ee(a.canvas), d = new ne(), U = new ie(f, d, a.canvas), _ = new ae();
   let S = 0, N = 0, T = 0, z = performance.now();
-========
-  let m = false, w = null, k = null, x = null, R = [], P = /* @__PURE__ */ new Map(), D = 0, M = 0, L = 0, B = null, y = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
-  const G = 20, a = new re(), f = new ee(a.canvas), d = new ne(), E = new ie(f, d, a.canvas), p = new ae();
-  let S = 0, N = 0, T = 0, O = performance.now();
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
   const oe = () => {
     const i = parseInt(a.inputDepth.value, 10) || p.defaultDepth, e = parseInt(a.inputSPP.value, 10) || p.defaultSPP;
     f.buildPipeline(i, e);
-  }, H = () => {
+  }, $ = () => {
     const { width: i, height: e } = a.getRenderConfig();
     f.updateScreenSize(i, e), d.hasWorld && (d.updateCamera(i, e), f.updateSceneUniforms(d.cameraData, 0, d.lightCount)), f.recreateBindGroup(), f.resetAccumulation(), S = 0, N = 0;
-  }, U = async (i, e = true) => {
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-    v = false, console.log(`Loading Scene: ${i}...`);
-    let t, n;
-    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), H(), a.updateAnimList(d.getAnimationList()), e && (v = true, a.updateRenderButton(true));
-  }, le = async () => {
-    f.updateCombinedGeometry(d.vertices, d.normals, d.uvs), f.updateCombinedBVH(d.tlas, d.blas), f.updateBuffer("topology", d.mesh_topology), f.updateBuffer("instance", d.instances), f.updateBuffer("lights", d.lights), f.updateSceneUniforms(d.cameraData, 0, d.lightCount);
-  }, I = () => {
-    if (M.recording || (requestAnimationFrame(I), !v || !d.hasWorld)) return;
-========
+  }, M = async (i, e = true) => {
     m = false, console.log(`Loading Scene: ${i}...`);
     let t, n;
-    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), F(), a.updateAnimList(d.getAnimationList()), e && (m = true, a.updateRenderButton(true));
+    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), $(), a.updateAnimList(d.getAnimationList()), e && (m = true, a.updateRenderButton(true));
   }, le = async () => {
     f.updateCombinedGeometry(d.vertices, d.normals, d.uvs), f.updateCombinedBVH(d.tlas, d.blas), f.updateBuffer("topology", d.mesh_topology), f.updateBuffer("instance", d.instances), f.updateBuffer("lights", d.lights), f.updateSceneUniforms(d.cameraData, 0, d.lightCount);
   }, I = () => {
-    if (E.recording || (requestAnimationFrame(I), !m || !d.hasWorld)) return;
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
+    if (U.recording || (requestAnimationFrame(I), !m || !d.hasWorld)) return;
     let i = parseInt(a.inputUpdateInterval.value, 10) || 0;
     if (i > 0 && S >= i && d.update(N / (i || 1) / 60), d.hasNewData) {
       let t = false;
@@ -2131,33 +2084,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     const e = a.sceneSelect.value, t = e !== "viewer";
     if (!t && (!w || !k)) return;
     const n = a.getRenderConfig(), r = t ? e : void 0, s = t ? "DUMMY" : w, o = t ? "obj" : k;
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
     n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), y.set(i, "loading"), await _.sendSceneToWorker(i, s, o, n)) : (console.log("Broadcasting scene to all workers..."), _.getWorkerIds().forEach((l) => y.set(l, "loading")), await _.broadcastScene(s, o, n));
-  }, V = async (i) => {
-========
-    n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), y.set(i, "loading"), await p.sendSceneToWorker(i, s, o, n)) : (console.log("Broadcasting scene to all workers..."), p.getWorkerIds().forEach((l) => y.set(l, "loading")), await p.broadcastScene(s, o, n));
   }, j = async (i) => {
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
     if (y.get(i) !== "idle") {
       console.log(`Worker ${i} is ${y.get(i)}, skipping assignment.`);
       return;
     }
     if (R.length === 0) return;
     const e = R.shift();
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
     e && (y.set(i, "busy"), C.set(i, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${i}`), await _.sendRenderRequest(i, e.start, e.count, {
-========
-    e && (y.set(i, "busy"), C.set(i, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${i}`), await p.sendRenderRequest(i, e.start, e.count, {
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
       ...B,
       fileType: "obj"
     }));
   }, ce = async () => {
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
     const i = Array.from(E.keys()).sort((c, h) => c - h), { Muxer: e, ArrayBufferTarget: t } = await O(async () => {
-========
-    const i = Array.from(P.keys()).sort((c, h) => c - h), { Muxer: e, ArrayBufferTarget: t } = await z(async () => {
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
       const { Muxer: c, ArrayBufferTarget: h } = await import("./webm-muxer-MLtUgOCn.js");
       return {
         Muxer: c,
@@ -2173,11 +2113,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     });
     for (const c of i) {
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
       const h = E.get(c);
-========
-      const h = P.get(c);
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
       if (h) for (const u of h) n.addVideoChunk(new EncodedVideoChunk({
         type: u.type,
         timestamp: u.timestamp,
@@ -2194,13 +2130,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       type: "video/webm"
     }), o = URL.createObjectURL(s), l = document.createElement("a");
     l.href = o, l.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(l), l.click(), document.body.removeChild(l), URL.revokeObjectURL(o), a.setStatus("Finished!");
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-  }, j = async (i, e, t) => {
-    console.log(`[Worker] Starting Render: Frames ${i} - ${i + e}`), a.setStatus(`Remote Rendering: ${i}-${i + e}`), v = false;
-========
   }, V = async (i, e, t) => {
     console.log(`[Worker] Starting Render: Frames ${i} - ${i + e}`), a.setStatus(`Remote Rendering: ${i}-${i + e}`), m = false;
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
     const n = {
       ...t,
       startFrame: i,
@@ -2208,16 +2139,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     try {
       a.setRecordingState(true, `Remote: ${e} f`);
-      const r = await M.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
+      const r = await U.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
       console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await _.sendRenderResult(r, i), a.setRecordingState(false), a.setStatus("Idle");
     } catch (r) {
       console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
     } finally {
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-      v = true, requestAnimationFrame(I);
-========
       m = true, requestAnimationFrame(I);
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
     }
   }, de = async () => {
     if (!A) return;
@@ -2230,13 +2157,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     const e = C.get(i);
     e && (console.warn(`Worker ${i} failed job ${e.start}. Re-queueing.`), R.unshift(e), C.delete(i), a.setStatus(`Re-queued Job ${e.start}`));
   };
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
   _.onWorkerReady = (i) => {
-    console.log(`Worker ${i} is READY`), a.setStatus(`Worker ${i} Ready!`), y.set(i, "idle"), x === "host" && R.length > 0 && V(i);
-========
-  p.onWorkerReady = (i) => {
     console.log(`Worker ${i} is READY`), a.setStatus(`Worker ${i} Ready!`), y.set(i, "idle"), x === "host" && R.length > 0 && j(i);
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
   };
   _.onWorkerJoined = (i) => {
     a.setStatus(`Worker Joined: ${i}`), y.set(i, "idle"), x === "host" && R.length > 0 && q(i);
@@ -2252,46 +2174,28 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     await V(i, e, t);
   };
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
   _.onRenderResult = async (i, e, t) => {
-    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), E.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), y.set(t, "idle"), C.delete(t), await V(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
+    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), E.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), y.set(t, "idle"), C.delete(t), await j(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
   };
   _.onSceneReceived = async (i, e) => {
-    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await U(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await _.sendWorkerReady(), de();
-========
-  p.onRenderResult = async (i, e, t) => {
-    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), P.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${M} jobs`), y.set(t, "idle"), C.delete(t), await j(t), D >= M && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
-  };
-  p.onSceneReceived = async (i, e) => {
-    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await U(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await p.sendWorkerReady(), de();
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
+    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await M(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await _.sendWorkerReady(), de();
   };
   const ue = () => {
     a.onRenderStart = () => {
-      v = true;
+      m = true;
     }, a.onRenderStop = () => {
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-      v = false;
-    }, a.onSceneSelect = (i) => U(i, false), a.onResolutionChange = H, a.onRecompile = (i, e) => {
-      v = false, f.buildPipeline(i, e), f.recreateBindGroup(), f.resetAccumulation(), S = 0, v = true;
-========
       m = false;
-    }, a.onSceneSelect = (i) => U(i, false), a.onResolutionChange = F, a.onRecompile = (i, e) => {
+    }, a.onSceneSelect = (i) => M(i, false), a.onResolutionChange = $, a.onRecompile = (i, e) => {
       m = false, f.buildPipeline(i, e), f.recreateBindGroup(), f.resetAccumulation(), S = 0, m = true;
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
     }, a.onFileSelect = async (i) => {
       var _a;
-      ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), k = "obj") : (w = await i.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", U("viewer", false);
+      ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), k = "obj") : (w = await i.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", M("viewer", false);
     }, a.onAnimSelect = (i) => d.setAnimation(i), a.onRecordStart = async () => {
-      if (!M.recording) if (x === "host") {
+      if (!U.recording) if (x === "host") {
         const i = _.getWorkerIds();
         if (B = a.getRenderConfig(), L = Math.ceil(B.fps * B.duration), !confirm(`Distribute recording? (Workers: ${i.length})
 Auto Scene Sync enabled.`)) return;
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
         R = [], E.clear(), D = 0, C.clear();
-========
-        R = [], P.clear(), D = 0, C.clear();
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
         for (let e = 0; e < L; e += G) {
           const t = Math.min(G, L - e);
           R.push({
@@ -2299,24 +2203,20 @@ Auto Scene Sync enabled.`)) return;
             count: t
           });
         }
-        M = R.length, i.forEach((e) => y.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${M} jobs (Waiting for workers...)`), i.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await q()) : console.log("No workers yet. Waiting...");
+        P = R.length, i.forEach((e) => y.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${P} jobs (Waiting for workers...)`), i.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await q()) : console.log("No workers yet. Waiting...");
       } else {
-        v = false, a.setRecordingState(true);
+        m = false, a.setRecordingState(true);
         const i = a.getRenderConfig();
         try {
           const e = performance.now();
-          await M.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
+          await U.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
             const n = document.createElement("a");
             n.href = t, n.download = `raytrace_${Date.now()}.webm`, n.click(), URL.revokeObjectURL(t);
           }), console.log(`Recording took ${performance.now() - e}[ms]`);
         } catch {
           alert("Recording failed.");
         } finally {
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-          a.setRecordingState(false), v = true, a.updateRenderButton(true), requestAnimationFrame(I);
-========
           a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(I);
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
         }
       }
     }, a.onConnectHost = () => {
@@ -2332,11 +2232,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + i);
       return;
     }
-<<<<<<<< HEAD:docs/assets/index-COTdeLr3.js
-    ue(), oe(), H(), U("cornell", false), requestAnimationFrame(I);
-========
-    ue(), oe(), F(), U("cornell", false), requestAnimationFrame(I);
->>>>>>>> de51689 (fix :TAA):docs/assets/index-DYtrnWqt.js
+    ue(), oe(), $(), M("cornell", false), requestAnimationFrame(I);
   }
   he().catch(console.error);
 })();
