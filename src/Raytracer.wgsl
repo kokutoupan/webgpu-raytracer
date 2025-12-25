@@ -728,7 +728,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         // Specular (鏡) や Metallic (金属) は除外
         let use_restir = (mat_type == 0u) || (!is_metallic && !is_specular && mat_type != 2u);
 
-        if depth == 0u && use_restir {
+        if specular_bounce && use_restir {
             var state: GIReservoir;
             // 初期化
             state.w_sum = 0.0;
@@ -877,7 +877,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             let bsdf_val = eval_diffuse(albedo); // Diffuse BSDF = albedo / PI
             let cos_theta = max(dot(normal, state.sample_dir), 0.0);
 
-            radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W * state.M; // ※ State.Wの定義によっては * M が不要な場合もあるが標準RISならWに含む
+            // [修正] radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W * state.M; 
+            // Standard ReSTIR estimator: Lo = Li * BSDF * cos * W. 
+            // Our W already includes normalization (w_sum / (M * p_hat)).
+            radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W;
 
             // ReSTIRで決まったのでループ終了 (GI計算済み)
             break;
@@ -950,9 +953,6 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
     let p_idx = id.y * scene.width + id.x;
-    gi_reservoir[p_idx].w_sum = 0.0;
-    gi_reservoir[p_idx].M = 0.0;
-    gi_reservoir[p_idx].W = 0.0;
 
     var col = vec3(0.);
     for (var i = 0u; i < SPP; i++) {
