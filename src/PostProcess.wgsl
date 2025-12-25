@@ -82,6 +82,12 @@ fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
+// ★ bilinear と uv - scene.jitter をやめて、単純な整数座標アクセスに戻す
+fn get_radiance_nearest(coord: vec2<i32>) -> vec3<f32> {
+    // 画面外チェックなどは get_radiance_clean に任せるかここでやる
+    return get_radiance_clean(coord);
+}
+
 fn luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
@@ -94,7 +100,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let uv = (vec2<f32>(id.xy) + 0.5) / dims;
 
     // 1. Un-jittered Current Frame Radiance (Now cleaned internally)
-    let center_color = get_radiance_bilinear(uv - scene.jitter);
+    let center_color = get_radiance_nearest(vec2<i32>(id.xy));
 
     // 2. Bilateral Filter
     let SIGMA_S = 0.5;
@@ -105,8 +111,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var total_weight = 0.0;
     for (var dy = -RADIUS; dy <= RADIUS; dy++) {
         for (var dx = -RADIUS; dx <= RADIUS; dx++) {
-            let samp_uv = uv + vec2<f32>(f32(dx), f32(dy)) / dims - scene.jitter;
-            let neighbor_color = get_radiance_bilinear(samp_uv);
+            let neighbor_pos = vec2<i32>(id.xy) + vec2<i32>(dx, dy);
+            let neighbor_color = get_radiance_clean(neighbor_pos);
 
             let w_s = exp(-f32(dx * dx + dy * dy) / (2.0 * SIGMA_S * SIGMA_S));
             let color_diff = neighbor_color - center_color;
@@ -126,8 +132,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var m2 = vec3(0.0);
     for (var dy = -1; dy <= 1; dy++) {
         for (var dx = -1; dx <= 1; dx++) {
-            let nb_uv = uv + vec2<f32>(f32(dx), f32(dy)) / dims - scene.jitter;
-            let c = get_radiance_bilinear(nb_uv);
+            let neighbor_pos = vec2<i32>(id.xy) + vec2<i32>(dx, dy);
+            let c = get_radiance_clean(neighbor_pos);
             m1 += c;
             m2 += c * c;
         }
