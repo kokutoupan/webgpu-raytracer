@@ -23,6 +23,7 @@ pub fn build_blas_and_vertices(
         let (use_positions, use_normals) = if geom.base_positions.is_empty() {
             // 頂点がない場合スキップ
             blas_root_offsets.push(0);
+            emissive_lists.push(Vec::new()); // Fix: Maintain index alignment
             continue;
         } else {
             (&geom.base_positions, &geom.base_normals)

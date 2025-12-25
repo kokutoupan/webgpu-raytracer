@@ -35,7 +35,7 @@ struct SceneUniforms {
 
 fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
     let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
+    return clamp((color * (a * color + vec3<f32>(b))) / (color * (c * color + vec3<f32>(d)) + vec3<f32>(e)), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 fn get_radiance(coord: vec2<i32>) -> vec3<f32> {
@@ -64,15 +64,15 @@ fn get_radiance_clean(coord: vec2<i32>) -> vec3<f32> {
     
     // Firefly suppression: clamp center to neighborhood range with some headroom
     let threshold = 3.0;
-    return clamp(center, vec3(0.0), max_nb * threshold + 0.1);
+    return clamp(center, vec3<f32>(0.0), max_nb * threshold + vec3<f32>(0.1));
 }
 
 // Bilinear sampling for un-jittering
 fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
-    let f_coord = uv * dims - 0.5;
-    let i_coord = vec2<i32>(floor(f_coord));
-    let f = f_coord - vec2<f32>(i_coord);
+    let f_coord = uv * dims - vec2<f32>(0.5);
+    let i_coord = vec2<i32>(i32(floor(f_coord.x)), i32(floor(f_coord.y)));
+    let f = f_coord - vec2<f32>(floor(f_coord.x), floor(f_coord.y));
 
     let c00 = get_radiance_clean(i_coord + vec2<i32>(0, 0));
     let c10 = get_radiance_clean(i_coord + vec2<i32>(1, 0));
@@ -82,10 +82,19 @@ fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
-// ★ bilinear と uv - scene.jitter をやめて、単純な整数座標アクセスに戻す
+// ★ Enhanced un-jittering: only fully active when frame_count is low.
+// As accumulation progresses, the buffer naturally centers itself.
 fn get_radiance_nearest(coord: vec2<i32>) -> vec3<f32> {
-    // 画面外チェックなどは get_radiance_clean に任せるかここでやる
-    return get_radiance_clean(coord);
+    if scene.frame_count > 16u {
+        return get_radiance_clean(coord);
+    }
+
+    let dims = vec2<f32>(f32(scene.width), f32(scene.height));
+    let uv = (vec2<f32>(f32(coord.x), f32(coord.y)) + vec2<f32>(0.5)) / dims;
+    
+    // Fade out un-jittering as accumulation averages out the jitter
+    let weight = clamp(1.0 - f32(scene.frame_count - 1u) / 15.0, 0.0, 1.0);
+    return get_radiance_bilinear(uv - scene.jitter * weight);
 }
 
 fn luminance(c: vec3<f32>) -> f32 {
@@ -97,10 +106,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
 
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
-    let uv = (vec2<f32>(id.xy) + 0.5) / dims;
+    let uv = (vec2<f32>(f32(id.x), f32(id.y)) + vec2<f32>(0.5)) / dims;
 
     // 1. Un-jittered Current Frame Radiance (Now cleaned internally)
-    let center_color = get_radiance_nearest(vec2<i32>(id.xy));
+    let center_color = get_radiance_nearest(vec2<i32>(i32(id.x), i32(id.y)));
 
     // 2. Bilateral Filter
     let SIGMA_S = 0.5;
@@ -111,8 +120,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var total_weight = 0.0;
     for (var dy = -RADIUS; dy <= RADIUS; dy++) {
         for (var dx = -RADIUS; dx <= RADIUS; dx++) {
-            let neighbor_pos = vec2<i32>(id.xy) + vec2<i32>(dx, dy);
-            let neighbor_color = get_radiance_clean(neighbor_pos);
+            let neighbor_pos = vec2<i32>(i32(id.x), i32(id.y)) + vec2<i32>(dx, dy);
+            let neighbor_color = get_radiance_nearest(neighbor_pos);
 
             let w_s = exp(-f32(dx * dx + dy * dy) / (2.0 * SIGMA_S * SIGMA_S));
             let color_diff = neighbor_color - center_color;
@@ -128,38 +137,41 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let samples_history = textureSampleLevel(historyTex, smp, uv, 0.0).rgb;
     
     // Neighborhood Clamping
-    var m1 = vec3(0.0);
-    var m2 = vec3(0.0);
+    var m1 = vec3<f32>(0.0);
+    var m2 = vec3<f32>(0.0);
     for (var dy = -1; dy <= 1; dy++) {
         for (var dx = -1; dx <= 1; dx++) {
-            let neighbor_pos = vec2<i32>(id.xy) + vec2<i32>(dx, dy);
-            let c = get_radiance_clean(neighbor_pos);
-            m1 += c;
-            m2 += c * c;
+            let neighbor_pos = vec2<i32>(i32(id.x), i32(id.y)) + vec2<i32>(dx, dy);
+            let neighbor_color = get_radiance_nearest(neighbor_pos);
+            m1 += neighbor_color;
+            m2 += neighbor_color * neighbor_color;
         }
     }
     let mean = m1 / 9.0;
-    let stddev = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
+    let stddev = sqrt(max(m2 / 9.0 - mean * mean, vec3<f32>(0.0)));
     
     // Adaptive clamping
-    var k = 1.5;
+    var k = 1.0; // Tighter clamping for better stability during animation
     if scene.frame_count > 16u { k = 60.0; } // Effectively disable clamping when static for full convergence
     let clamped_history = clamp(samples_history, mean - stddev * k, mean + stddev * k);
-
+ 
     // Adaptive alpha for progressive refinement
     var alpha = 1.0 / f32(scene.frame_count);
+    if scene.frame_count == 1u {
+        alpha = 0.1; // Enable TAA even on first frame after update to hide jitter
+    }
     alpha = max(alpha, 0.0001); // Even deeper convergence (10000 frames)
 
     let final_hdr = mix(clamped_history, denoised_hdr, alpha);
 
     // Store un-jittered result
-    textureStore(historyOutput, vec2<i32>(id.xy), vec4(final_hdr, 1.0));
+    textureStore(historyOutput, vec2<i32>(i32(id.x), i32(id.y)), vec4<f32>(final_hdr, 1.0));
 
     // 4. Output
     let mapped = aces_tone_mapping(final_hdr);
     let edge_detect = center_color - denoised_hdr;
     let sharpened = mapped + aces_tone_mapping(edge_detect) * 0.3;
 
-    let ldr_out = pow(clamp(sharpened, vec3(0.0), vec3(1.0)), vec3<f32>(1.0 / 2.2));
-    textureStore(outputTex, vec2<i32>(id.xy), vec4(ldr_out, 1.0));
+    let ldr_out = pow(clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
+    textureStore(outputTex, vec2<i32>(i32(id.x), i32(id.y)), vec4<f32>(ldr_out, 1.0));
 }

@@ -54,10 +54,8 @@ struct LightRef {
 }
 
 struct BVHNode {
-    min_b: vec3<f32>,
-    left_first: f32, // [TLAS] Child/Inst Idx, [BLAS] Child/Tri Idx
-    max_b: vec3<f32>,
-    tri_count: f32   // [TLAS] Leaf(1)/Int(0), [BLAS] Count
+    min_b: vec4<f32>, // w: left_first
+    max_b: vec4<f32>, // w: tri_count
 }
 
 struct Instance {
@@ -400,12 +398,10 @@ fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
 // =========================================================
 
 fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
-    let t0s = (min_b - origin) * inv_d;
-    let t1s = (max_b - origin) * inv_d;
-    let t_small = min(t0s, t1s);
-    let t_big = max(t0s, t1s);
-    let tmin = max(t_min, max(t_small.x, max(t_small.y, t_small.z)));
-    let tmax = min(t_max, min(t_big.x, min(t_big.y, t_big.z)));
+    let t1 = (min_b - origin) * inv_d;
+    let t2 = (max_b - origin) * inv_d;
+    let tmin = max(t_min, max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z)));
+    let tmax = min(t_max, min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z)));
     return select(1e30, tmin, tmin <= tmax);
 }
 
@@ -426,11 +422,11 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 24>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
     var idx = node_start_idx;
-    if intersect_aabb(nodes[idx].min_b, nodes[idx].max_b, r.origin, inv_d, t_min, closest_t) < 1e30 {
+    if intersect_aabb(nodes[idx].min_b.xyz, nodes[idx].max_b.xyz, r.origin, inv_d, t_min, closest_t) < 1e30 {
         stack[stackptr] = idx; stackptr++;
     }
 
@@ -438,10 +434,10 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
         stackptr--;
         idx = stack[stackptr];
         let node = nodes[idx];
-        let count = u32(node.tri_count);
+        let count = u32(node.max_b.w);
 
         if count > 0u {
-            let first = u32(node.left_first);
+            let first = u32(node.min_b.w);
             for (var i = 0u; i < count; i++) {
                 let tri_id = first + i;
                 let tri = topology[tri_id];
@@ -452,12 +448,12 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
                 if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
             }
         } else {
-            let l = u32(node.left_first) + node_start_idx;
+            let l = u32(node.min_b.w) + node_start_idx;
             let r_idx = l + 1u;
             let nl = nodes[l];
             let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b, nl.max_b, r.origin, inv_d, t_min, closest_t);
-            let dr = intersect_aabb(nr.min_b, nr.max_b, r.origin, inv_d, t_min, closest_t);
+            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, closest_t);
 
             if dl < 1e30 && dr < 1e30 {
                 if dl < dr { stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_idx; stackptr++; }
@@ -472,10 +468,10 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if scene.blas_base_idx == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 16>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b, nodes[0].max_b, r.origin, inv_d, t_min, res.t) < 1e30 {
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < 1e30 {
         stack[stackptr] = 0u; stackptr++;
     }
 
@@ -484,8 +480,8 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
         let idx = stack[stackptr];
         let node = nodes[idx];
 
-        if node.tri_count > 0.5 { // Leaf
-            let inst_idx = u32(node.left_first);
+        if node.max_b.w > 0.5 { // Leaf
+            let inst_idx = u32(node.min_b.w);
             let inst = instances[inst_idx];
             let inv = get_inv_transform(inst);
             let r_local = Ray((inv * vec4(r.origin, 1.0)).xyz, (inv * vec4(r.direction, 0.0)).xyz);
@@ -495,12 +491,12 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
                 res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx);
             }
         } else {
-            let l = u32(node.left_first);
+            let l = u32(node.min_b.w);
             let r_idx = l + 1u;
             let nl = nodes[l];
             let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b, nl.max_b, r.origin, inv_d, t_min, res.t);
-            let dr = intersect_aabb(nr.min_b, nr.max_b, r.origin, inv_d, t_min, res.t);
+            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, res.t);
+            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, res.t);
             if dl < 1e30 && dr < 1e30 {
                 if dl < dr { stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_idx; stackptr++; }
             } else if dl < 1e30 { stack[stackptr] = l; stackptr++; } else if dr < 1e30 { stack[stackptr] = r_idx; stackptr++; }
@@ -702,5 +698,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
     }
     col /= f32(SPP);
-    accumulateBuffer[p_idx] = vec4(col, 1.0);
+    
+    // Proper accumulation
+    var acc_val = vec4<f32>(col, 1.0);
+    if scene.frame_count > 1u {
+        acc_val = accumulateBuffer[p_idx] + vec4<f32>(col, 1.0);
+    }
+    accumulateBuffer[p_idx] = acc_val;
 }
