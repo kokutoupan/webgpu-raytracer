@@ -151,7 +151,7 @@ struct LightCandidate {
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
 
-@group(0) @binding(10) var<storage, read_write> reservoir: array<ReservoirData>;
+@group(0) @binding(10) var<storage, read_write> reservoirs: array<ReservoirData>;
 
 // =========================================================
 //   Buffer Accessors
@@ -462,10 +462,14 @@ fn evaluate_p_hat(hit_p: vec3<f32>, normal: vec3<f32>, light: LightCandidate) ->
 // hit_p: レイが当たった場所
 // normal: レイが当たった場所の法線
 fn sample_lights_restir_reuse(hit_p: vec3<f32>, normal: vec3<f32>, p_idx: u32, rng: ptr<function, u32>) -> LightSample {
-    
+    let stride = scene.width * scene.height;
     // --- Phase 1: 初期候補 (RIS) ---
     // 前回のコードと同じ（32回ループして1個選ぶ）
     // 結果を `state` (Reservoir型) に保持
+    let frame_mod = scene.frame_count % 2u;
+
+    let read_offset = frame_mod * stride;           // 0 or stride
+    let write_offset = (1u - frame_mod) * stride;
 
     var state: Reservoir;
     state.w_sum = 0.0; state.M = 0.0; state.W = 0.0;
@@ -502,7 +506,8 @@ fn sample_lights_restir_reuse(hit_p: vec3<f32>, normal: vec3<f32>, p_idx: u32, r
     // --- Phase 2: 時間的再利用 (Temporal Reuse) ---
     // バッファから前回の自分を読み込む
 
-    let prev_data = reservoir[p_idx];
+    let prev_idx = read_offset + p_idx;
+    let prev_data = reservoirs[prev_idx];
     
     // 前回のデータが有効かチェック（カメラが動いていない前提ならそのまま使える）
     // ※厳密にはここでリプロジェクションや、法線・深度の類似度チェックが必要
@@ -543,7 +548,7 @@ fn sample_lights_restir_reuse(hit_p: vec3<f32>, normal: vec3<f32>, p_idx: u32, r
         if nx < 0 || nx >= i32(scene.width) || ny < 0 || ny >= i32(scene.height) { continue; }
 
         let n_idx = u32(ny * i32(scene.width) + nx);
-        let neighbor_data = reservoir[n_idx];
+        let neighbor_data = reservoirs[read_offset + n_idx];
 
         var n_res: Reservoir;
         n_res.light_idx = neighbor_data.light_idx;
@@ -586,7 +591,8 @@ fn sample_lights_restir_reuse(hit_p: vec3<f32>, normal: vec3<f32>, p_idx: u32, r
     store_data.light_idx = state.light_idx;
     store_data.r_u = state.r_u;
     store_data.r_v = state.r_v;
-    reservoir[p_idx] = store_data;
+    let out_idx = write_offset + p_idx;
+    reservoirs[out_idx] = store_data;
 
     // --- Phase 5: シャドウレイ用のサンプル返却 ---
     

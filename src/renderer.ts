@@ -185,8 +185,8 @@ export class WebGPURenderer {
     }
 
     // 画面解像度分のリザーバを用意
-    // 構造体サイズに合わせて調整 (今回は余裕を見て 32 bytes * pixel数)
-    const reservoirSize = width * height * 32;
+    // 構造体サイズに合わせて調整 (今回は余裕を見て 32 bytes * pixel数 * 2)
+    const reservoirSize = width * height * 32 * 2;
     if (this.reservoirBuffer) this.reservoirBuffer.destroy();
     this.reservoirBuffer = this.device.createBuffer({
       label: "ReservoirBuffer",
@@ -206,7 +206,7 @@ export class WebGPURenderer {
     this.device.queue.writeBuffer(
       this.reservoirBuffer,
       0,
-      new Float32Array((this.canvas.width * this.canvas.height * 32) / 4) // サイズ注意
+      new Float32Array((this.canvas.width * this.canvas.height * 32 * 2) / 4) // サイズ注意
     );
   }
 
