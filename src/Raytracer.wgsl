@@ -366,7 +366,9 @@ fn sample_ggx(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>, rng: pt
     let pdf = (d * n_dot_h) / (4.0 * v_dot_h);
     let throughput = bsdf_to_throughput(d, g, f, n_dot_v, n_dot_l, n_dot_h, v_dot_h, pdf);
 
-    return ScatterResult(l, pdf, throughput, false);
+    let treat_as_specular = roughness < 0.4;
+
+    return ScatterResult(l, pdf, throughput, treat_as_specular);
 }
 
 fn bsdf_to_throughput(d: f32, g: f32, f: vec3<f32>, n_dot_v: f32, n_dot_l: f32, n_dot_h: f32, v_dot_h: f32, pdf: f32) -> vec3<f32> {
@@ -862,6 +864,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
                 state.W = state.w_sum / (state.M * p_hat_final);
             } else {
                 state.W = 0.0;
+            }
+
+            if state.W > 20.0 {
+                state.W = 20.0;
             }
 
             // 4. Store Reservoir (次フレームのために保存)
