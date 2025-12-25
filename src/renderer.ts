@@ -50,6 +50,7 @@ export class WebGPURenderer {
   historyIndex = 0;
   prevCameraData: Float32Array = new Float32Array(24);
   jitter = { x: 0, y: 0 };
+  prevJitter = { x: 0, y: 0 };
 
   // Reuse to avoid allocation
   private uniformMixedData = new Uint32Array(12);
@@ -549,6 +550,11 @@ export class WebGPURenderer {
 
     const jitterX = getHalton((this.totalFrames % 16) + 1, 2) - 0.5;
     const jitterY = getHalton((this.totalFrames % 16) + 1, 3) - 0.5;
+
+    // Store current as previous
+    this.prevJitter.x = this.jitter.x;
+    this.prevJitter.y = this.jitter.y;
+
     this.jitter = {
       x: jitterX / this.canvas.width,
       y: jitterY / this.canvas.height,
@@ -567,6 +573,8 @@ export class WebGPURenderer {
     const floatView = new Float32Array(this.uniformMixedData.buffer);
     floatView[8] = this.jitter.x;
     floatView[9] = this.jitter.y;
+    floatView[10] = this.prevJitter.x;
+    floatView[11] = this.prevJitter.y;
 
     this.device.queue.writeBuffer(
       this.sceneUniformBuffer,

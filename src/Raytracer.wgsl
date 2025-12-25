@@ -34,6 +34,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
+    prev_jitter: vec2<f32>
 }
 
 struct MeshTopology {
@@ -941,6 +942,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     col /= f32(SPP);
 
     var acc = vec4(0.);
-    if scene.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
-    accumulateBuffer[p_idx] = acc + vec4(col, 1.0);
+    accumulateBuffer[p_idx] = vec4(col, 1.0);
 }
