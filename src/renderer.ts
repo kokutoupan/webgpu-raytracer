@@ -33,6 +33,8 @@ export class WebGPURenderer {
   defaultTexture!: GPUTexture;
   sampler!: GPUSampler;
 
+  reservoirBuffer!: GPUBuffer;
+
   private bufferSize = 0;
   private canvas: HTMLCanvasElement;
 
@@ -181,14 +183,30 @@ export class WebGPURenderer {
       });
       this.historyTextureViews[i] = this.historyTextures[i].createView();
     }
+
+    // 画面解像度分のリザーバを用意
+    // 構造体サイズに合わせて調整 (今回は余裕を見て 32 bytes * pixel数)
+    const reservoirSize = width * height * 32;
+    if (this.reservoirBuffer) this.reservoirBuffer.destroy();
+    this.reservoirBuffer = this.device.createBuffer({
+      label: "ReservoirBuffer",
+      size: reservoirSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
   }
 
   resetAccumulation() {
-    if (!this.accumulateBuffer) return;
+    if (!this.accumulateBuffer || !this.reservoirBuffer) return;
     this.device.queue.writeBuffer(
       this.accumulateBuffer,
       0,
       new Float32Array(this.bufferSize / 4)
+    );
+
+    this.device.queue.writeBuffer(
+      this.reservoirBuffer,
+      0,
+      new Float32Array((this.canvas.width * this.canvas.height * 32) / 4) // サイズ注意
     );
   }
 
@@ -463,7 +481,8 @@ export class WebGPURenderer {
       !this.geometryBuffer ||
       !this.nodesBuffer ||
       !this.sceneUniformBuffer ||
-      !this.lightsBuffer
+      !this.lightsBuffer ||
+      !this.reservoirBuffer
     )
       return;
 
@@ -482,6 +501,7 @@ export class WebGPURenderer {
         },
         { binding: 8, resource: this.sampler },
         { binding: 9, resource: { buffer: this.lightsBuffer } },
+        { binding: 10, resource: { buffer: this.reservoirBuffer } },
       ],
     });
 

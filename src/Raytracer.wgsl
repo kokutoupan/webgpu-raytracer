@@ -105,6 +105,36 @@ struct ScatterResult {
     is_specular: bool
 }
 
+// ReSTIR用のリザーバ (候補を保持する箱)
+struct Reservoir {
+    w_sum: f32,      // 重みの合計
+    M: f32,          // 見てきた候補数
+    W: f32,          // 最終的なUnbiasedウェイト
+    light_idx: u32,  // 勝ち残ったライトのID
+    // 選ばれたライト上のサンプリング位置を再現するための乱数
+    r_u: f32,
+    r_v: f32
+}
+
+struct ReservoirData {
+    w_sum: f32,
+    M: f32,     // 候補数 (u32でもいいが計算上f32が楽)
+    W: f32,     // Unbiased Weight
+    light_idx: u32,
+    r_u: f32,   // サンプリング乱数復元用
+    r_v: f32,
+    pad1: f32,  // アライメント用
+    pad2: f32
+}
+
+// 簡易的なライト情報の入れ物（シャドウレイ前）
+struct LightCandidate {
+    L: vec3<f32>,       // 発光強度
+    pos: vec3<f32>,     // ライト上の点の位置
+    normal: vec3<f32>,  // ライト上の点の法線
+    pdf: f32            // 選ばれる確率
+}
+
 // =========================================================
 //   Bindings
 // =========================================================
@@ -120,6 +150,8 @@ struct ScatterResult {
 
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
+
+@group(0) @binding(10) var<storage, read_write> reservoir: array<ReservoirData>;
 
 // =========================================================
 //   Buffer Accessors
@@ -310,60 +342,283 @@ fn sample_dielectric(dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f
 //   Direct Light Sampling
 // =========================================================
 
-fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample {
-    let light_count = scene.light_count;
-    if light_count == 0u {
-        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+
+// 既存のリザーバ(target)に、別のリザーバ(src)をマージする
+fn merge_reservoir(
+    target_reservoir: ptr<function, Reservoir>,
+    src: Reservoir,
+    p_hat_src: f32, // srcの勝者ライトの評価値
+    rng: ptr<function, u32>
+) -> bool {
+    // マージ時の重み: src.W * src.M * p_hat
+    // 直感的には「srcが持っている情報の信頼度」
+    
+    // Mの上限キャップ（重要！）
+    // これがないとMが無限に増えて、新しい情報が入りにくくなる（Temporal Lagの原因）
+    let M_clamped = min(src.M, 20.0);
+
+    let weight = p_hat_src * src.W * M_clamped;
+
+    (*target_reservoir).w_sum += weight;
+    (*target_reservoir).M += M_clamped;
+
+    if rand_pcg(rng) * (*target_reservoir).w_sum < weight {
+        (*target_reservoir).light_idx = src.light_idx;
+        (*target_reservoir).r_u = src.r_u;
+        (*target_reservoir).r_v = src.r_v;
+        return true;
     }
+    return false;
+}
 
-    let light_pick_idx = u32(rand_pcg(rng) * f32(light_count));
-    let l_ref = lights[light_pick_idx];
+// リザーバを更新する関数
+// light_idx: 候補のライトID
+// weight: その候補の重み (p_hat / source_pdf)
+// c: 候補の個数 (通常は1.0)
+fn update_reservoir(res: ptr<function, Reservoir>, light_idx: u32, r_u: f32, r_v: f32, weight: f32, c: f32, rng: ptr<function, u32>) -> bool {
+    (*res).w_sum += weight;
+    (*res).M += c;
 
+    // 確率的に入れ替える (重いほど選ばれやすい)
+    if rand_pcg(rng) * (*res).w_sum < weight {
+        (*res).light_idx = light_idx;
+        (*res).r_u = r_u;
+        (*res).r_v = r_v;
+        return true;
+    }
+    return false;
+}
+
+
+// 指定したライトIDと乱数(r_u, r_v)を使って、ライト上の点と明るさを計算する
+// ※ここでは「可視性(壁の裏かどうか)」はチェックしません！
+fn evaluate_light_sample(light_idx: u32, r_u: f32, r_v: f32) -> LightCandidate {
+    let l_ref = lights[light_idx];
     let tri = topology[l_ref.tri_idx];
     let inst = instances[l_ref.inst_idx];
     let m = get_transform(inst);
 
+    // 頂点座標
     let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
     let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
     let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
 
-    let r1 = rand_pcg(rng);
-    let r2 = rand_pcg(rng);
-    let sqrt_r1 = sqrt(r1);
+    // 重心座標計算 (r_u, r_v から u, v, w を作る)
+    let sqrt_r1 = sqrt(r_u);
     let u = 1.0 - sqrt_r1;
-    let v = r2 * sqrt_r1;
+    let v = r_v * sqrt_r1;
     let w = 1.0 - u - v;
 
     let p = v0 * u + v1 * v + v2 * w;
+    
+    // 法線と面積
     let edge1 = v1 - v0;
     let edge2 = v2 - v0;
-    let n_raw = normalize(cross(edge1, edge2));
-    let area = length(cross(edge1, edge2)) * 0.5;
+    let cross_e = cross(edge1, edge2);
+    let area = length(cross_e) * 0.5;
+    let n = normalize(cross_e);
 
-    let l_dir = p - hit_p;
-    let dist_sq = dot(l_dir, l_dir);
-    let dist = sqrt(dist_sq);
-    let unit_l = l_dir / dist;
+    // 発光色取得 (テクスチャ対応)
+    let mat_type = bitcast<u32>(tri.data0.w);
+    var albedo = tri.data0.rgb;
+    var emissive = tri.data3.rgb;
 
-    let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
-    if cos_theta_l < 1e-6 {
-        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
-    }
+    // マテリアルタイプに応じて発光色を決定
+    // mat_type 3u (Light) なら Albedo を、それ以外なら Emissive を使う
+    var L = select(emissive, albedo, mat_type == 3u);
 
-    // Albedo if light
-    let uv0 = get_uv(tri.v0);
-    let uv1 = get_uv(tri.v1);
-    let uv2 = get_uv(tri.v2);
-    let tex_uv = uv0 * u + uv1 * v + uv2 * w;
-    var L = tri.data0.rgb;
     let base_tex = tri.data2.x;
     if base_tex > -0.5 {
+        let uv0 = get_uv(tri.v0);
+        let uv1 = get_uv(tri.v1);
+        let uv2 = get_uv(tri.v2);
+        let tex_uv = uv0 * u + uv1 * v + uv2 * w;
         L *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
     }
+    
+    // PDF = 1 / (Area * TotalLights)
+    // 面積によるPDF。ライト選択確率(1/N)も含める
+    let pdf = 1.0 / (area * f32(scene.light_count));
 
-    let pdf = (dist_sq / (cos_theta_l * area)) / f32(light_count);
+    return LightCandidate(L, p, n, pdf);
+}
 
-    return LightSample(L, unit_l, dist, pdf);
+fn evaluate_p_hat(hit_p: vec3<f32>, normal: vec3<f32>, light: LightCandidate) -> f32 {
+    let l_vec = light.pos - hit_p;
+    let dist_sq = dot(l_vec, l_vec);
+    let dist = sqrt(dist_sq);
+    let dir = l_vec / dist;
+
+    let cos_light = max(dot(light.normal, -dir), 0.0);
+    let cos_surf = max(dot(normal, dir), 0.0);
+    
+    // 輝度
+    let intensity = dot(light.L, vec3(0.299, 0.587, 0.114));
+
+    return (intensity * cos_light * cos_surf) / max(dist_sq, 1e-4);
+}
+
+// RIS (Resampled Importance Sampling) を使ったライトサンプリング
+// hit_p: レイが当たった場所
+// normal: レイが当たった場所の法線
+fn sample_lights_restir_reuse(hit_p: vec3<f32>, normal: vec3<f32>, p_idx: u32, rng: ptr<function, u32>) -> LightSample {
+    
+    // --- Phase 1: 初期候補 (RIS) ---
+    // 前回のコードと同じ（32回ループして1個選ぶ）
+    // 結果を `state` (Reservoir型) に保持
+
+    var state: Reservoir;
+    state.w_sum = 0.0; state.M = 0.0; state.W = 0.0;
+
+    let CANDIDATE_COUNT = 4u; // 再利用するなら初期候補は減らしてもOK (32 -> 4)
+    for (var i = 0u; i < CANDIDATE_COUNT; i++) {
+        let light_idx = u32(rand_pcg(rng) * f32(scene.light_count));
+        let r_u = rand_pcg(rng);
+        let r_v = rand_pcg(rng);
+        let candidate = evaluate_light_sample(light_idx, r_u, r_v);
+
+        let p_hat = evaluate_p_hat(hit_p, normal, candidate);
+        let weight = p_hat / max(candidate.pdf, 1e-6);
+
+        update_reservoir(&state, light_idx, r_u, r_v, weight, 1.0, rng);
+    }
+    
+    // RISで選ばれた候補の p_hat を計算しておく（後で使う）
+    // ※最適化: update_reservoir内で保存しておくと速い
+    var p_hat_current = 0.0;
+        {
+        let winner = evaluate_light_sample(state.light_idx, state.r_u, state.r_v);
+        p_hat_current = evaluate_p_hat(hit_p, normal, winner);
+        
+        // RIS段階での W を仮計算
+        if p_hat_current > 0.0 {
+            state.W = state.w_sum / (state.M * p_hat_current);
+        } else {
+            state.W = 0.0;
+        }
+    }
+
+
+    // --- Phase 2: 時間的再利用 (Temporal Reuse) ---
+    // バッファから前回の自分を読み込む
+
+    let prev_data = reservoir[p_idx];
+    
+    // 前回のデータが有効かチェック（カメラが動いていない前提ならそのまま使える）
+    // ※厳密にはここでリプロジェクションや、法線・深度の類似度チェックが必要
+    // 今回は「なし」で突っ込む（多少の残像は許容）
+
+    var prev_res: Reservoir;
+    prev_res.light_idx = prev_data.light_idx;
+    prev_res.W = prev_data.W;
+    prev_res.M = prev_data.M;
+    prev_res.r_u = prev_data.r_u;
+    prev_res.r_v = prev_data.r_v;
+    
+    // 前回の勝者が、今の自分にとってどれくらい嬉しいか (p_hat) を再評価
+    let prev_winner = evaluate_light_sample(prev_res.light_idx, prev_res.r_u, prev_res.r_v);
+    let p_hat_prev = evaluate_p_hat(hit_p, normal, prev_winner);
+    
+    // 影チェックはまだしない！p_hat > 0 ならマージする
+    if p_hat_prev > 0.0 {
+        merge_reservoir(&state, prev_res, p_hat_prev, rng);
+        // 勝者が入れ替わったかもしれないので p_hat_current を更新したいが、
+        // 厳密には最後に1回やればいい
+    }
+
+
+    // --- Phase 3: 空間的再利用 (Spatial Reuse) ---
+    // 隣のピクセルをランダムに選んでマージ
+
+    let SPATIAL_COUNT = 2u; // 2〜3近傍を見る
+    let RADIUS = 30.0; // 半径30ピクセルくらい広めに探す
+
+    for (var i = 0u; i < SPATIAL_COUNT; i++) {
+        // ランダムなオフセット
+        let offset = random_in_unit_disk(rng) * RADIUS;
+        let nx = i32(f32(scene.width) * 0.0 + f32(p_idx % scene.width) + offset.x); // 簡易計算
+        let ny = i32(f32(scene.height) * 0.0 + f32(p_idx / scene.width) + offset.y);
+        
+        // 画面外チェック
+        if nx < 0 || nx >= i32(scene.width) || ny < 0 || ny >= i32(scene.height) { continue; }
+
+        let n_idx = u32(ny * i32(scene.width) + nx);
+        let neighbor_data = reservoir[n_idx];
+
+        var n_res: Reservoir;
+        n_res.light_idx = neighbor_data.light_idx;
+        n_res.W = neighbor_data.W;
+        n_res.M = neighbor_data.M;
+        n_res.r_u = neighbor_data.r_u;
+        n_res.r_v = neighbor_data.r_v;
+        
+        // 幾何学的類似度チェック（法線が違いすぎるならマージしない）
+        // ※バッファに法線が入っていないので、今回はスキップして「全部混ぜる」
+        // （角で光が漏れる原因になるが、まずは動かす優先）
+
+        let n_winner = evaluate_light_sample(n_res.light_idx, n_res.r_u, n_res.r_v);
+        let p_hat_n = evaluate_p_hat(hit_p, normal, n_winner);
+
+        if p_hat_n > 0.0 {
+            merge_reservoir(&state, n_res, p_hat_n, rng);
+        }
+    }
+
+
+    // --- Phase 4: 最終決定と保存 ---
+    
+    // 最終的な勝者の p_hat
+    let final_winner = evaluate_light_sample(state.light_idx, state.r_u, state.r_v);
+    let p_hat_final = evaluate_p_hat(hit_p, normal, final_winner);
+    
+    // Unbiased Weight (W)
+    if p_hat_final > 0.0 {
+        state.W = state.w_sum / (state.M * p_hat_final);
+    } else {
+        state.W = 0.0;
+    }
+    
+    // バッファに保存（次フレーム用）
+    var store_data: ReservoirData;
+    store_data.w_sum = state.w_sum; // ※実は保存不要だがデバッグ用に
+    store_data.M = state.M;
+    store_data.W = state.W;
+    store_data.light_idx = state.light_idx;
+    store_data.r_u = state.r_u;
+    store_data.r_v = state.r_v;
+    reservoir[p_idx] = store_data;
+
+    // --- Phase 5: シャドウレイ用のサンプル返却 ---
+    
+    // ここで初めて「可視性（Shadow）」をチェックされることになる
+    // 返り値はLightSample型
+    var sample_out: LightSample;
+    sample_out.L = final_winner.L;
+    let l_vec_final = final_winner.pos - hit_p;
+    let dist_sq_final = dot(l_vec_final, l_vec_final);
+    let dist_final = sqrt(dist_sq_final);
+    
+    // ゼロ除算対策
+    if dist_final > 1e-6 {
+        sample_out.dir = l_vec_final / dist_final;
+        sample_out.dist = dist_final;
+    } else {
+        sample_out.dir = vec3(0.0, 1.0, 0.0); // ダミー
+        sample_out.dist = 0.0;
+    }
+    
+    // PDFトリック:
+    // 従来の ray_color は (L / pdf) で計算している。
+    // ReSTIRは (L * W) で計算したい。
+    // つまり pdf = 1.0 / W と偽れば、既存コードを変えずに済む。
+
+    if state.W > 0.0 {
+        sample_out.pdf = 1.0 / state.W;
+    } else {
+        sample_out.pdf = 0.0;
+    }
+
+    return sample_out;
 }
 
 fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: vec3<f32>) -> f32 {
@@ -512,7 +767,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 //   Main Path Tracer Loop
 // =========================================================
 
-fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
+fn ray_color(r_in: Ray, p_idx: u32, rng: ptr<function, u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3(1.0);
     var radiance = vec3(0.0);
@@ -616,11 +871,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
         // --- Material Setup ---
         var f0 = mix(vec3(0.04), albedo, metallic);
-        var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1); 
+        var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.3); 
 
         // --- NEE ---
         if !is_specular && mat_type != 2u {
-            let light_s = sample_light_source(hit_p, rng);
+            let light_s = sample_lights_restir_reuse(hit_p, normal, p_idx, rng);
             if light_s.pdf > 0.0 {
                 let shadow_ray = Ray(hit_p + normal * 1e-4, light_s.dir);
                 let shadow_hit = intersect_tlas(shadow_ray, T_MIN, light_s.dist - 2e-4);
@@ -696,7 +951,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
+        col += ray_color(Ray(scene.camera.origin.xyz + off, d), p_idx, &rng);
     }
     col /= f32(SPP);
 
