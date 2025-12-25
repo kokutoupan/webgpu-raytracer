@@ -25,26 +25,26 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const X = "modulepreload", K = function(i) {
     return "/webgpu-raytracer/" + i;
-  }, H = {}, O = function(e, t, n) {
+  }, N = {}, O = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let h = function(u) {
-        return Promise.all(u.map((g) => Promise.resolve(g).then((b) => ({
+        return Promise.all(u.map((g) => Promise.resolve(g).then((y) => ({
           status: "fulfilled",
-          value: b
-        }), (b) => ({
+          value: y
+        }), (y) => ({
           status: "rejected",
-          reason: b
+          reason: y
         }))));
       };
       var o = h;
       document.getElementsByTagName("link");
       const l = document.querySelector("meta[property=csp-nonce]"), c = (l == null ? void 0 : l.nonce) || (l == null ? void 0 : l.getAttribute("nonce"));
       r = h(t.map((u) => {
-        if (u = K(u), u in H) return;
-        H[u] = true;
-        const g = u.endsWith(".css"), b = g ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${u}"]${b}`)) return;
+        if (u = K(u), u in N) return;
+        N[u] = true;
+        const g = u.endsWith(".css"), y = g ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${u}"]${y}`)) return;
         const v = document.createElement("link");
         if (v.rel = g ? "stylesheet" : X, g || (v.as = "script"), v.crossOrigin = "", v.href = u, c && v.setAttribute("nonce", c), document.head.appendChild(v), g) return new Promise((J, Y) => {
           v.addEventListener("load", J), v.addEventListener("error", () => Y(new Error(`Unable to preload CSS for ${u}`)));
@@ -68,6 +68,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
 const PI = 3.141592653589793;
 const T_MIN = 0.001;
 const T_MAX = 1e30;
+const SPATIAL_COUNT = 2u;      // \u4F55\u500B\u306E\u8FD1\u508D\u3092\u63A2\u3059\u304B (2\u301C5\u304F\u3089\u3044)
+const SPATIAL_RADIUS = 30.0;   // \u63A2\u7D22\u534A\u5F84 (\u30D4\u30AF\u30BB\u30EB\u5358\u4F4D)
 // These are replaced by TypeScript before compilation
 const MAX_DEPTH = 10u;
 const SPP = 1u;
@@ -117,10 +119,8 @@ struct LightRef {
 }
 
 struct BVHNode {
-    min_b: vec3<f32>,
-    left_first: f32, // [TLAS] Child/Inst Idx, [BLAS] Child/Tri Idx
-    max_b: vec3<f32>,
-    tri_count: f32   // [TLAS] Leaf(1)/Int(0), [BLAS] Count
+    min_b: vec4<f32>, // w: left_first
+    max_b: vec4<f32>, // w: tri_count
 }
 
 struct Instance {
@@ -170,6 +170,33 @@ struct ScatterResult {
 }
 
 // =========================================================
+//   ReSTIR GI Structures
+// =========================================================
+
+struct GIReservoir {
+    // [Slot 0] 16 bytes
+    sample_dir: vec3<f32>,       // 12 bytes
+    sample_dist: f32,            // 4 bytes
+
+    // [Slot 1] 16 bytes
+    sample_radiance: vec3<f32>,  // 12 bytes
+    w_sum: f32,                  // 4 bytes
+
+    // [Slot 2] 16 bytes
+    creation_pos: vec3<f32>,     // 12 bytes
+    M: f32,                      // 4 bytes
+
+    // [Slot 3] 16 bytes
+    creation_normal: vec3<f32>,  // 12 bytes
+    W: f32,                      // 4 bytes
+    // [Slot 4] 16 bytes (Alignment padding)
+    creation_mat_id: u32,        // 4 bytes
+    pad0: u32,                   // 12 bytes padding to align struct to 16 bytes
+    pad1: u32,
+    pad2: u32,
+}
+
+// =========================================================
 //   Bindings
 // =========================================================
 
@@ -184,6 +211,8 @@ struct ScatterResult {
 
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
+
+@group(0) @binding(10) var<storage, read_write> gi_reservoir: array<GIReservoir>;
 
 // =========================================================
 //   Buffer Accessors
@@ -256,6 +285,77 @@ fn build_onb(n: vec3<f32>) -> ONB {
 
 fn local_to_world(onb: ONB, a: vec3<f32>) -> vec3<f32> {
     return a.x * onb.u + a.y * onb.v + a.z * onb.w;
+}
+
+// =========================================================
+//   ReSTIR Helpers
+// =========================================================
+
+// \u73FE\u5728\u306E\u30D5\u30EC\u30FC\u30E0\u7528\u306E\u30A4\u30F3\u30C7\u30C3\u30AF\u30B9\u3068\u3001\u904E\u53BB\u30D5\u30EC\u30FC\u30E0\u7528\u306E\u30A4\u30F3\u30C7\u30C3\u30AF\u30B9\u3092\u8A08\u7B97\u3059\u308B
+fn get_reservoir_offsets(pixel_idx: u32) -> vec2<u32> {
+    let page_size = scene.width * scene.height;
+    
+    // frame_count \u304C\u5076\u6570\u306E\u3068\u304D: Curr=0\u9762, Prev=1\u9762
+    // frame_count \u304C\u5947\u6570\u306E\u3068\u304D: Curr=1\u9762, Prev=0\u9762
+    let current_page = (scene.frame_count % 2u) * page_size;
+    let prev_page = ((scene.frame_count + 1u) % 2u) * page_size;
+
+    return vec2(current_page + pixel_idx, prev_page + pixel_idx);
+}
+
+// \u30BF\u30FC\u30B2\u30C3\u30C8\u95A2\u6570 p_hat (\u8F1D\u5EA6\u30D9\u30FC\u30B9 + BSDF\u8FD1\u4F3C)
+fn evaluate_p_hat(radiance: vec3<f32>, albedo: vec3<f32>, cos_theta: f32) -> f32 {
+    // \u8F1D\u5EA6(Luminance)\u3092\u5B9F\u8CEA\u7684\u306A\u5BC4\u4E0E(radiance * albedo * cos)\u3067\u8A55\u4FA1
+    let contribution = radiance * albedo * cos_theta;
+    
+    // [Firefly\u5BFE\u7B56] \u975E\u5E38\u306B\u9AD8\u3044\u8F1D\u5EA6\u3092\u30AF\u30E9\u30F3\u30D7\u3057\u3066\u3001\u7279\u5B9A\u306E\u30B5\u30F3\u30D7\u30EB\u304C\u30EA\u30B6\u30FC\u30D0\u3092\u652F\u914D\u3057\u7D9A\u3051\u306A\u3044\u3088\u3046\u306B\u3059\u308B
+    let clamped_contribution = min(contribution, vec3(50.0));
+    return dot(clamped_contribution, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// \u30DE\u30FC\u30B8\u7528: \u53CD\u5C04\u7387\u3068\u4F59\u5F26\u3092\u8003\u616E\u3057\u305F\u91CD\u307F\u4ED8\u3051
+fn merge_reservoir_refined(
+    dest: ptr<function, GIReservoir>,
+    src: GIReservoir,
+    p_hat_dest: f32, // \u79FB\u52D5\u5148\u306E\u70B9\u3067\u306E\u91CD\u8981\u5EA6
+    albedo: vec3<f32>,
+    normal: vec3<f32>,
+    rng: ptr<function, u32>
+) -> bool {
+    let M = src.M;
+    let weight = p_hat_dest * src.W * M; // RIS weight
+
+    (*dest).w_sum += weight;
+    (*dest).M += M;
+
+    if rand_pcg(rng) < (weight / (*dest).w_sum) {
+        (*dest).sample_dir = src.sample_dir;
+        (*dest).sample_radiance = src.sample_radiance;
+        (*dest).sample_dist = src.sample_dist;
+        return true;
+    }
+    return false;
+}
+
+// \u4E92\u63DB\u6027\u306E\u305F\u3081\u306E\u65E2\u5B58\u306E\u30EA\u30B6\u30FC\u30D0\u66F4\u65B0 (RIS Update\u7528)
+fn update_reservoir(
+    res: ptr<function, GIReservoir>,
+    dir: vec3<f32>,
+    radiance: vec3<f32>,
+    dist: f32,
+    weight: f32,
+    rng: ptr<function, u32>
+) -> bool {
+    (*res).w_sum += weight;
+    (*res).M += 1.0;
+
+    if rand_pcg(rng) < (weight / (*res).w_sum) {
+        (*res).sample_dir = dir;
+        (*res).sample_radiance = radiance;
+        (*res).sample_dist = dist;
+        return true;
+    }
+    return false;
 }
 
 // =========================================================
@@ -334,7 +434,9 @@ fn sample_ggx(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>, rng: pt
     let pdf = (d * n_dot_h) / (4.0 * v_dot_h);
     let throughput = bsdf_to_throughput(d, g, f, n_dot_v, n_dot_l, n_dot_h, v_dot_h, pdf);
 
-    return ScatterResult(l, pdf, throughput, false);
+    let treat_as_specular = roughness < 0.4;
+
+    return ScatterResult(l, pdf, throughput, treat_as_specular);
 }
 
 fn bsdf_to_throughput(d: f32, g: f32, f: vec3<f32>, n_dot_v: f32, n_dot_l: f32, n_dot_h: f32, v_dot_h: f32, pdf: f32) -> vec3<f32> {
@@ -463,12 +565,10 @@ fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
 // =========================================================
 
 fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
-    let t0s = (min_b - origin) * inv_d;
-    let t1s = (max_b - origin) * inv_d;
-    let t_small = min(t0s, t1s);
-    let t_big = max(t0s, t1s);
-    let tmin = max(t_min, max(t_small.x, max(t_small.y, t_small.z)));
-    let tmax = min(t_max, min(t_big.x, min(t_big.y, t_big.z)));
+    let t1 = (min_b - origin) * inv_d;
+    let t2 = (max_b - origin) * inv_d;
+    let tmin = max(t_min, max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z)));
+    let tmax = min(t_max, min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z)));
     return select(1e30, tmin, tmin <= tmax);
 }
 
@@ -489,11 +589,11 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 24>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
     var idx = node_start_idx;
-    if intersect_aabb(nodes[idx].min_b, nodes[idx].max_b, r.origin, inv_d, t_min, closest_t) < 1e30 {
+    if intersect_aabb(nodes[idx].min_b.xyz, nodes[idx].max_b.xyz, r.origin, inv_d, t_min, closest_t) < 1e30 {
         stack[stackptr] = idx; stackptr++;
     }
 
@@ -501,10 +601,10 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
         stackptr--;
         idx = stack[stackptr];
         let node = nodes[idx];
-        let count = u32(node.tri_count);
+        let count = u32(node.max_b.w);
 
         if count > 0u {
-            let first = u32(node.left_first);
+            let first = u32(node.min_b.w);
             for (var i = 0u; i < count; i++) {
                 let tri_id = first + i;
                 let tri = topology[tri_id];
@@ -515,12 +615,12 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
                 if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
             }
         } else {
-            let l = u32(node.left_first) + node_start_idx;
+            let l = u32(node.min_b.w) + node_start_idx;
             let r_idx = l + 1u;
             let nl = nodes[l];
             let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b, nl.max_b, r.origin, inv_d, t_min, closest_t);
-            let dr = intersect_aabb(nr.min_b, nr.max_b, r.origin, inv_d, t_min, closest_t);
+            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, closest_t);
 
             if dl < 1e30 && dr < 1e30 {
                 if dl < dr { stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_idx; stackptr++; }
@@ -535,10 +635,10 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if scene.blas_base_idx == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 16>;
+    var stack: array<u32, 64>;
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b, nodes[0].max_b, r.origin, inv_d, t_min, res.t) < 1e30 {
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < 1e30 {
         stack[stackptr] = 0u; stackptr++;
     }
 
@@ -547,8 +647,8 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
         let idx = stack[stackptr];
         let node = nodes[idx];
 
-        if node.tri_count > 0.5 { // Leaf
-            let inst_idx = u32(node.left_first);
+        if node.max_b.w > 0.5 { // Leaf
+            let inst_idx = u32(node.min_b.w);
             let inst = instances[inst_idx];
             let inv = get_inv_transform(inst);
             let r_local = Ray((inv * vec4(r.origin, 1.0)).xyz, (inv * vec4(r.direction, 0.0)).xyz);
@@ -558,12 +658,12 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
                 res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx);
             }
         } else {
-            let l = u32(node.left_first);
+            let l = u32(node.min_b.w);
             let r_idx = l + 1u;
             let nl = nodes[l];
             let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b, nl.max_b, r.origin, inv_d, t_min, res.t);
-            let dr = intersect_aabb(nr.min_b, nr.max_b, r.origin, inv_d, t_min, res.t);
+            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, res.t);
+            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, res.t);
             if dl < 1e30 && dr < 1e30 {
                 if dl < dr { stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_idx; stackptr++; }
             } else if dl < 1e30 { stack[stackptr] = l; stackptr++; } else if dr < 1e30 { stack[stackptr] = r_idx; stackptr++; }
@@ -576,10 +676,16 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 //   Main Path Tracer Loop
 // =========================================================
 
-fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
+fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3(1.0);
     var radiance = vec3(0.0);
+
+    // ReSTIR\u7528\u306E\u30D0\u30C3\u30D5\u30A1\u30AA\u30D5\u30BB\u30C3\u30C8\u8A08\u7B97
+    let pixel_idx = coord.y * scene.width + coord.x;
+    let offsets = get_reservoir_offsets(pixel_idx);
+    let curr_res_idx = offsets.x;
+    let prev_res_idx = offsets.y;
 
     var prev_bsdf_pdf = 0.0;
     var specular_bounce = true;
@@ -682,6 +788,235 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         var f0 = mix(vec3(0.04), albedo, metallic);
         var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1); 
 
+        // ----------------------------------------------------------------
+        // \u2605 ReSTIR GI Logic (Depth == 0 and Diffuse-like)
+        // ----------------------------------------------------------------
+        // \u4FEE\u6B63: \u91D1\u5C5E\uFF08Metallic\u304C\u9AD8\u3044\u3082\u306E\uFF09\u306F ReSTIR GI (Diffuse) \u306E\u5BFE\u8C61\u5916\u306B\u3059\u308B
+        let is_metallic = (mat_type == 1u) && (metallic > 0.1);
+        
+        // \u300C\u62E1\u6563\u53CD\u5C04\u6210\u5206\u304C\u652F\u914D\u7684\u306A\u3082\u306E\u300D\u3060\u3051\u3092\u5BFE\u8C61\u306B\u3059\u308B
+        // Specular (\u93E1) \u3084 Metallic (\u91D1\u5C5E) \u306F\u9664\u5916
+        let use_restir = (mat_type == 0u) || (!is_metallic && !is_specular && mat_type != 2u);
+
+        if specular_bounce && use_restir {
+            var state: GIReservoir;
+            // \u521D\u671F\u5316
+            state.w_sum = 0.0;
+            state.M = 0.0;
+            state.W = 0.0;
+            
+            // 1. Initial Candidate Generation (\u521D\u671F\u5019\u88DC)
+            // \u901A\u5E38\u901A\u308ABSDF\u30B5\u30F3\u30D7\u30EA\u30F3\u30B0\u3057\u3066\u30011\u30D0\u30A6\u30F3\u30B9\u5148\u306E\u30E9\u30A4\u30C6\u30A3\u30F3\u30B0\u3092\u8A08\u7B97\u3059\u308B
+            // \u203B \u3053\u3053\u3067\u306F\u7C21\u6613\u7684\u306B\u300C\u6B21\u306E1\u30D0\u30A6\u30F3\u30B9\u300D\u3060\u3051\u3092\u8A55\u4FA1\u3057\u307E\u3059
+
+            var initial_dir: vec3<f32>;
+            var initial_Li = vec3(0.0);
+            var initial_dist = 0.0;
+            var initial_pdf = 0.0;
+
+            // BSDF\u30B5\u30F3\u30D7\u30EA\u30F3\u30B0
+            let scatter = sample_diffuse(normal, albedo, rng); // Diffuse\u306E\u307F\u3068\u4EEE\u5B9A
+            if scatter.pdf > 0.0 {
+                initial_dir = scatter.dir;
+                initial_pdf = scatter.pdf;
+                
+                // \u30EC\u30A4\u3092\u98DB\u3070\u3057\u3066Li\u3092\u53D6\u5F97 (\u518D\u5E30\u306E\u4EE3\u308F\u308A\u306B1\u30B9\u30C6\u30C3\u30D7\u3060\u3051\u30C8\u30EC\u30FC\u30B9)
+                let bounce_ray = Ray(hit_p + normal * 1e-4, initial_dir);
+                let bounce_hit = intersect_tlas(bounce_ray, T_MIN, T_MAX);
+
+                if bounce_hit.inst_idx >= 0 {
+                    initial_dist = bounce_hit.t;
+
+                    let b_tri_idx = u32(bounce_hit.tri_idx);
+                    let b_inst_idx = u32(bounce_hit.inst_idx);
+                    let b_tri = topology[b_tri_idx];
+                    let b_inst = instances[b_inst_idx];
+                    let b_inv = get_inv_transform(b_inst);
+                    
+                    // 1\u30D0\u30A6\u30F3\u30B9\u5148\u306E\u70B9\u306B\u304A\u3051\u308B\u6CD5\u7DDA\u3068UV\u306E\u88DC\u9593
+                    let b_pos0 = get_pos(b_tri.v0);
+                    let b_pos1 = get_pos(b_tri.v1);
+                    let b_pos2 = get_pos(b_tri.v2);
+                    let b_r_local = Ray((b_inv * vec4(bounce_ray.origin, 1.)).xyz, (b_inv * vec4(bounce_ray.direction, 0.)).xyz);
+                    
+                    // \u91CD\u5FC3\u5EA7\u6A19\u306E\u8A08\u7B97
+                    let b_e1 = b_pos1 - b_pos0;
+                    let b_e2 = b_pos2 - b_pos0;
+                    let b_s = b_r_local.origin - b_pos0;
+                    let b_h = cross(b_r_local.direction, b_e2);
+                    let b_f = 1.0 / dot(b_e1, b_h);
+                    let b_u = b_f * dot(b_s, b_h);
+                    let b_q = cross(b_s, b_e1);
+                    let b_v = b_f * dot(b_r_local.direction, b_q);
+                    let b_w = 1.0 - b_u - b_v;
+
+                    let b_uv0 = get_uv(b_tri.v0);
+                    let b_uv1 = get_uv(b_tri.v1);
+                    let b_uv2 = get_uv(b_tri.v2);
+                    let b_uv = b_uv0 * b_w + b_uv1 * b_u + b_uv2 * b_v;
+
+                    let b_n0 = get_normal(b_tri.v0);
+                    let b_n1 = get_normal(b_tri.v1);
+                    let b_n2 = get_normal(b_tri.v2);
+                    let b_ln = normalize(b_n0 * b_w + b_n1 * b_u + b_n2 * b_v);
+                    let b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+                    let b_p = bounce_ray.origin + bounce_ray.direction * bounce_hit.t;
+
+                    // 1. Emissive
+                    var b_emissive = b_tri.data3.rgb;
+                    let b_em_tex = b_tri.data2.w;
+                    if b_em_tex > -0.5 {
+                        b_emissive *= textureSampleLevel(tex, smp, b_uv, i32(b_em_tex), 0.0).rgb;
+                    }
+                    initial_Li = b_emissive;
+
+                    // 2. Direct Light (NEE) at hit point
+                    let b_mat_type = bitcast<u32>(b_tri.data0.w);
+                    if b_mat_type != 3u && b_mat_type != 2u {
+                        let b_light_s = sample_light_source(b_p, rng);
+                        if b_light_s.pdf > 0.0 {
+                            let b_shadow_ray = Ray(b_p + b_normal * 1e-4, b_light_s.dir);
+                            let b_shadow_hit = intersect_tlas(b_shadow_ray, T_MIN, b_light_s.dist - 2e-4);
+                            if b_shadow_hit.inst_idx == -1 {
+                                var b_albedo = b_tri.data0.rgb;
+                                let b_base_tex = b_tri.data2.x;
+                                if b_base_tex > -0.5 {
+                                    b_albedo *= textureSampleLevel(tex, smp, b_uv, i32(b_base_tex), 0.0).rgb;
+                                }
+                                let b_bsdf = eval_diffuse(b_albedo);
+                                initial_Li += b_bsdf * b_light_s.L * max(dot(b_normal, b_light_s.dir), 0.0) / b_light_s.pdf;
+                            }
+                        }
+                    }
+                } else {
+                    initial_Li = vec3(0.0);
+                }
+
+                // [Firefly/Darkness\u5BFE\u7B56] \u3082\u3057\u5019\u88DC\u304C\u5B8C\u5168\u306B\u9ED2\u3051\u308C\u3070\u3001\u308F\u305A\u304B\u306B\u53CD\u5C04\u7387\u3092\u8DB3\u3057\u3066\u53CE\u675F\u3092\u52A9\u3051\u308B
+                if length(initial_Li) < 1e-4 {
+                    initial_Li = albedo * 0.05;
+                }
+            }
+
+            // \u521D\u671F\u5019\u88DC\u3092\u30EA\u30B6\u30FC\u30D0\u306B\u8FFD\u52A0
+            let initial_cos = max(dot(normal, initial_dir), 0.0);
+            let p_hat_initial = evaluate_p_hat(initial_Li, albedo, initial_cos);
+            // RIS Weight = p_hat / pdf (BSDF\u91CD\u70B9\u30B5\u30F3\u30D7\u30EA\u30F3\u30B0\u306E\u5834\u5408)
+            // [Firefly\u5BFE\u7B56] PDF\u304C\u6975\u7AEF\u306B\u5C0F\u3055\u3044\u5834\u5408\u306B\u91CD\u307F\u304C\u7206\u767A\u3059\u308B\u306E\u3092\u9632\u3050
+            let w_initial = select(0.0, p_hat_initial / max(initial_pdf, 1e-3), initial_pdf > 1e-8);
+
+            update_reservoir(&state, initial_dir, initial_Li, initial_dist, w_initial, rng);
+
+            // 2. Temporal Reuse (\u6642\u9593\u7684\u518D\u5229\u7528)
+            // \u524D\u30D5\u30EC\u30FC\u30E0\u306E\u30EA\u30B6\u30FC\u30D0\u3092\u8AAD\u307F\u8FBC\u3080
+            // \u203B \u672C\u6765\u306F\u30D0\u30C3\u30AF\u30D7\u30ED\u30B8\u30A7\u30AF\u30B7\u30E7\u30F3\u3067\u300C\u524D\u306E\u4F4D\u7F6E\u300D\u306E\u30D4\u30AF\u30BB\u30EB\u3092\u8AAD\u3080\u3079\u304D\u3060\u304C\u3001
+            //    \u307E\u305A\u306F\u300C\u540C\u3058\u30D4\u30AF\u30BB\u30EB\u4F4D\u7F6E\u300D\u3092\u8AAD\u3080 (Camera\u56FA\u5B9A\u306A\u3089\u3053\u308C\u3067\u52D5\u304F)
+            let prev_res = gi_reservoir[prev_res_idx];
+            
+            // \u6709\u52B9\u6027\u30C1\u30A7\u30C3\u30AF\uFF08\u6CD5\u7DDA\u3068\u30DE\u30C6\u30EA\u30A2\u30EBID\uFF09
+            let normal_check = dot(prev_res.creation_normal, normal) > 0.9;
+            let mat_check = prev_res.creation_mat_id == bitcast<u32>(tri.data0.w); // mat_type
+
+            if normal_check && mat_check {
+                // \u904E\u53BB\u306E\u5019\u88DC\u306E\u8A55\u4FA1\u5024 (\u4FDD\u5B58\u3055\u308C\u305FRadiance\u3092\u4F7F\u7528)
+                // \u73FE\u5728\u306E\u6CD5\u7DDA\u3068Albedo\u3067\u518D\u8A55\u4FA1
+                let prev_cos = max(dot(normal, prev_res.sample_dir), 0.0);
+                let p_hat_prev = evaluate_p_hat(prev_res.sample_radiance, albedo, prev_cos);
+                
+                // \u30DE\u30FC\u30B8
+                merge_reservoir_refined(&state, prev_res, p_hat_prev, albedo, normal, rng);
+                
+                // [\u4FEE\u6B63\u5F8C] w_sum \u3082\u9053\u9023\u308C\u306B\u3057\u3066\u6BD4\u7387\u3092\u4FDD\u3064
+                if state.M > 20.0 {
+                    state.w_sum *= (20.0 / state.M);
+                    state.M = 20.0;
+                }
+            }
+
+            // ----------------------------------------------------------------
+            // 3. Spatial Reuse (\u7A7A\u9593\u7684\u518D\u5229\u7528)
+            // ----------------------------------------------------------------
+            // \u524D\u30D5\u30EC\u30FC\u30E0\u306E\u30C7\u30FC\u30BF(prev_res_idx)\u304B\u3089\u8FD1\u508D\u3092\u63A2\u3057\u3066\u30DE\u30FC\u30B8\u3057\u307E\u3059
+            // \u203B\u540C\u3058\u30D1\u30B9\u5185\u3067\u73FE\u5728\u306E\u8FD1\u508D(curr_res_idx)\u3092\u8AAD\u3080\u3068\u3001\u307E\u3060\u8A08\u7B97\u3055\u308C\u3066\u3044\u306A\u3044\u53EF\u80FD\u6027\u304C\u3042\u308A\u5371\u967A\u306A\u305F\u3081
+
+            for (var i = 0u; i < SPATIAL_COUNT; i++) {
+                // \u30E9\u30F3\u30C0\u30E0\u306A\u8FD1\u508D\u30D4\u30AF\u30BB\u30EB\u3092\u9078\u629E
+                let r_radius = sqrt(rand_pcg(rng)) * SPATIAL_RADIUS;
+                let r_angle = 2.0 * PI * rand_pcg(rng);
+                let offset = vec2<f32>(r_radius * cos(r_angle), r_radius * sin(r_angle));
+
+                let neighbor_coord = vec2<i32>(vec2<f32>(coord) + offset);
+                
+                // \u753B\u9762\u5185\u30C1\u30A7\u30C3\u30AF
+                if neighbor_coord.x >= 0 && neighbor_coord.x < i32(scene.width) && neighbor_coord.y >= 0 && neighbor_coord.y < i32(scene.height) {
+
+                    let n_idx = u32(neighbor_coord.y) * scene.width + u32(neighbor_coord.x);
+                    
+                    // \u8FD1\u508D\u306E\u30EA\u30B6\u30FC\u30D0\u3092\u53D6\u5F97 (Prev\u30D5\u30EC\u30FC\u30E0\u306E\u30DA\u30FC\u30B8\u304B\u3089\u8AAD\u3080)
+                    let n_offsets = get_reservoir_offsets(n_idx);
+                    let neighbor_res = gi_reservoir[n_offsets.y]; // .y \u304C Prev
+                    
+                    // --- \u5E7E\u4F55\u7684\u985E\u4F3C\u5EA6\u30C1\u30A7\u30C3\u30AF (Geometry Validation) ---
+                    // \u3053\u308C\u3092\u3084\u3089\u306A\u3044\u3068\u3001\u58C1\u306E\u88CF\u3084\u5225\u30AA\u30D6\u30B8\u30A7\u30AF\u30C8\u306E\u5149\u304C\u6F0F\u308C\u3066\u304F\u308B(Light Leaking)
+                    
+                    // 1. \u30DE\u30C6\u30EA\u30A2\u30EBID\u30C1\u30A7\u30C3\u30AF
+                    let mat_ok = neighbor_res.creation_mat_id == bitcast<u32>(tri.data0.w);
+                    
+                    // 2. \u6CD5\u7DDA\u30C1\u30A7\u30C3\u30AF (\u4F3C\u305F\u5411\u304D\u306E\u9762\u304B)
+                    let norm_ok = dot(neighbor_res.creation_normal, normal) > 0.9;
+                    
+                    // 3. \u4F4D\u7F6E(\u6DF1\u5EA6)\u30C1\u30A7\u30C3\u30AF (\u8DDD\u96E2\u304C\u96E2\u308C\u3059\u304E\u3066\u3044\u306A\u3044\u304B)
+                    // \u7C21\u6613\u7684\u306B\u8DDD\u96E2\u306E\u4E8C\u4E57\u3067\u5224\u5B9A\u3002\u30B7\u30FC\u30F3\u306E\u30B9\u30B1\u30FC\u30EB\u306B\u5408\u308F\u305B\u3066\u95BE\u5024\u8ABF\u6574\u304C\u5FC5\u8981(\u4F8B: 1.0)
+                    let dist_sq = dot(neighbor_res.creation_pos - hit_p, neighbor_res.creation_pos - hit_p);
+                    let pos_ok = dist_sq < 0.1; // \u30B7\u30FC\u30F3\u306B\u5408\u308F\u305B\u3066\u8ABF\u6574\u3057\u3066\u304F\u3060\u3055\u3044
+
+                    if mat_ok && norm_ok && pos_ok {
+                        // \u8FD1\u508D\u306E p_hat \u3092\u518D\u8A55\u4FA1
+                        let n_cos = max(dot(normal, neighbor_res.sample_dir), 0.0);
+                        let p_hat_neighbor = evaluate_p_hat(neighbor_res.sample_radiance, albedo, n_cos);
+                        
+                        // \u30DE\u30FC\u30B8\u5B9F\u884C
+                        merge_reservoir_refined(&state, neighbor_res, p_hat_neighbor, albedo, normal, rng);
+                    }
+                }
+            }
+            
+            // \u30AF\u30E9\u30F3\u30D7 (Spatial Reuse\u5F8C\u306FM\u304C\u5897\u3048\u3059\u304E\u308B\u306E\u3067\u518D\u5EA6\u6291\u3048\u308B)
+            if state.M > 50.0 {
+                state.w_sum *= (50.0 / state.M);
+                state.M = 50.0;
+            };
+
+            // 3. Finalize W (Unbiased Weight calculation)
+            let final_cos = max(dot(normal, state.sample_dir), 0.0);
+            let p_hat_final = evaluate_p_hat(state.sample_radiance, albedo, final_cos);
+            // [Firefly\u5BFE\u7B56] \u30BC\u30ED\u9664\u7B97\u306E\u56DE\u907F\u3068\u3001\u91CD\u307F\u81EA\u4F53\u306E\u30AF\u30E9\u30F3\u30D7
+            state.W = select(0.0, state.w_sum / (state.M * p_hat_final + 1e-6), p_hat_final > 1e-6);
+            state.W = min(state.W, 10.0);
+
+            // 4. Store Reservoir (\u6B21\u30D5\u30EC\u30FC\u30E0\u306E\u305F\u3081\u306B\u4FDD\u5B58)
+            state.creation_pos = hit_p;
+            state.creation_normal = normal;
+            state.creation_mat_id = bitcast<u32>(tri.data0.w);
+            gi_reservoir[curr_res_idx] = state;
+
+            // 5. Shading (\u9078\u3070\u308C\u305F\u5019\u88DC\u3092\u4F7F\u3063\u3066\u8272\u3092\u6C7A\u5B9A)
+            // Lo = Li * BSDF * cos / PDF
+            // ReSTIR\u3067\u306F: Lo = Li * BSDF * cos * W
+
+            let bsdf_val = eval_diffuse(albedo); // Diffuse BSDF = albedo / PI
+            let cos_theta = max(dot(normal, state.sample_dir), 0.0);
+
+            // [\u4FEE\u6B63] radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W * state.M; 
+            // Standard ReSTIR estimator: Lo = Li * BSDF * cos * W. 
+            // Our W already includes normalization (w_sum / (M * p_hat)).
+            radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W;
+
+            // ReSTIR\u3067\u6C7A\u307E\u3063\u305F\u306E\u3067\u3053\u306E\u6DF1\u5EA6\u306E\u51E6\u7406\u306F\u5B8C\u4E86\uFF08\u305F\u3060\u3057\u3001\u5F8C\u7D9A\u306ENEE\u7B49\u304C\u30B9\u30AD\u30C3\u30D7\u3055\u308C\u306A\u3044\u3088\u3046\u9806\u5E8F\u306B\u6CE8\u610F\uFF09
+            // break; <-- \u3053\u3053\u3067\u6D88\u3055\u305A\u306B\u3001NEE\u306E\u5F8C\u306B\u79FB\u52D5
+        }
+
+
         // --- NEE ---
         if !is_specular && mat_type != 2u {
             let light_s = sample_light_source(hit_p, rng);
@@ -710,6 +1045,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
                     }
                 }
             }
+        }
+
+        // ReSTIR\u304C\u9069\u7528\u3055\u308C\u305F\u5834\u5408\u306F\u3001\u76F4\u63A5\u5149\u306E\u8A08\u7B97\u5F8C\u306B\u7D42\u4E86\u3059\u308B
+        if specular_bounce && use_restir {
+            break;
         }
 
         // --- BSDF Sampling ---
@@ -762,10 +1102,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
+        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng, id.xy);
     }
     col /= f32(SPP);
-    accumulateBuffer[p_idx] = vec4(col, 1.0);
+    
+    // Proper accumulation
+    var acc_val = vec4<f32>(col, 1.0);
+    if scene.frame_count > 1u {
+        acc_val = accumulateBuffer[p_idx] + vec4<f32>(col, 1.0);
+    }
+    accumulateBuffer[p_idx] = acc_val;
 }
 `, Z = `// =========================================================
 //   Post Process (PostProcess.wgsl)
@@ -804,7 +1150,7 @@ struct SceneUniforms {
 
 fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
     let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
+    return clamp((color * (a * color + vec3<f32>(b))) / (color * (c * color + vec3<f32>(d)) + vec3<f32>(e)), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 fn get_radiance(coord: vec2<i32>) -> vec3<f32> {
@@ -833,15 +1179,15 @@ fn get_radiance_clean(coord: vec2<i32>) -> vec3<f32> {
     
     // Firefly suppression: clamp center to neighborhood range with some headroom
     let threshold = 3.0;
-    return clamp(center, vec3(0.0), max_nb * threshold + 0.1);
+    return clamp(center, vec3<f32>(0.0), max_nb * threshold + vec3<f32>(0.1));
 }
 
 // Bilinear sampling for un-jittering
 fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
-    let f_coord = uv * dims - 0.5;
-    let i_coord = vec2<i32>(floor(f_coord));
-    let f = f_coord - vec2<f32>(i_coord);
+    let f_coord = uv * dims - vec2<f32>(0.5);
+    let i_coord = vec2<i32>(i32(floor(f_coord.x)), i32(floor(f_coord.y)));
+    let f = f_coord - vec2<f32>(floor(f_coord.x), floor(f_coord.y));
 
     let c00 = get_radiance_clean(i_coord + vec2<i32>(0, 0));
     let c10 = get_radiance_clean(i_coord + vec2<i32>(1, 0));
@@ -849,6 +1195,21 @@ fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     let c11 = get_radiance_clean(i_coord + vec2<i32>(1, 1));
 
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
+// \u2605 Enhanced un-jittering: only fully active when frame_count is low.
+// As accumulation progresses, the buffer naturally centers itself.
+fn get_radiance_nearest(coord: vec2<i32>) -> vec3<f32> {
+    if scene.frame_count > 16u {
+        return get_radiance_clean(coord);
+    }
+
+    let dims = vec2<f32>(f32(scene.width), f32(scene.height));
+    let uv = (vec2<f32>(f32(coord.x), f32(coord.y)) + vec2<f32>(0.5)) / dims;
+    
+    // Fade out un-jittering as accumulation averages out the jitter
+    let weight = clamp(1.0 - f32(scene.frame_count - 1u) / 15.0, 0.0, 1.0);
+    return get_radiance_bilinear(uv - scene.jitter * weight);
 }
 
 fn luminance(c: vec3<f32>) -> f32 {
@@ -860,10 +1221,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
 
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
-    let uv = (vec2<f32>(id.xy) + 0.5) / dims;
+    let uv = (vec2<f32>(f32(id.x), f32(id.y)) + vec2<f32>(0.5)) / dims;
 
     // 1. Un-jittered Current Frame Radiance (Now cleaned internally)
-    let center_color = get_radiance_bilinear(uv - scene.jitter);
+    let center_color = get_radiance_nearest(vec2<i32>(i32(id.x), i32(id.y)));
 
     // 2. Bilateral Filter
     let SIGMA_S = 0.5;
@@ -874,8 +1235,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var total_weight = 0.0;
     for (var dy = -RADIUS; dy <= RADIUS; dy++) {
         for (var dx = -RADIUS; dx <= RADIUS; dx++) {
-            let samp_uv = uv + vec2<f32>(f32(dx), f32(dy)) / dims - scene.jitter;
-            let neighbor_color = get_radiance_bilinear(samp_uv);
+            let neighbor_pos = vec2<i32>(i32(id.x), i32(id.y)) + vec2<i32>(dx, dy);
+            let neighbor_color = get_radiance_nearest(neighbor_pos);
 
             let w_s = exp(-f32(dx * dx + dy * dy) / (2.0 * SIGMA_S * SIGMA_S));
             let color_diff = neighbor_color - center_color;
@@ -891,40 +1252,43 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let samples_history = textureSampleLevel(historyTex, smp, uv, 0.0).rgb;
     
     // Neighborhood Clamping
-    var m1 = vec3(0.0);
-    var m2 = vec3(0.0);
+    var m1 = vec3<f32>(0.0);
+    var m2 = vec3<f32>(0.0);
     for (var dy = -1; dy <= 1; dy++) {
         for (var dx = -1; dx <= 1; dx++) {
-            let nb_uv = uv + vec2<f32>(f32(dx), f32(dy)) / dims - scene.jitter;
-            let c = get_radiance_bilinear(nb_uv);
-            m1 += c;
-            m2 += c * c;
+            let neighbor_pos = vec2<i32>(i32(id.x), i32(id.y)) + vec2<i32>(dx, dy);
+            let neighbor_color = get_radiance_nearest(neighbor_pos);
+            m1 += neighbor_color;
+            m2 += neighbor_color * neighbor_color;
         }
     }
     let mean = m1 / 9.0;
-    let stddev = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
+    let stddev = sqrt(max(m2 / 9.0 - mean * mean, vec3<f32>(0.0)));
     
     // Adaptive clamping
-    var k = 1.5;
+    var k = 1.0; // Tighter clamping for better stability during animation
     if scene.frame_count > 16u { k = 60.0; } // Effectively disable clamping when static for full convergence
     let clamped_history = clamp(samples_history, mean - stddev * k, mean + stddev * k);
-
+ 
     // Adaptive alpha for progressive refinement
     var alpha = 1.0 / f32(scene.frame_count);
+    if scene.frame_count == 1u {
+        alpha = 0.1; // Enable TAA even on first frame after update to hide jitter
+    }
     alpha = max(alpha, 0.0001); // Even deeper convergence (10000 frames)
 
     let final_hdr = mix(clamped_history, denoised_hdr, alpha);
 
     // Store un-jittered result
-    textureStore(historyOutput, vec2<i32>(id.xy), vec4(final_hdr, 1.0));
+    textureStore(historyOutput, vec2<i32>(i32(id.x), i32(id.y)), vec4<f32>(final_hdr, 1.0));
 
     // 4. Output
     let mapped = aces_tone_mapping(final_hdr);
     let edge_detect = center_color - denoised_hdr;
     let sharpened = mapped + aces_tone_mapping(edge_detect) * 0.3;
 
-    let ldr_out = pow(clamp(sharpened, vec3(0.0), vec3(1.0)), vec3<f32>(1.0 / 2.2));
-    textureStore(outputTex, vec2<i32>(id.xy), vec4(ldr_out, 1.0));
+    let ldr_out = pow(clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
+    textureStore(outputTex, vec2<i32>(i32(id.x), i32(id.y)), vec4<f32>(ldr_out, 1.0));
 }`;
   class ee {
     constructor(e) {
@@ -948,6 +1312,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "texture");
       __publicField(this, "defaultTexture");
       __publicField(this, "sampler");
+      __publicField(this, "reservoirBuffer");
       __publicField(this, "bufferSize", 0);
       __publicField(this, "canvas");
       __publicField(this, "blasOffset", 0);
@@ -1065,14 +1430,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         size: this.bufferSize,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
       });
-      for (let n = 0; n < 2; n++) this.historyTextures[n] && this.historyTextures[n].destroy(), this.historyTextures[n] = this.device.createTexture({
+      for (let s = 0; s < 2; s++) this.historyTextures[s] && this.historyTextures[s].destroy(), this.historyTextures[s] = this.device.createTexture({
         size: [
           e,
           t
         ],
         format: "rgba16float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST
-      }), this.historyTextureViews[n] = this.historyTextures[n].createView();
+      }), this.historyTextureViews[s] = this.historyTextures[s].createView();
+      const r = e * t * 80 * 2;
+      this.reservoirBuffer && this.reservoirBuffer.destroy(), this.reservoirBuffer = this.device.createBuffer({
+        label: "GI Reservoir Buffer (Double)",
+        size: r,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+      });
     }
     resetAccumulation() {
       this.accumulateBuffer && this.device.queue.writeBuffer(this.accumulateBuffer, 0, new Float32Array(this.bufferSize / 4));
@@ -1173,7 +1544,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       l[8] = this.jitter.x, l[9] = this.jitter.y, this.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData), this.prevCameraData.set(e);
     }
     recreateBindGroup() {
-      !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || !this.lightsBuffer || (this.bindGroup = this.device.createBindGroup({
+      !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || !this.lightsBuffer || !this.reservoirBuffer || (this.bindGroup = this.device.createBindGroup({
         layout: this.bindGroupLayout,
         entries: [
           {
@@ -1227,6 +1598,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             resource: {
               buffer: this.lightsBuffer
             }
+          },
+          {
+            binding: 10,
+            resource: {
+              buffer: this.reservoirBuffer
+            }
           }
         ]
       }), this.postprocessBindGroup = this.device.createBindGroup({
@@ -1267,8 +1644,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!this.bindGroup || !this.postprocessBindGroup) return;
       this.totalFrames++;
       const t = (u, g) => {
-        let b = 1, v = 0;
-        for (; u > 0; ) b = b / g, v = v + b * (u % g), u = Math.floor(u / g);
+        let y = 1, v = 0;
+        for (; u > 0; ) y = y / g, v = v + y * (u % g), u = Math.floor(u / g);
         return v;
       }, n = t(this.totalFrames % 16 + 1, 2) - 0.5, r = t(this.totalFrames % 16 + 1, 3) - 0.5;
       this.prevJitter.x = this.jitter.x, this.prevJitter.y = this.jitter.y, this.jitter = {
@@ -1299,7 +1676,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function te(i) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-BESrBICk.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-BlRmgziK.js", {
       name: i == null ? void 0 : i.name
     });
   }
@@ -1440,7 +1817,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       console.log(`Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Topo=${this.mesh_topology.length / 12}, I=${this.instances.length / 16}, TLAS=${this.tlas.length / 8}, BLAS=${this.blas.length / 8}, Anim=${this._animations.length}, Lights=${this._lights.length / 2}`);
     }
   }
-  const p = {
+  const _ = {
     defaultWidth: 720,
     defaultHeight: 480,
     defaultDepth: 10,
@@ -1503,7 +1880,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "onRecordStart", null);
       __publicField(this, "onConnectHost", null);
       __publicField(this, "onConnectWorker", null);
-      this.canvas = this.el(p.ids.canvas), this.btnRender = this.el(p.ids.renderBtn), this.sceneSelect = this.el(p.ids.sceneSelect), this.inputWidth = this.el(p.ids.resWidth), this.inputHeight = this.el(p.ids.resHeight), this.inputFile = this.setupFileInput(), this.inputDepth = this.el(p.ids.maxDepth), this.inputSPP = this.el(p.ids.sppFrame), this.btnRecompile = this.el(p.ids.recompileBtn), this.inputUpdateInterval = this.el(p.ids.updateInterval), this.animSelect = this.el(p.ids.animSelect), this.btnRecord = this.el(p.ids.recordBtn), this.inputRecFps = this.el(p.ids.recFps), this.inputRecDur = this.el(p.ids.recDuration), this.inputRecSpp = this.el(p.ids.recSpp), this.inputRecBatch = this.el(p.ids.recBatch), this.btnHost = this.el(p.ids.btnHost), this.btnWorker = this.el(p.ids.btnWorker), this.statusDiv = this.el(p.ids.statusDiv), this.statsDiv = this.createStatsDiv(), this.bindEvents();
+      this.canvas = this.el(_.ids.canvas), this.btnRender = this.el(_.ids.renderBtn), this.sceneSelect = this.el(_.ids.sceneSelect), this.inputWidth = this.el(_.ids.resWidth), this.inputHeight = this.el(_.ids.resHeight), this.inputFile = this.setupFileInput(), this.inputDepth = this.el(_.ids.maxDepth), this.inputSPP = this.el(_.ids.sppFrame), this.btnRecompile = this.el(_.ids.recompileBtn), this.inputUpdateInterval = this.el(_.ids.updateInterval), this.animSelect = this.el(_.ids.animSelect), this.btnRecord = this.el(_.ids.recordBtn), this.inputRecFps = this.el(_.ids.recFps), this.inputRecDur = this.el(_.ids.recDuration), this.inputRecSpp = this.el(_.ids.recSpp), this.inputRecBatch = this.el(_.ids.recBatch), this.btnHost = this.el(_.ids.btnHost), this.btnWorker = this.el(_.ids.btnWorker), this.statusDiv = this.el(_.ids.statusDiv), this.statsDiv = this.createStatsDiv(), this.bindEvents();
     }
     el(e) {
       const t = document.getElementById(e);
@@ -1511,7 +1888,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       return t;
     }
     setupFileInput() {
-      const e = this.el(p.ids.objFile);
+      const e = this.el(_.ids.objFile);
       return e && (e.accept = ".obj,.glb,.vrm"), e;
     }
     createStatsDiv() {
@@ -1540,7 +1917,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       });
       const e = () => {
         var _a;
-        return (_a = this.onResolutionChange) == null ? void 0 : _a.call(this, parseInt(this.inputWidth.value) || p.defaultWidth, parseInt(this.inputHeight.value) || p.defaultHeight);
+        return (_a = this.onResolutionChange) == null ? void 0 : _a.call(this, parseInt(this.inputWidth.value) || _.defaultWidth, parseInt(this.inputHeight.value) || _.defaultHeight);
       };
       this.inputWidth.addEventListener("change", e), this.inputHeight.addEventListener("change", e), this.btnRecompile.addEventListener("click", () => {
         var _a;
@@ -1592,8 +1969,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     getRenderConfig() {
       return {
-        width: parseInt(this.inputWidth.value, 10) || p.defaultWidth,
-        height: parseInt(this.inputHeight.value, 10) || p.defaultHeight,
+        width: parseInt(this.inputWidth.value, 10) || _.defaultWidth,
+        height: parseInt(this.inputHeight.value, 10) || _.defaultHeight,
         fps: parseInt(this.inputRecFps.value, 10) || 30,
         duration: parseFloat(this.inputRecDur.value) || 3,
         spp: parseInt(this.inputRecSpp.value, 10) || 64,
@@ -1727,7 +2104,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     ]
   };
-  class F {
+  class G {
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -1942,7 +2319,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (this.ws) return;
       this.myRole = e, (_a = this.onStatusChange) == null ? void 0 : _a.call(this, `Connecting as ${e.toUpperCase()}...`);
       const t = "xWUaLfXQQkHZ9VmF";
-      this.ws = new WebSocket(`${p.signalingServerUrl}?token=${t}`), this.ws.onopen = () => {
+      this.ws = new WebSocket(`${_.signalingServerUrl}?token=${t}`), this.ws.onopen = () => {
         var _a2;
         console.log("WS Connected"), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, `Waiting for Peer (${e.toUpperCase()})`), this.sendSignal({
           type: e === "host" ? "register_host" : "register_worker"
@@ -1980,7 +2357,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       switch (e.type) {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
-          const t = new F(e.workerId, (n) => this.sendSignal(n));
+          const t = new G(e.workerId, (n) => this.sendSignal(n));
           this.workers.set(e.workerId, t), t.onDataChannelOpen = () => {
             var _a2;
             console.log(`[Host] Open for ${e.workerId}`), t.sendData({
@@ -2021,7 +2398,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       var _a, _b, _c;
       switch (e.type) {
         case "offer":
-          e.fromId && (this.hostClient = new F(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
+          e.fromId && (this.hostClient = new G(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
             var _a2, _b2;
             (_a2 = this.hostClient) == null ? void 0 : _a2.sendData({
               type: "HELLO",
@@ -2055,49 +2432,49 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       s && await s.sendRenderRequest(t, n, r);
     }
   }
-  let m = false, w = null, k = null, x = null, R = [], E = /* @__PURE__ */ new Map(), D = 0, P = 0, L = 0, B = null, y = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
-  const G = 20, a = new re(), f = new ee(a.canvas), d = new ne(), U = new ie(f, d, a.canvas), _ = new ae();
-  let S = 0, N = 0, T = 0, z = performance.now();
+  let m = false, w = null, k = null, x = null, R = [], I = /* @__PURE__ */ new Map(), D = 0, P = 0, U = 0, B = null, b = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
+  const H = 20, a = new re(), f = new ee(a.canvas), d = new ne(), E = new ie(f, d, a.canvas), p = new ae();
+  let S = 0, z = 0, T = 0, $ = performance.now();
   const oe = () => {
-    const i = parseInt(a.inputDepth.value, 10) || p.defaultDepth, e = parseInt(a.inputSPP.value, 10) || p.defaultSPP;
+    const i = parseInt(a.inputDepth.value, 10) || _.defaultDepth, e = parseInt(a.inputSPP.value, 10) || _.defaultSPP;
     f.buildPipeline(i, e);
-  }, $ = () => {
+  }, F = () => {
     const { width: i, height: e } = a.getRenderConfig();
-    f.updateScreenSize(i, e), d.hasWorld && (d.updateCamera(i, e), f.updateSceneUniforms(d.cameraData, 0, d.lightCount)), f.recreateBindGroup(), f.resetAccumulation(), S = 0, N = 0;
+    f.updateScreenSize(i, e), d.hasWorld && (d.updateCamera(i, e), f.updateSceneUniforms(d.cameraData, 0, d.lightCount)), f.recreateBindGroup(), f.resetAccumulation(), S = 0, z = 0;
   }, M = async (i, e = true) => {
     m = false, console.log(`Loading Scene: ${i}...`);
     let t, n;
-    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), $(), a.updateAnimList(d.getAnimationList()), e && (m = true, a.updateRenderButton(true));
+    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), F(), a.updateAnimList(d.getAnimationList()), e && (m = true, a.updateRenderButton(true));
   }, le = async () => {
     f.updateCombinedGeometry(d.vertices, d.normals, d.uvs), f.updateCombinedBVH(d.tlas, d.blas), f.updateBuffer("topology", d.mesh_topology), f.updateBuffer("instance", d.instances), f.updateBuffer("lights", d.lights), f.updateSceneUniforms(d.cameraData, 0, d.lightCount);
-  }, I = () => {
-    if (U.recording || (requestAnimationFrame(I), !m || !d.hasWorld)) return;
+  }, L = () => {
+    if (E.recording || (requestAnimationFrame(L), !m || !d.hasWorld)) return;
     let i = parseInt(a.inputUpdateInterval.value, 10) || 0;
-    if (i > 0 && S >= i && d.update(N / (i || 1) / 60), d.hasNewData) {
+    if (i > 0 && S >= i && d.update(z / (i || 1) / 60), d.hasNewData) {
       let t = false;
       t || (t = f.updateCombinedBVH(d.tlas, d.blas)), t || (t = f.updateBuffer("instance", d.instances)), d.hasNewGeometry && (t || (t = f.updateCombinedGeometry(d.vertices, d.normals, d.uvs)), t || (t = f.updateBuffer("topology", d.mesh_topology)), t || (t = f.updateBuffer("lights", d.lights)), d.hasNewGeometry = false), d.updateCamera(a.canvas.width, a.canvas.height), f.updateSceneUniforms(d.cameraData, 0, d.lightCount), t && f.recreateBindGroup(), f.resetAccumulation(), S = 0, d.hasNewData = false;
     }
-    S++, T++, N++, f.compute(S), f.present();
+    S++, T++, z++, f.compute(S), f.present();
     const e = performance.now();
-    e - z >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, z = e);
+    e - $ >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, $ = e);
   }, q = async (i) => {
     const e = a.sceneSelect.value, t = e !== "viewer";
     if (!t && (!w || !k)) return;
     const n = a.getRenderConfig(), r = t ? e : void 0, s = t ? "DUMMY" : w, o = t ? "obj" : k;
-    n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), y.set(i, "loading"), await _.sendSceneToWorker(i, s, o, n)) : (console.log("Broadcasting scene to all workers..."), _.getWorkerIds().forEach((l) => y.set(l, "loading")), await _.broadcastScene(s, o, n));
+    n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), b.set(i, "loading"), await p.sendSceneToWorker(i, s, o, n)) : (console.log("Broadcasting scene to all workers..."), p.getWorkerIds().forEach((l) => b.set(l, "loading")), await p.broadcastScene(s, o, n));
   }, j = async (i) => {
-    if (y.get(i) !== "idle") {
-      console.log(`Worker ${i} is ${y.get(i)}, skipping assignment.`);
+    if (b.get(i) !== "idle") {
+      console.log(`Worker ${i} is ${b.get(i)}, skipping assignment.`);
       return;
     }
     if (R.length === 0) return;
     const e = R.shift();
-    e && (y.set(i, "busy"), C.set(i, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${i}`), await _.sendRenderRequest(i, e.start, e.count, {
+    e && (b.set(i, "busy"), C.set(i, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${i}`), await p.sendRenderRequest(i, e.start, e.count, {
       ...B,
       fileType: "obj"
     }));
   }, ce = async () => {
-    const i = Array.from(E.keys()).sort((c, h) => c - h), { Muxer: e, ArrayBufferTarget: t } = await O(async () => {
+    const i = Array.from(I.keys()).sort((c, h) => c - h), { Muxer: e, ArrayBufferTarget: t } = await O(async () => {
       const { Muxer: c, ArrayBufferTarget: h } = await import("./webm-muxer-MLtUgOCn.js");
       return {
         Muxer: c,
@@ -2113,7 +2490,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     });
     for (const c of i) {
-      const h = E.get(c);
+      const h = I.get(c);
       if (h) for (const u of h) n.addVideoChunk(new EncodedVideoChunk({
         type: u.type,
         timestamp: u.timestamp,
@@ -2139,31 +2516,31 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     try {
       a.setRecordingState(true, `Remote: ${e} f`);
-      const r = await U.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
-      console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await _.sendRenderResult(r, i), a.setRecordingState(false), a.setStatus("Idle");
+      const r = await E.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
+      console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await p.sendRenderResult(r, i), a.setRecordingState(false), a.setStatus("Idle");
     } catch (r) {
       console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
     } finally {
-      m = true, requestAnimationFrame(I);
+      m = true, requestAnimationFrame(L);
     }
   }, de = async () => {
     if (!A) return;
     const { start: i, count: e, config: t } = A;
     A = null, await V(i, e, t);
   };
-  _.onStatusChange = (i) => a.setStatus(`Status: ${i}`);
-  _.onWorkerLeft = (i) => {
-    console.log(`Worker Left: ${i}`), a.setStatus(`Worker Left: ${i}`), y.delete(i);
+  p.onStatusChange = (i) => a.setStatus(`Status: ${i}`);
+  p.onWorkerLeft = (i) => {
+    console.log(`Worker Left: ${i}`), a.setStatus(`Worker Left: ${i}`), b.delete(i);
     const e = C.get(i);
     e && (console.warn(`Worker ${i} failed job ${e.start}. Re-queueing.`), R.unshift(e), C.delete(i), a.setStatus(`Re-queued Job ${e.start}`));
   };
-  _.onWorkerReady = (i) => {
-    console.log(`Worker ${i} is READY`), a.setStatus(`Worker ${i} Ready!`), y.set(i, "idle"), x === "host" && R.length > 0 && j(i);
+  p.onWorkerReady = (i) => {
+    console.log(`Worker ${i} is READY`), a.setStatus(`Worker ${i} Ready!`), b.set(i, "idle"), x === "host" && R.length > 0 && j(i);
   };
-  _.onWorkerJoined = (i) => {
-    a.setStatus(`Worker Joined: ${i}`), y.set(i, "idle"), x === "host" && R.length > 0 && q(i);
+  p.onWorkerJoined = (i) => {
+    a.setStatus(`Worker Joined: ${i}`), b.set(i, "idle"), x === "host" && R.length > 0 && q(i);
   };
-  _.onRenderRequest = async (i, e, t) => {
+  p.onRenderRequest = async (i, e, t) => {
     if (console.log(`[Worker] Received Render Request: Frames ${i} - ${i + e}`), W) {
       console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${i}`), A = {
         start: i,
@@ -2174,55 +2551,55 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     await V(i, e, t);
   };
-  _.onRenderResult = async (i, e, t) => {
-    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), E.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), y.set(t, "idle"), C.delete(t), await j(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
+  p.onRenderResult = async (i, e, t) => {
+    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), I.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), b.set(t, "idle"), C.delete(t), await j(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
   };
-  _.onSceneReceived = async (i, e) => {
-    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await M(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await _.sendWorkerReady(), de();
+  p.onSceneReceived = async (i, e) => {
+    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await M(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await p.sendWorkerReady(), de();
   };
   const ue = () => {
     a.onRenderStart = () => {
       m = true;
     }, a.onRenderStop = () => {
       m = false;
-    }, a.onSceneSelect = (i) => M(i, false), a.onResolutionChange = $, a.onRecompile = (i, e) => {
+    }, a.onSceneSelect = (i) => M(i, false), a.onResolutionChange = F, a.onRecompile = (i, e) => {
       m = false, f.buildPipeline(i, e), f.recreateBindGroup(), f.resetAccumulation(), S = 0, m = true;
     }, a.onFileSelect = async (i) => {
       var _a;
       ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), k = "obj") : (w = await i.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", M("viewer", false);
     }, a.onAnimSelect = (i) => d.setAnimation(i), a.onRecordStart = async () => {
-      if (!U.recording) if (x === "host") {
-        const i = _.getWorkerIds();
-        if (B = a.getRenderConfig(), L = Math.ceil(B.fps * B.duration), !confirm(`Distribute recording? (Workers: ${i.length})
+      if (!E.recording) if (x === "host") {
+        const i = p.getWorkerIds();
+        if (B = a.getRenderConfig(), U = Math.ceil(B.fps * B.duration), !confirm(`Distribute recording? (Workers: ${i.length})
 Auto Scene Sync enabled.`)) return;
-        R = [], E.clear(), D = 0, C.clear();
-        for (let e = 0; e < L; e += G) {
-          const t = Math.min(G, L - e);
+        R = [], I.clear(), D = 0, C.clear();
+        for (let e = 0; e < U; e += H) {
+          const t = Math.min(H, U - e);
           R.push({
             start: e,
             count: t
           });
         }
-        P = R.length, i.forEach((e) => y.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${P} jobs (Waiting for workers...)`), i.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await q()) : console.log("No workers yet. Waiting...");
+        P = R.length, i.forEach((e) => b.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${P} jobs (Waiting for workers...)`), i.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await q()) : console.log("No workers yet. Waiting...");
       } else {
         m = false, a.setRecordingState(true);
         const i = a.getRenderConfig();
         try {
           const e = performance.now();
-          await U.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
+          await E.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
             const n = document.createElement("a");
             n.href = t, n.download = `raytrace_${Date.now()}.webm`, n.click(), URL.revokeObjectURL(t);
           }), console.log(`Recording took ${performance.now() - e}[ms]`);
         } catch {
           alert("Recording failed.");
         } finally {
-          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(I);
+          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(L);
         }
       }
     }, a.onConnectHost = () => {
-      x === "host" ? (_.disconnect(), x = null, a.setConnectionState(null)) : (_.connect("host"), x = "host", a.setConnectionState("host"));
+      x === "host" ? (p.disconnect(), x = null, a.setConnectionState(null)) : (p.connect("host"), x = "host", a.setConnectionState("host"));
     }, a.onConnectWorker = () => {
-      x === "worker" ? (_.disconnect(), x = null, a.setConnectionState(null)) : (_.connect("worker"), x = "worker", a.setConnectionState("worker"));
+      x === "worker" ? (p.disconnect(), x = null, a.setConnectionState(null)) : (p.connect("worker"), x = "worker", a.setConnectionState("worker"));
     }, a.setConnectionState(null);
   };
   async function he() {
@@ -2232,7 +2609,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + i);
       return;
     }
-    ue(), oe(), $(), M("cornell", false), requestAnimationFrame(I);
+    ue(), oe(), F(), M("cornell", false), requestAnimationFrame(L);
   }
   he().catch(console.error);
 })();
