@@ -988,23 +988,24 @@ fn ray_color(r_in: Ray, p_idx: u32, rng: ptr<function, u32>) -> vec3<f32> {
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
     let p_idx = id.y * scene.width + id.x;
-    var rng = init_rng(p_idx, scene.rand_seed);
 
     var col = vec3(0.);
-    for (var s = 0u; s < SPP; s++) {
+    for (var i = 0u; i < SPP; i++) {
+        var rng = init_rng(p_idx, scene.frame_count * SPP + i);
+
         var off = vec3(0.);
         if scene.camera.origin.w > 0. {
             let rd = scene.camera.origin.w * random_in_unit_disk(&rng);
             off = scene.camera.u.xyz * rd.x + scene.camera.v.xyz * rd.y;
         }
+
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
+
         col += ray_color(Ray(scene.camera.origin.xyz + off, d), p_idx, &rng);
     }
     col /= f32(SPP);
-
-    var acc = vec4(0.);
     accumulateBuffer[p_idx] = vec4(col, 1.0);
 }
 `, Z = `// =========================================================
@@ -1055,6 +1056,27 @@ fn get_radiance(coord: vec2<i32>) -> vec3<f32> {
     return acc.rgb / acc.a;
 }
 
+fn get_radiance_clean(coord: vec2<i32>) -> vec3<f32> {
+    let center = get_radiance(coord);
+
+    var min_nb = vec3(1e6);
+    var max_nb = vec3(-1e6);
+    
+    // 3x3 box (excluding center) for more stable suppression
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            if x == 0 && y == 0 { continue; }
+            let nb = get_radiance(coord + vec2<i32>(x, y));
+            min_nb = min(min_nb, nb);
+            max_nb = max(max_nb, nb);
+        }
+    }
+    
+    // Firefly suppression: clamp center to neighborhood range with some headroom
+    let threshold = 3.0;
+    return clamp(center, vec3(0.0), max_nb * threshold + 0.1);
+}
+
 // Bilinear sampling for un-jittering
 fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
@@ -1062,10 +1084,10 @@ fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     let i_coord = vec2<i32>(floor(f_coord));
     let f = f_coord - vec2<f32>(i_coord);
 
-    let c00 = get_radiance(i_coord + vec2<i32>(0, 0));
-    let c10 = get_radiance(i_coord + vec2<i32>(1, 0));
-    let c01 = get_radiance(i_coord + vec2<i32>(0, 1));
-    let c11 = get_radiance(i_coord + vec2<i32>(1, 1));
+    let c00 = get_radiance_clean(i_coord + vec2<i32>(0, 0));
+    let c10 = get_radiance_clean(i_coord + vec2<i32>(1, 0));
+    let c01 = get_radiance_clean(i_coord + vec2<i32>(0, 1));
+    let c11 = get_radiance_clean(i_coord + vec2<i32>(1, 1));
 
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
@@ -1081,22 +1103,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
     let uv = (vec2<f32>(id.xy) + 0.5) / dims;
 
-    // 1. Un-jittered Current Frame Radiance
-    let center_color_raw = get_radiance_bilinear(uv - scene.jitter);
-
-    // Firefly Removal (Check un-jittered neighborhood)
-    var max_neighbor_lum = 0.0;
-    for (var dy = -1; dy <= 1; dy++) {
-        for (var dx = -1; dx <= 1; dx++) {
-            if dx == 0 && dy == 0 { continue; }
-            let nb_uv = uv + vec2<f32>(f32(dx), f32(dy)) / dims - scene.jitter;
-            let neighbor_color = get_radiance_bilinear(nb_uv);
-            max_neighbor_lum = max(max_neighbor_lum, dot(neighbor_color, vec3(0.299, 0.587, 0.114)));
-        }
-    }
-    let threshold = max(max_neighbor_lum * 3.0, 1.0);
-    let center_lum = dot(center_color_raw, vec3(0.299, 0.587, 0.114));
-    let center_color = select(center_color_raw, center_color_raw * (threshold / max(center_lum, 1e-4)), center_lum > threshold);
+    // 1. Un-jittered Current Frame Radiance (Now cleaned internally)
+    let center_color = get_radiance_bilinear(uv - scene.jitter);
 
     // 2. Bilateral Filter
     let SIGMA_S = 0.5;
@@ -1137,14 +1145,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let mean = m1 / 9.0;
     let stddev = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
     
-    // Loosen clamping as we converge to avoid clipping true history through single-frame noise
-    var k = 2.0;
-    if scene.frame_count > 10u { k = 8.0; }
+    // Adaptive clamping
+    var k = 1.5;
+    if scene.frame_count > 16u { k = 60.0; } // Effectively disable clamping when static for full convergence
     let clamped_history = clamp(samples_history, mean - stddev * k, mean + stddev * k);
 
     // Adaptive alpha for progressive refinement
     var alpha = 1.0 / f32(scene.frame_count);
-    alpha = max(alpha, 0.0005); // Allow much deeper convergence
+    alpha = max(alpha, 0.0001); // Even deeper convergence (10000 frames)
 
     let final_hdr = mix(clamped_history, denoised_hdr, alpha);
 
@@ -1511,7 +1519,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     compute(e) {
       if (!this.bindGroup || !this.postprocessBindGroup) return;
-      this.totalFrames++, this.seed++;
+      this.totalFrames++;
       const t = (u, g) => {
         let b = 1, v = 0;
         for (; u > 0; ) b = b / g, v = v + b * (u % g), u = Math.floor(u / g);

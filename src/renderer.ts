@@ -534,7 +534,6 @@ export class WebGPURenderer {
     if (!this.bindGroup || !this.postprocessBindGroup) return;
 
     this.totalFrames++;
-    this.seed++;
 
     // Halton jitter for TAA (Persistent counter)
     const getHalton = (index: number, base: number) => {

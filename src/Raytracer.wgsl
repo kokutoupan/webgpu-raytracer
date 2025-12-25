@@ -925,22 +925,23 @@ fn ray_color(r_in: Ray, p_idx: u32, rng: ptr<function, u32>) -> vec3<f32> {
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
     let p_idx = id.y * scene.width + id.x;
-    var rng = init_rng(p_idx, scene.rand_seed);
 
     var col = vec3(0.);
-    for (var s = 0u; s < SPP; s++) {
+    for (var i = 0u; i < SPP; i++) {
+        var rng = init_rng(p_idx, scene.frame_count * SPP + i);
+
         var off = vec3(0.);
         if scene.camera.origin.w > 0. {
             let rd = scene.camera.origin.w * random_in_unit_disk(&rng);
             off = scene.camera.u.xyz * rd.x + scene.camera.v.xyz * rd.y;
         }
+
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
+
         col += ray_color(Ray(scene.camera.origin.xyz + off, d), p_idx, &rng);
     }
     col /= f32(SPP);
-
-    var acc = vec4(0.);
     accumulateBuffer[p_idx] = vec4(col, 1.0);
 }
