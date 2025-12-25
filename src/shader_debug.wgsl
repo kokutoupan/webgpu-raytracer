@@ -47,10 +47,8 @@ struct Ray {
 }
 
 struct BVHNode {
-    min_b: vec3<f32>,
-    left_first: f32, // [TLAS] Child/Inst Idx, [BLAS] Child/Tri Idx
-    max_b: vec3<f32>,
-    tri_count: f32   // [TLAS] Leaf(1)/Int(0), [BLAS] Count
+    min_b: vec4<f32>, // w: left_first
+    max_b: vec4<f32>, // w: tri_count
 }
 
 struct Instance {
@@ -110,13 +108,11 @@ fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
 
 // --- Intersection ---
 
-fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
-    let t0s = (min_b - r.origin) * inv_d;
-    let t1s = (max_b - r.origin) * inv_d;
-    let t_small = min(t0s, t1s);
-    let t_big = max(t0s, t1s);
-    let tmin = max(t_min, max(t_small.x, max(t_small.y, t_small.z)));
-    let tmax = min(t_max, min(t_big.x, min(t_big.y, t_big.z)));
+fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
+    let t1 = (min_b - origin) * inv_d;
+    let t2 = (max_b - origin) * inv_d;
+    let tmin = max(t_min, max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z)));
+    let tmax = min(t_max, min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z)));
     return select(1e30, tmin, tmin <= tmax);
 }
 
@@ -145,7 +141,7 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
     let root_idx = node_offset;
     let root = blas_nodes[root_idx];
 
-    if intersect_aabb(root.min_b, root.max_b, r, inv_d, t_min, closest_t) < 1e30 {
+    if intersect_aabb(root.min_b.xyz, root.max_b.xyz, r.origin, inv_d, t_min, closest_t) < 1e30 {
         stack[stackptr] = root_idx;
         stackptr++;
     }
@@ -154,11 +150,11 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
         stackptr--;
         let idx = stack[stackptr]; // Global Node Index
         let node = blas_nodes[idx];
-        let count = u32(node.tri_count);
+        let count = u32(node.max_b.w);
 
         if count > 0u {
             // Leaf Node
-            let first = u32(node.left_first); // Triangle Index (Sorted)
+            let first = u32(node.min_b.w); // Triangle Index (Sorted)
             for (var i = 0u; i < count; i++) {
                 let tri_id = first + i;
                 let b = tri_id * 3u;
@@ -170,14 +166,14 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_offset: u32) -> vec2<f32>
             // Internal Node
             // node.left_first is RELATIVE to the start of this BLAS.
             // We must add node_offset to get the Global Index.
-            let l = u32(node.left_first) + node_offset; // Fix: Add offset
+            let l = u32(node.min_b.w) + node_offset; // Fix: Add offset
             let r_node_idx = l + 1u;
 
             let nl = blas_nodes[l];
             let nr = blas_nodes[r_node_idx];
 
-            let dl = intersect_aabb(nl.min_b, nl.max_b, r, inv_d, t_min, closest_t);
-            let dr = intersect_aabb(nr.min_b, nr.max_b, r, inv_d, t_min, closest_t);
+            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, closest_t);
 
             let hl = dl < 1e30; let hr = dr < 1e30;
             if hl && hr {
@@ -198,7 +194,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     var stack: array<u32, 64>; // Stack increased to 64
     var stackptr = 0u;
 
-    if intersect_aabb(tlas_nodes[0].min_b, tlas_nodes[0].max_b, r, inv_d, t_min, res.t) < 1e30 {
+    if intersect_aabb(tlas_nodes[0].min_b.xyz, tlas_nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < 1e30 {
         stack[stackptr] = 0u; stackptr++;
     }
 
@@ -208,8 +204,8 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
         let idx = stack[stackptr];
         let node = tlas_nodes[idx];
 
-        if node.tri_count > 0.5 { // Leaf (Instance)
-            let inst_idx = u32(node.left_first);
+        if node.max_b.w > 0.5 { // Leaf (Instance)
+            let inst_idx = u32(node.min_b.w);
             let inst = instances[inst_idx];
             let inv = get_inv_transform(inst);
             
@@ -224,12 +220,12 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
             }
         } else {
             // Internal (TLAS)
-            let l = u32(node.left_first);
+            let l = u32(node.min_b.w);
             let r_idx = l + 1u;
             let nl = tlas_nodes[l];
             let nr = tlas_nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b, nl.max_b, r, inv_d, t_min, res.t);
-            let dr = intersect_aabb(nr.min_b, nr.max_b, r, inv_d, t_min, res.t);
+            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, res.t);
+            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, res.t);
             if dl < 1e30 && dr < 1e30 {
                 if dl < dr {
                     stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++;

@@ -25,7 +25,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const X = "modulepreload", K = function(i) {
     return "/webgpu-raytracer/" + i;
-  }, $ = {}, O = function(e, t, n) {
+  }, H = {}, O = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let h = function(u) {
@@ -41,13 +41,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       document.getElementsByTagName("link");
       const l = document.querySelector("meta[property=csp-nonce]"), c = (l == null ? void 0 : l.nonce) || (l == null ? void 0 : l.getAttribute("nonce"));
       r = h(t.map((u) => {
-        if (u = K(u), u in $) return;
-        $[u] = true;
+        if (u = K(u), u in H) return;
+        H[u] = true;
         const g = u.endsWith(".css"), b = g ? '[rel="stylesheet"]' : "";
         if (document.querySelector(`link[href="${u}"]${b}`)) return;
-        const m = document.createElement("link");
-        if (m.rel = g ? "stylesheet" : X, g || (m.as = "script"), m.crossOrigin = "", m.href = u, c && m.setAttribute("nonce", c), document.head.appendChild(m), g) return new Promise((Y, J) => {
-          m.addEventListener("load", Y), m.addEventListener("error", () => J(new Error(`Unable to preload CSS for ${u}`)));
+        const v = document.createElement("link");
+        if (v.rel = g ? "stylesheet" : X, g || (v.as = "script"), v.crossOrigin = "", v.href = u, c && v.setAttribute("nonce", c), document.head.appendChild(v), g) return new Promise((J, Y) => {
+          v.addEventListener("load", J), v.addEventListener("error", () => Y(new Error(`Unable to preload CSS for ${u}`)));
         });
       }));
     }
@@ -97,6 +97,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
+    prev_jitter: vec2<f32>
 }
 
 struct MeshTopology {
@@ -747,25 +748,24 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
     let p_idx = id.y * scene.width + id.x;
-    var rng = init_rng(p_idx, scene.rand_seed);
 
     var col = vec3(0.);
-    for (var s = 0u; s < SPP; s++) {
+    for (var i = 0u; i < SPP; i++) {
+        var rng = init_rng(p_idx, scene.frame_count * SPP + i);
+
         var off = vec3(0.);
         if scene.camera.origin.w > 0. {
             let rd = scene.camera.origin.w * random_in_unit_disk(&rng);
             off = scene.camera.u.xyz * rd.x + scene.camera.v.xyz * rd.y;
         }
+
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
         col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
     }
     col /= f32(SPP);
-
-    var acc = vec4(0.);
-    if scene.frame_count > 1u { acc = accumulateBuffer[p_idx]; }
-    accumulateBuffer[p_idx] = acc + vec4(col, 1.0);
+    accumulateBuffer[p_idx] = vec4(col, 1.0);
 }
 `, Z = `// =========================================================
 //   Post Process (PostProcess.wgsl)
@@ -792,7 +792,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    pad2: vec2<f32>
+    prev_jitter: vec2<f32>
 }
 
 @group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
@@ -807,12 +807,48 @@ fn aces_tone_mapping(color: vec3<f32>) -> vec3<f32> {
     return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3(0.0), vec3(1.0));
 }
 
-fn get_radiance(coord: vec2<u32>) -> vec3<f32> {
-    if coord.x >= scene.width || coord.y >= scene.height { return vec3(0.0); }
-    let p_idx = coord.y * scene.width + coord.x;
+fn get_radiance(coord: vec2<i32>) -> vec3<f32> {
+    let c = clamp(coord, vec2<i32>(0), vec2<i32>(i32(scene.width) - 1, i32(scene.height) - 1));
+    let p_idx = u32(c.y) * scene.width + u32(c.x);
     let acc = accumulateBuffer[p_idx];
     if acc.a <= 0.0 { return vec3(0.0); }
     return acc.rgb / acc.a;
+}
+
+fn get_radiance_clean(coord: vec2<i32>) -> vec3<f32> {
+    let center = get_radiance(coord);
+
+    var min_nb = vec3(1e6);
+    var max_nb = vec3(-1e6);
+    
+    // 3x3 box (excluding center) for more stable suppression
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            if x == 0 && y == 0 { continue; }
+            let nb = get_radiance(coord + vec2<i32>(x, y));
+            min_nb = min(min_nb, nb);
+            max_nb = max(max_nb, nb);
+        }
+    }
+    
+    // Firefly suppression: clamp center to neighborhood range with some headroom
+    let threshold = 3.0;
+    return clamp(center, vec3(0.0), max_nb * threshold + 0.1);
+}
+
+// Bilinear sampling for un-jittering
+fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
+    let dims = vec2<f32>(f32(scene.width), f32(scene.height));
+    let f_coord = uv * dims - 0.5;
+    let i_coord = vec2<i32>(floor(f_coord));
+    let f = f_coord - vec2<f32>(i_coord);
+
+    let c00 = get_radiance_clean(i_coord + vec2<i32>(0, 0));
+    let c10 = get_radiance_clean(i_coord + vec2<i32>(1, 0));
+    let c01 = get_radiance_clean(i_coord + vec2<i32>(0, 1));
+    let c11 = get_radiance_clean(i_coord + vec2<i32>(1, 1));
+
+    return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
 fn luminance(c: vec3<f32>) -> f32 {
@@ -823,92 +859,67 @@ fn luminance(c: vec3<f32>) -> f32 {
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
 
-    let center_pos = id.xy;
-    let center_color_raw = get_radiance(center_pos);
+    let dims = vec2<f32>(f32(scene.width), f32(scene.height));
+    let uv = (vec2<f32>(id.xy) + 0.5) / dims;
 
-    // 1. Firefly Removal
-    var max_neighbor_lum = 0.0;
-    for (var dy = -1; dy <= 1; dy++) {
-        for (var dx = -1; dx <= 1; dx++) {
-            if dx == 0 && dy == 0 { continue; }
-            let nx = i32(center_pos.x) + dx;
-            let ny = i32(center_pos.y) + dy;
-            if nx < 0 || nx >= i32(scene.width) || ny < 0 || ny >= i32(scene.height) { continue; }
-            let neighbor_color = get_radiance(vec2<u32>(u32(nx), u32(ny)));
-            max_neighbor_lum = max(max_neighbor_lum, luminance(neighbor_color));
-        }
-    }
-    let center_lum = luminance(center_color_raw);
-    let threshold = max(max_neighbor_lum * 2.5, 1.0); // Slightly more relaxed for sharpness
-    var center_color = center_color_raw;
-    if center_lum > threshold {
-        center_color *= (threshold / center_lum);
-    }
+    // 1. Un-jittered Current Frame Radiance (Now cleaned internally)
+    let center_color = get_radiance_bilinear(uv - scene.jitter);
 
-    // 2. Bilateral Filter (Sharpened/Reduced radius)
-    let SIGMA_S = 0.5; // Tighter spatial filter
-    let SIGMA_R = 0.1; // Tighter range filter
-    let RADIUS = 1;    // 3x3 only
+    // 2. Bilateral Filter
+    let SIGMA_S = 0.5;
+    let SIGMA_R = 0.1;
+    let RADIUS = 1;
 
     var filtered_sum = vec3(0.0);
     var total_weight = 0.0;
-
     for (var dy = -RADIUS; dy <= RADIUS; dy++) {
         for (var dx = -RADIUS; dx <= RADIUS; dx++) {
-            let neighbor_pos = vec2<i32>(center_pos) + vec2<i32>(dx, dy);
-            if neighbor_pos.x < 0 || neighbor_pos.x >= i32(scene.width) || neighbor_pos.y < 0 || neighbor_pos.y >= i32(scene.height) {
-                continue;
-            }
+            let samp_uv = uv + vec2<f32>(f32(dx), f32(dy)) / dims - scene.jitter;
+            let neighbor_color = get_radiance_bilinear(samp_uv);
 
-            let neighbor_color = get_radiance(vec2<u32>(u32(neighbor_pos.x), u32(neighbor_pos.y)));
             let w_s = exp(-f32(dx * dx + dy * dy) / (2.0 * SIGMA_S * SIGMA_S));
             let color_diff = neighbor_color - center_color;
-            let w_r = exp(-dot(color_diff, color_diff) / (2.0 * SIGMA_R * SIGMA_R));
+            let w_r = exp(-dot(color_diff, color_diff) / (2.0 * SIGMA_R * f32(RADIUS) * f32(RADIUS)));
             let w = w_s * w_r;
             filtered_sum += neighbor_color * w;
             total_weight += w;
         }
     }
-
     let denoised_hdr = filtered_sum / max(total_weight, 1e-4);
     
     // 3. TAA Blend (HDR Feedback)
-    let dims = vec2<f32>(f32(scene.width), f32(scene.height));
-    let uv = (vec2<f32>(id.xy) + 0.5) / dims;
     let samples_history = textureSampleLevel(historyTex, smp, uv, 0.0).rgb;
     
     // Neighborhood Clamping
-    var min_c = center_color;
-    var max_c = center_color;
-    for (var y = -1; y <= 1; y++) {
-        for (var x = -1; x <= 1; x++) {
-            let nx = i32(center_pos.x) + x;
-            let ny = i32(center_pos.y) + y;
-            if nx < 0 || nx >= i32(scene.width) || ny < 0 || ny >= i32(scene.height) { continue; }
-            let nb = get_radiance(vec2<u32>(u32(nx), u32(ny)));
-            min_c = min(min_c, nb);
-            max_c = max(max_c, nb);
+    var m1 = vec3(0.0);
+    var m2 = vec3(0.0);
+    for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+            let nb_uv = uv + vec2<f32>(f32(dx), f32(dy)) / dims - scene.jitter;
+            let c = get_radiance_bilinear(nb_uv);
+            m1 += c;
+            m2 += c * c;
         }
     }
-    let clamped_history = clamp(samples_history, min_c, max_c);
+    let mean = m1 / 9.0;
+    let stddev = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
+    
+    // Adaptive clamping
+    var k = 1.5;
+    if scene.frame_count > 16u { k = 60.0; } // Effectively disable clamping when static for full convergence
+    let clamped_history = clamp(samples_history, mean - stddev * k, mean + stddev * k);
 
-    var alpha = 0.15; // Increased alpha for more sharpness/current frame detail
-    if scene.frame_count <= 1u { alpha = 1.0; }
+    // Adaptive alpha for progressive refinement
+    var alpha = 1.0 / f32(scene.frame_count);
+    alpha = max(alpha, 0.0001); // Even deeper convergence (10000 frames)
 
     let final_hdr = mix(clamped_history, denoised_hdr, alpha);
 
-    // Save HDR for next frame
+    // Store un-jittered result
     textureStore(historyOutput, vec2<i32>(id.xy), vec4(final_hdr, 1.0));
 
-    // 4. Tonemapping and Sharpening Filter
+    // 4. Output
     let mapped = aces_tone_mapping(final_hdr);
-
-    // Simple cross-sharpening (Unsharp mask)
-    // Sample cross neighbors from the tonemapped result would be expensive (re-calculating neighbors)
-    // So we just do a simple pass on 'mapped' itself using derived neighborhood if possible,
-    // but better to just output here. 
-    // Wait, let's just use a basic sharpen calculation:
-    // We already have 'center_color' and 'denoised_hdr'.
     let edge_detect = center_color - denoised_hdr;
     let sharpened = mapped + aces_tone_mapping(edge_detect) * 0.3;
 
@@ -947,6 +958,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "historyIndex", 0);
       __publicField(this, "prevCameraData", new Float32Array(24));
       __publicField(this, "jitter", {
+        x: 0,
+        y: 0
+      });
+      __publicField(this, "prevJitter", {
         x: 0,
         y: 0
       });
@@ -1250,18 +1265,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     compute(e) {
       if (!this.bindGroup || !this.postprocessBindGroup) return;
-      this.totalFrames++, this.seed++;
+      this.totalFrames++;
       const t = (u, g) => {
-        let b = 1, m = 0;
-        for (; u > 0; ) b = b / g, m = m + b * (u % g), u = Math.floor(u / g);
-        return m;
+        let b = 1, v = 0;
+        for (; u > 0; ) b = b / g, v = v + b * (u % g), u = Math.floor(u / g);
+        return v;
       }, n = t(this.totalFrames % 16 + 1, 2) - 0.5, r = t(this.totalFrames % 16 + 1, 3) - 0.5;
-      this.jitter = {
+      this.prevJitter.x = this.jitter.x, this.prevJitter.y = this.jitter.y, this.jitter = {
         x: n / this.canvas.width,
         y: r / this.canvas.height
       }, this.uniformMixedData[0] = e, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = this.seed, this.uniformMixedData[4] = this.lightCount, this.uniformMixedData[5] = this.canvas.width, this.uniformMixedData[6] = this.canvas.height, this.uniformMixedData[7] = 0;
       const s = new Float32Array(this.uniformMixedData.buffer);
-      s[8] = this.jitter.x, s[9] = this.jitter.y, this.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData);
+      s[8] = this.jitter.x, s[9] = this.jitter.y, s[10] = this.prevJitter.x, s[11] = this.prevJitter.y, this.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData);
       const o = Math.ceil(this.canvas.width / 8), l = Math.ceil(this.canvas.height / 8), c = this.device.createCommandEncoder(), h = c.beginComputePass();
       h.setPipeline(this.pipeline), h.setBindGroup(0, this.bindGroup), h.dispatchWorkgroups(o, l), h.end(), this.device.queue.submit([
         c.finish()
@@ -1284,7 +1299,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function te(i) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-BGTA25rB.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-BESrBICk.js", {
       name: i == null ? void 0 : i.name
     });
   }
@@ -2040,23 +2055,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       s && await s.sendRenderRequest(t, n, r);
     }
   }
-  let v = false, w = null, k = null, x = null, R = [], E = /* @__PURE__ */ new Map(), D = 0, P = 0, L = 0, B = null, y = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
-  const G = 20, a = new re(), f = new ee(a.canvas), d = new ne(), M = new ie(f, d, a.canvas), _ = new ae();
+  let m = false, w = null, k = null, x = null, R = [], E = /* @__PURE__ */ new Map(), D = 0, P = 0, L = 0, B = null, y = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
+  const G = 20, a = new re(), f = new ee(a.canvas), d = new ne(), U = new ie(f, d, a.canvas), _ = new ae();
   let S = 0, N = 0, T = 0, z = performance.now();
   const oe = () => {
     const i = parseInt(a.inputDepth.value, 10) || p.defaultDepth, e = parseInt(a.inputSPP.value, 10) || p.defaultSPP;
     f.buildPipeline(i, e);
-  }, H = () => {
+  }, $ = () => {
     const { width: i, height: e } = a.getRenderConfig();
     f.updateScreenSize(i, e), d.hasWorld && (d.updateCamera(i, e), f.updateSceneUniforms(d.cameraData, 0, d.lightCount)), f.recreateBindGroup(), f.resetAccumulation(), S = 0, N = 0;
-  }, U = async (i, e = true) => {
-    v = false, console.log(`Loading Scene: ${i}...`);
+  }, M = async (i, e = true) => {
+    m = false, console.log(`Loading Scene: ${i}...`);
     let t, n;
-    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), H(), a.updateAnimList(d.getAnimationList()), e && (v = true, a.updateRenderButton(true));
+    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), $(), a.updateAnimList(d.getAnimationList()), e && (m = true, a.updateRenderButton(true));
   }, le = async () => {
     f.updateCombinedGeometry(d.vertices, d.normals, d.uvs), f.updateCombinedBVH(d.tlas, d.blas), f.updateBuffer("topology", d.mesh_topology), f.updateBuffer("instance", d.instances), f.updateBuffer("lights", d.lights), f.updateSceneUniforms(d.cameraData, 0, d.lightCount);
   }, I = () => {
-    if (M.recording || (requestAnimationFrame(I), !v || !d.hasWorld)) return;
+    if (U.recording || (requestAnimationFrame(I), !m || !d.hasWorld)) return;
     let i = parseInt(a.inputUpdateInterval.value, 10) || 0;
     if (i > 0 && S >= i && d.update(N / (i || 1) / 60), d.hasNewData) {
       let t = false;
@@ -2070,7 +2085,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!t && (!w || !k)) return;
     const n = a.getRenderConfig(), r = t ? e : void 0, s = t ? "DUMMY" : w, o = t ? "obj" : k;
     n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), y.set(i, "loading"), await _.sendSceneToWorker(i, s, o, n)) : (console.log("Broadcasting scene to all workers..."), _.getWorkerIds().forEach((l) => y.set(l, "loading")), await _.broadcastScene(s, o, n));
-  }, V = async (i) => {
+  }, j = async (i) => {
     if (y.get(i) !== "idle") {
       console.log(`Worker ${i} is ${y.get(i)}, skipping assignment.`);
       return;
@@ -2115,8 +2130,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       type: "video/webm"
     }), o = URL.createObjectURL(s), l = document.createElement("a");
     l.href = o, l.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(l), l.click(), document.body.removeChild(l), URL.revokeObjectURL(o), a.setStatus("Finished!");
-  }, j = async (i, e, t) => {
-    console.log(`[Worker] Starting Render: Frames ${i} - ${i + e}`), a.setStatus(`Remote Rendering: ${i}-${i + e}`), v = false;
+  }, V = async (i, e, t) => {
+    console.log(`[Worker] Starting Render: Frames ${i} - ${i + e}`), a.setStatus(`Remote Rendering: ${i}-${i + e}`), m = false;
     const n = {
       ...t,
       startFrame: i,
@@ -2124,17 +2139,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     try {
       a.setRecordingState(true, `Remote: ${e} f`);
-      const r = await M.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
+      const r = await U.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
       console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await _.sendRenderResult(r, i), a.setRecordingState(false), a.setStatus("Idle");
     } catch (r) {
       console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
     } finally {
-      v = true, requestAnimationFrame(I);
+      m = true, requestAnimationFrame(I);
     }
   }, de = async () => {
     if (!A) return;
     const { start: i, count: e, config: t } = A;
-    A = null, await j(i, e, t);
+    A = null, await V(i, e, t);
   };
   _.onStatusChange = (i) => a.setStatus(`Status: ${i}`);
   _.onWorkerLeft = (i) => {
@@ -2143,7 +2158,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     e && (console.warn(`Worker ${i} failed job ${e.start}. Re-queueing.`), R.unshift(e), C.delete(i), a.setStatus(`Re-queued Job ${e.start}`));
   };
   _.onWorkerReady = (i) => {
-    console.log(`Worker ${i} is READY`), a.setStatus(`Worker ${i} Ready!`), y.set(i, "idle"), x === "host" && R.length > 0 && V(i);
+    console.log(`Worker ${i} is READY`), a.setStatus(`Worker ${i} Ready!`), y.set(i, "idle"), x === "host" && R.length > 0 && j(i);
   };
   _.onWorkerJoined = (i) => {
     a.setStatus(`Worker Joined: ${i}`), y.set(i, "idle"), x === "host" && R.length > 0 && q(i);
@@ -2157,26 +2172,26 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       };
       return;
     }
-    await j(i, e, t);
+    await V(i, e, t);
   };
   _.onRenderResult = async (i, e, t) => {
-    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), E.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), y.set(t, "idle"), C.delete(t), await V(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
+    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), E.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), y.set(t, "idle"), C.delete(t), await j(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
   };
   _.onSceneReceived = async (i, e) => {
-    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await U(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await _.sendWorkerReady(), de();
+    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await M(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await _.sendWorkerReady(), de();
   };
   const ue = () => {
     a.onRenderStart = () => {
-      v = true;
+      m = true;
     }, a.onRenderStop = () => {
-      v = false;
-    }, a.onSceneSelect = (i) => U(i, false), a.onResolutionChange = H, a.onRecompile = (i, e) => {
-      v = false, f.buildPipeline(i, e), f.recreateBindGroup(), f.resetAccumulation(), S = 0, v = true;
+      m = false;
+    }, a.onSceneSelect = (i) => M(i, false), a.onResolutionChange = $, a.onRecompile = (i, e) => {
+      m = false, f.buildPipeline(i, e), f.recreateBindGroup(), f.resetAccumulation(), S = 0, m = true;
     }, a.onFileSelect = async (i) => {
       var _a;
-      ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), k = "obj") : (w = await i.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", U("viewer", false);
+      ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), k = "obj") : (w = await i.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", M("viewer", false);
     }, a.onAnimSelect = (i) => d.setAnimation(i), a.onRecordStart = async () => {
-      if (!M.recording) if (x === "host") {
+      if (!U.recording) if (x === "host") {
         const i = _.getWorkerIds();
         if (B = a.getRenderConfig(), L = Math.ceil(B.fps * B.duration), !confirm(`Distribute recording? (Workers: ${i.length})
 Auto Scene Sync enabled.`)) return;
@@ -2190,18 +2205,18 @@ Auto Scene Sync enabled.`)) return;
         }
         P = R.length, i.forEach((e) => y.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${P} jobs (Waiting for workers...)`), i.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await q()) : console.log("No workers yet. Waiting...");
       } else {
-        v = false, a.setRecordingState(true);
+        m = false, a.setRecordingState(true);
         const i = a.getRenderConfig();
         try {
           const e = performance.now();
-          await M.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
+          await U.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
             const n = document.createElement("a");
             n.href = t, n.download = `raytrace_${Date.now()}.webm`, n.click(), URL.revokeObjectURL(t);
           }), console.log(`Recording took ${performance.now() - e}[ms]`);
         } catch {
           alert("Recording failed.");
         } finally {
-          a.setRecordingState(false), v = true, a.updateRenderButton(true), requestAnimationFrame(I);
+          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(I);
         }
       }
     }, a.onConnectHost = () => {
@@ -2217,7 +2232,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + i);
       return;
     }
-    ue(), oe(), H(), U("cornell", false), requestAnimationFrame(I);
+    ue(), oe(), $(), M("cornell", false), requestAnimationFrame(I);
   }
   he().catch(console.error);
 })();
