@@ -240,13 +240,41 @@ fn get_reservoir_offsets(pixel_idx: u32) -> vec2<u32> {
     return vec2(current_page + pixel_idx, prev_page + pixel_idx);
 }
 
-// ターゲット関数 p_hat (輝度ベース)
-fn evaluate_p_hat(radiance: vec3<f32>) -> f32 {
-    // 輝度(Luminance)を重要度とする
-    return dot(radiance, vec3(0.2126, 0.7152, 0.0722));
+// ターゲット関数 p_hat (輝度ベース + BSDF近似)
+fn evaluate_p_hat(radiance: vec3<f32>, albedo: vec3<f32>, cos_theta: f32) -> f32 {
+    // 輝度(Luminance)を実質的な寄与(radiance * albedo * cos)で評価
+    let contribution = radiance * albedo * cos_theta;
+    
+    // [Firefly対策] 非常に高い輝度をクランプして、特定のサンプルがリザーバを支配し続けないようにする
+    let clamped_contribution = min(contribution, vec3(50.0));
+    return dot(clamped_contribution, vec3(0.2126, 0.7152, 0.0722));
 }
 
-// RIS Update: 候補をリザーバに結合する
+// マージ用: 反射率と余弦を考慮した重み付け
+fn merge_reservoir_refined(
+    dest: ptr<function, GIReservoir>,
+    src: GIReservoir,
+    p_hat_dest: f32, // 移動先の点での重要度
+    albedo: vec3<f32>,
+    normal: vec3<f32>,
+    rng: ptr<function, u32>
+) -> bool {
+    let M = src.M;
+    let weight = p_hat_dest * src.W * M; // RIS weight
+
+    (*dest).w_sum += weight;
+    (*dest).M += M;
+
+    if rand_pcg(rng) < (weight / (*dest).w_sum) {
+        (*dest).sample_dir = src.sample_dir;
+        (*dest).sample_radiance = src.sample_radiance;
+        (*dest).sample_dist = src.sample_dist;
+        return true;
+    }
+    return false;
+}
+
+// 互換性のための既存のリザーバ更新 (RIS Update用)
 fn update_reservoir(
     res: ptr<function, GIReservoir>,
     dir: vec3<f32>,
@@ -258,33 +286,10 @@ fn update_reservoir(
     (*res).w_sum += weight;
     (*res).M += 1.0;
 
-    // 確率的に置換 (weight / w_sum)
     if rand_pcg(rng) < (weight / (*res).w_sum) {
         (*res).sample_dir = dir;
         (*res).sample_radiance = radiance;
         (*res).sample_dist = dist;
-        return true;
-    }
-    return false;
-}
-
-// マージ用: 別のリザーバを自分に結合する
-fn merge_reservoir(
-    dest: ptr<function, GIReservoir>,
-    src: GIReservoir,
-    p_hat_src: f32,
-    rng: ptr<function, u32>
-) -> bool {
-    let M = src.M;
-    let weight = p_hat_src * src.W * M; // RIS weight
-
-    (*dest).w_sum += weight;
-    (*dest).M += M;
-
-    if rand_pcg(rng) < (weight / (*dest).w_sum) {
-        (*dest).sample_dir = src.sample_dir;
-        (*dest).sample_radiance = src.sample_radiance;
-        (*dest).sample_dist = src.sample_dist;
         return true;
     }
     return false;
@@ -758,25 +763,84 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 
                 if bounce_hit.inst_idx >= 0 {
                     initial_dist = bounce_hit.t;
-                    // ヒット先の色を取得（簡易版：Emissive + BaseColor）
-                    // 本来はここでNEEや更なるバウンス評価が必要ですが、まずはヒット先のEmissive等で近似
-                    let b_tri = topology[u32(bounce_hit.tri_idx)];
-                    initial_Li = b_tri.data3.rgb; // Emissive
-                    // もしEmissiveが弱ければ、環境光や簡易ライティングを足す
-                    if length(initial_Li) < 1e-4 {
-                         // 簡易的にヒット面のAlbedoを間接光として扱う（本来はNGだがデバッグ用）
-                        initial_Li = b_tri.data0.rgb * 0.1;
+
+                    let b_tri_idx = u32(bounce_hit.tri_idx);
+                    let b_inst_idx = u32(bounce_hit.inst_idx);
+                    let b_tri = topology[b_tri_idx];
+                    let b_inst = instances[b_inst_idx];
+                    let b_inv = get_inv_transform(b_inst);
+                    
+                    // 1バウンス先の点における法線とUVの補間
+                    let b_pos0 = get_pos(b_tri.v0);
+                    let b_pos1 = get_pos(b_tri.v1);
+                    let b_pos2 = get_pos(b_tri.v2);
+                    let b_r_local = Ray((b_inv * vec4(bounce_ray.origin, 1.)).xyz, (b_inv * vec4(bounce_ray.direction, 0.)).xyz);
+                    
+                    // 重心座標の計算
+                    let b_e1 = b_pos1 - b_pos0;
+                    let b_e2 = b_pos2 - b_pos0;
+                    let b_s = b_r_local.origin - b_pos0;
+                    let b_h = cross(b_r_local.direction, b_e2);
+                    let b_f = 1.0 / dot(b_e1, b_h);
+                    let b_u = b_f * dot(b_s, b_h);
+                    let b_q = cross(b_s, b_e1);
+                    let b_v = b_f * dot(b_r_local.direction, b_q);
+                    let b_w = 1.0 - b_u - b_v;
+
+                    let b_uv0 = get_uv(b_tri.v0);
+                    let b_uv1 = get_uv(b_tri.v1);
+                    let b_uv2 = get_uv(b_tri.v2);
+                    let b_uv = b_uv0 * b_w + b_uv1 * b_u + b_uv2 * b_v;
+
+                    let b_n0 = get_normal(b_tri.v0);
+                    let b_n1 = get_normal(b_tri.v1);
+                    let b_n2 = get_normal(b_tri.v2);
+                    let b_ln = normalize(b_n0 * b_w + b_n1 * b_u + b_n2 * b_v);
+                    let b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+                    let b_p = bounce_ray.origin + bounce_ray.direction * bounce_hit.t;
+
+                    // 1. Emissive
+                    var b_emissive = b_tri.data3.rgb;
+                    let b_em_tex = b_tri.data2.w;
+                    if b_em_tex > -0.5 {
+                        b_emissive *= textureSampleLevel(tex, smp, b_uv, i32(b_em_tex), 0.0).rgb;
+                    }
+                    initial_Li = b_emissive;
+
+                    // 2. Direct Light (NEE) at hit point
+                    let b_mat_type = bitcast<u32>(b_tri.data0.w);
+                    if b_mat_type != 3u && b_mat_type != 2u {
+                        let b_light_s = sample_light_source(b_p, rng);
+                        if b_light_s.pdf > 0.0 {
+                            let b_shadow_ray = Ray(b_p + b_normal * 1e-4, b_light_s.dir);
+                            let b_shadow_hit = intersect_tlas(b_shadow_ray, T_MIN, b_light_s.dist - 2e-4);
+                            if b_shadow_hit.inst_idx == -1 {
+                                var b_albedo = b_tri.data0.rgb;
+                                let b_base_tex = b_tri.data2.x;
+                                if b_base_tex > -0.5 {
+                                    b_albedo *= textureSampleLevel(tex, smp, b_uv, i32(b_base_tex), 0.0).rgb;
+                                }
+                                let b_bsdf = eval_diffuse(b_albedo);
+                                initial_Li += b_bsdf * b_light_s.L * max(dot(b_normal, b_light_s.dir), 0.0) / b_light_s.pdf;
+                            }
+                        }
                     }
                 } else {
-                    // Sky color (もしあれば)
                     initial_Li = vec3(0.0);
+                }
+
+                // [Firefly/Darkness対策] もし候補が完全に黒ければ、わずかに反射率を足して収束を助ける
+                if length(initial_Li) < 1e-4 {
+                    initial_Li = albedo * 0.05;
                 }
             }
 
             // 初期候補をリザーバに追加
-            let p_hat_initial = evaluate_p_hat(initial_Li);
+            let initial_cos = max(dot(normal, initial_dir), 0.0);
+            let p_hat_initial = evaluate_p_hat(initial_Li, albedo, initial_cos);
             // RIS Weight = p_hat / pdf (BSDF重点サンプリングの場合)
-            let w_initial = select(0.0, p_hat_initial / initial_pdf, initial_pdf > 1e-6);
+            // [Firefly対策] PDFが極端に小さい場合に重みが爆発するのを防ぐ
+            let w_initial = select(0.0, p_hat_initial / max(initial_pdf, 1e-3), initial_pdf > 1e-8);
 
             update_reservoir(&state, initial_dir, initial_Li, initial_dist, w_initial, rng);
 
@@ -792,10 +856,12 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 
             if normal_check && mat_check {
                 // 過去の候補の評価値 (保存されたRadianceを使用)
-                let p_hat_prev = evaluate_p_hat(prev_res.sample_radiance);
+                // 現在の法線とAlbedoで再評価
+                let prev_cos = max(dot(normal, prev_res.sample_dir), 0.0);
+                let p_hat_prev = evaluate_p_hat(prev_res.sample_radiance, albedo, prev_cos);
                 
                 // マージ
-                merge_reservoir(&state, prev_res, p_hat_prev, rng);
+                merge_reservoir_refined(&state, prev_res, p_hat_prev, albedo, normal, rng);
                 
                 // [修正後] w_sum も道連れにして比率を保つ
                 if state.M > 20.0 {
@@ -843,11 +909,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 
                     if mat_ok && norm_ok && pos_ok {
                         // 近傍の p_hat を再評価
-                        // (ReSTIR GIでは近傍のRadianceをそのまま使う近似が一般的)
-                        let p_hat_neighbor = evaluate_p_hat(neighbor_res.sample_radiance);
+                        let n_cos = max(dot(normal, neighbor_res.sample_dir), 0.0);
+                        let p_hat_neighbor = evaluate_p_hat(neighbor_res.sample_radiance, albedo, n_cos);
                         
                         // マージ実行
-                        merge_reservoir(&state, neighbor_res, p_hat_neighbor, rng);
+                        merge_reservoir_refined(&state, neighbor_res, p_hat_neighbor, albedo, normal, rng);
                     }
                 }
             }
@@ -859,16 +925,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             };
 
             // 3. Finalize W (Unbiased Weight calculation)
-            let p_hat_final = evaluate_p_hat(state.sample_radiance);
-            if p_hat_final > 0.0 {
-                state.W = state.w_sum / (state.M * p_hat_final);
-            } else {
-                state.W = 0.0;
-            }
-
-            if state.W > 20.0 {
-                state.W = 20.0;
-            }
+            let final_cos = max(dot(normal, state.sample_dir), 0.0);
+            let p_hat_final = evaluate_p_hat(state.sample_radiance, albedo, final_cos);
+            // [Firefly対策] ゼロ除算の回避と、重み自体のクランプ
+            state.W = select(0.0, state.w_sum / (state.M * p_hat_final + 1e-6), p_hat_final > 1e-6);
+            state.W = min(state.W, 10.0);
 
             // 4. Store Reservoir (次フレームのために保存)
             state.creation_pos = hit_p;
@@ -888,8 +949,8 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             // Our W already includes normalization (w_sum / (M * p_hat)).
             radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W;
 
-            // ReSTIRで決まったのでループ終了 (GI計算済み)
-            break;
+            // ReSTIRで決まったのでこの深度の処理は完了（ただし、後続のNEE等がスキップされないよう順序に注意）
+            // break; <-- ここで消さずに、NEEの後に移動
         }
 
 
@@ -921,6 +982,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
                     }
                 }
             }
+        }
+
+        // ReSTIRが適用された場合は、直接光の計算後に終了する
+        if specular_bounce && use_restir {
+            break;
         }
 
         // --- BSDF Sampling ---
