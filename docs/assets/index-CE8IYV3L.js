@@ -25,7 +25,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const X = "modulepreload", K = function(i) {
     return "/webgpu-raytracer/" + i;
-  }, $ = {}, O = function(e, t, n) {
+  }, H = {}, z = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let h = function(u) {
@@ -41,13 +41,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       document.getElementsByTagName("link");
       const l = document.querySelector("meta[property=csp-nonce]"), c = (l == null ? void 0 : l.nonce) || (l == null ? void 0 : l.getAttribute("nonce"));
       r = h(t.map((u) => {
-        if (u = K(u), u in $) return;
-        $[u] = true;
+        if (u = K(u), u in H) return;
+        H[u] = true;
         const g = u.endsWith(".css"), b = g ? '[rel="stylesheet"]' : "";
         if (document.querySelector(`link[href="${u}"]${b}`)) return;
-        const m = document.createElement("link");
-        if (m.rel = g ? "stylesheet" : X, g || (m.as = "script"), m.crossOrigin = "", m.href = u, c && m.setAttribute("nonce", c), document.head.appendChild(m), g) return new Promise((Y, J) => {
-          m.addEventListener("load", Y), m.addEventListener("error", () => J(new Error(`Unable to preload CSS for ${u}`)));
+        const v = document.createElement("link");
+        if (v.rel = g ? "stylesheet" : X, g || (v.as = "script"), v.crossOrigin = "", v.href = u, c && v.setAttribute("nonce", c), document.head.appendChild(v), g) return new Promise((Y, J) => {
+          v.addEventListener("load", Y), v.addEventListener("error", () => J(new Error(`Unable to preload CSS for ${u}`)));
         });
       }));
     }
@@ -110,9 +110,17 @@ struct MeshTopology {
     data3: vec4<f32>  // rgb: EmissiveColor, w: OcclusionTex
 }
 
-struct LightRef {
-    inst_idx: u32,
-    tri_idx: u32
+struct PackedLight {
+    position: vec3<f32>,
+    area: f32,
+    emission: vec3<f32>,
+    pad: f32,
+    u_edge: vec3<f32>,
+    pad_u: f32,
+    v_edge: vec3<f32>,
+    pad_v: f32,
+    normal: vec3<f32>,
+    pad_n: f32
 }
 
 struct BVHNode {
@@ -168,6 +176,36 @@ struct ScatterResult {
     is_specular: bool
 }
 
+// ReSTIR\u7528\u306E\u30EA\u30B6\u30FC\u30D0 (\u5019\u88DC\u3092\u4FDD\u6301\u3059\u308B\u7BB1)
+struct Reservoir {
+    w_sum: f32,      // \u91CD\u307F\u306E\u5408\u8A08
+    M: f32,          // \u898B\u3066\u304D\u305F\u5019\u88DC\u6570
+    W: f32,          // \u6700\u7D42\u7684\u306AUnbiased\u30A6\u30A7\u30A4\u30C8
+    light_idx: u32,  // \u52DD\u3061\u6B8B\u3063\u305F\u30E9\u30A4\u30C8\u306EID
+    // \u9078\u3070\u308C\u305F\u30E9\u30A4\u30C8\u4E0A\u306E\u30B5\u30F3\u30D7\u30EA\u30F3\u30B0\u4F4D\u7F6E\u3092\u518D\u73FE\u3059\u308B\u305F\u3081\u306E\u4E71\u6570
+    r_u: f32,
+    r_v: f32
+}
+
+struct ReservoirData {
+    w_sum: f32,
+    M: f32,     // \u5019\u88DC\u6570 (u32\u3067\u3082\u3044\u3044\u304C\u8A08\u7B97\u4E0Af32\u304C\u697D)
+    W: f32,     // Unbiased Weight
+    light_idx: u32,
+    r_u: f32,   // \u30B5\u30F3\u30D7\u30EA\u30F3\u30B0\u4E71\u6570\u5FA9\u5143\u7528
+    r_v: f32,
+    pad1: f32,  // \u30A2\u30E9\u30A4\u30E1\u30F3\u30C8\u7528
+    pad2: f32
+}
+
+// \u7C21\u6613\u7684\u306A\u30E9\u30A4\u30C8\u60C5\u5831\u306E\u5165\u308C\u7269\uFF08\u30B7\u30E3\u30C9\u30A6\u30EC\u30A4\u524D\uFF09
+struct LightCandidate {
+    L: vec3<f32>,       // \u767A\u5149\u5F37\u5EA6
+    pos: vec3<f32>,     // \u30E9\u30A4\u30C8\u4E0A\u306E\u70B9\u306E\u4F4D\u7F6E
+    normal: vec3<f32>,  // \u30E9\u30A4\u30C8\u4E0A\u306E\u70B9\u306E\u6CD5\u7DDA
+    pdf: f32            // \u9078\u3070\u308C\u308B\u78BA\u7387
+}
+
 // =========================================================
 //   Bindings
 // =========================================================
@@ -179,10 +217,12 @@ struct ScatterResult {
 @group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
 @group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; 
 @group(0) @binding(6) var<storage, read> instances: array<Instance>;
-@group(0) @binding(9) var<storage, read> lights: array<LightRef>;
+@group(0) @binding(9) var<storage, read> lights: array<PackedLight>;
 
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
+
+@group(0) @binding(10) var<storage, read_write> reservoirs: array<ReservoirData>;
 
 // =========================================================
 //   Buffer Accessors
@@ -373,60 +413,260 @@ fn sample_dielectric(dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f
 //   Direct Light Sampling
 // =========================================================
 
-fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample {
-    let light_count = scene.light_count;
-    if light_count == 0u {
-        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+
+// \u65E2\u5B58\u306E\u30EA\u30B6\u30FC\u30D0(target)\u306B\u3001\u5225\u306E\u30EA\u30B6\u30FC\u30D0(src)\u3092\u30DE\u30FC\u30B8\u3059\u308B
+fn merge_reservoir(
+    target_reservoir: ptr<function, Reservoir>,
+    src: Reservoir,
+    p_hat_src: f32, // src\u306E\u52DD\u8005\u30E9\u30A4\u30C8\u306E\u8A55\u4FA1\u5024
+    rng: ptr<function, u32>
+) -> bool {
+    // \u30DE\u30FC\u30B8\u6642\u306E\u91CD\u307F: src.W * src.M * p_hat
+    // \u76F4\u611F\u7684\u306B\u306F\u300Csrc\u304C\u6301\u3063\u3066\u3044\u308B\u60C5\u5831\u306E\u4FE1\u983C\u5EA6\u300D
+    
+    // M\u306E\u4E0A\u9650\u30AD\u30E3\u30C3\u30D7\uFF08\u91CD\u8981\uFF01\uFF09
+    // \u3053\u308C\u304C\u306A\u3044\u3068M\u304C\u7121\u9650\u306B\u5897\u3048\u3066\u3001\u65B0\u3057\u3044\u60C5\u5831\u304C\u5165\u308A\u306B\u304F\u304F\u306A\u308B\uFF08Temporal Lag\u306E\u539F\u56E0\uFF09
+    let M_clamped = min(src.M, 20.0);
+
+    let weight = p_hat_src * src.W * M_clamped;
+
+    (*target_reservoir).w_sum += weight;
+    (*target_reservoir).M += M_clamped;
+
+    if rand_pcg(rng) * (*target_reservoir).w_sum < weight {
+        (*target_reservoir).light_idx = src.light_idx;
+        (*target_reservoir).r_u = src.r_u;
+        (*target_reservoir).r_v = src.r_v;
+        return true;
     }
+    return false;
+}
 
-    let light_pick_idx = u32(rand_pcg(rng) * f32(light_count));
-    let l_ref = lights[light_pick_idx];
+// \u30EA\u30B6\u30FC\u30D0\u3092\u66F4\u65B0\u3059\u308B\u95A2\u6570
+// light_idx: \u5019\u88DC\u306E\u30E9\u30A4\u30C8ID
+// weight: \u305D\u306E\u5019\u88DC\u306E\u91CD\u307F (p_hat / source_pdf)
+// c: \u5019\u88DC\u306E\u500B\u6570 (\u901A\u5E38\u306F1.0)
+fn update_reservoir(res: ptr<function, Reservoir>, light_idx: u32, r_u: f32, r_v: f32, weight: f32, c: f32, rng: ptr<function, u32>) -> bool {
+    (*res).w_sum += weight;
+    (*res).M += c;
 
-    let tri = topology[l_ref.tri_idx];
-    let inst = instances[l_ref.inst_idx];
-    let m = get_transform(inst);
+    // \u78BA\u7387\u7684\u306B\u5165\u308C\u66FF\u3048\u308B (\u91CD\u3044\u307B\u3069\u9078\u3070\u308C\u3084\u3059\u3044)
+    if rand_pcg(rng) * (*res).w_sum < weight {
+        (*res).light_idx = light_idx;
+        (*res).r_u = r_u;
+        (*res).r_v = r_v;
+        return true;
+    }
+    return false;
+}
 
-    let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
-    let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
-    let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
 
-    let r1 = rand_pcg(rng);
-    let r2 = rand_pcg(rng);
-    let sqrt_r1 = sqrt(r1);
+// \u6307\u5B9A\u3057\u305F\u30E9\u30A4\u30C8ID\u3068\u4E71\u6570(r_u, r_v)\u3092\u4F7F\u3063\u3066\u3001\u30E9\u30A4\u30C8\u4E0A\u306E\u70B9\u3068\u660E\u308B\u3055\u3092\u8A08\u7B97\u3059\u308B
+// \u203B\u3053\u3053\u3067\u306F\u300C\u53EF\u8996\u6027(\u58C1\u306E\u88CF\u304B\u3069\u3046\u304B)\u300D\u306F\u30C1\u30A7\u30C3\u30AF\u3057\u307E\u305B\u3093\uFF01
+fn evaluate_light_sample(light_idx: u32, r_u: f32, r_v: f32) -> LightCandidate {
+    let lp = lights[light_idx];
+
+    // \u91CD\u5FC3\u5EA7\u6A19\u8A08\u7B97 (r_u, r_v \u304B\u3089 u, v, w \u3092\u4F5C\u308B)
+    let sqrt_r1 = sqrt(r_u);
     let u = 1.0 - sqrt_r1;
-    let v = r2 * sqrt_r1;
-    let w = 1.0 - u - v;
+    let v = r_v * sqrt_r1;
 
-    let p = v0 * u + v1 * v + v2 * w;
-    let edge1 = v1 - v0;
-    let edge2 = v2 - v0;
-    let n_raw = normalize(cross(edge1, edge2));
-    let area = length(cross(edge1, edge2)) * 0.5;
+    // \u30EF\u30FC\u30EB\u30C9\u7A7A\u9593\u4F4D\u7F6E
+    let p = lp.position + lp.u_edge * u + lp.v_edge * v;
+    
+    // \u9762\u6CD5\u7DDA\u3068\u9762\u7A4D\u3001\u304A\u3088\u3073\u4E8B\u524D\u8A08\u7B97\u6E08\u307F\u767A\u5149\u8272
+    let n = lp.normal;
+    let area = lp.area;
+    let L = lp.emission;
+    
+    // PDF = 1 / (Area * TotalLights)
+    let pdf = 1.0 / (area * f32(scene.light_count));
 
-    let l_dir = p - hit_p;
-    let dist_sq = dot(l_dir, l_dir);
+    return LightCandidate(L, p, n, pdf);
+}
+
+fn evaluate_p_hat(hit_p: vec3<f32>, normal: vec3<f32>, light: LightCandidate) -> f32 {
+    let l_vec = light.pos - hit_p;
+    let dist_sq = dot(l_vec, l_vec);
     let dist = sqrt(dist_sq);
-    let unit_l = l_dir / dist;
+    let dir = l_vec / dist;
 
-    let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
-    if cos_theta_l < 1e-6 {
-        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+    let cos_light = max(dot(light.normal, -dir), 0.0);
+    let cos_surf = max(dot(normal, dir), 0.0);
+    
+    // \u8F1D\u5EA6
+    let intensity = dot(light.L, vec3(0.299, 0.587, 0.114));
+
+    return (intensity * cos_light * cos_surf) / max(dist_sq, 1e-4);
+}
+
+// RIS (Resampled Importance Sampling) \u3092\u4F7F\u3063\u305F\u30E9\u30A4\u30C8\u30B5\u30F3\u30D7\u30EA\u30F3\u30B0
+// hit_p: \u30EC\u30A4\u304C\u5F53\u305F\u3063\u305F\u5834\u6240
+// normal: \u30EC\u30A4\u304C\u5F53\u305F\u3063\u305F\u5834\u6240\u306E\u6CD5\u7DDA
+fn sample_lights_restir_reuse(hit_p: vec3<f32>, normal: vec3<f32>, p_idx: u32, rng: ptr<function, u32>) -> LightSample {
+    let stride = scene.width * scene.height;
+    // --- Phase 1: \u521D\u671F\u5019\u88DC (RIS) ---
+    // \u524D\u56DE\u306E\u30B3\u30FC\u30C9\u3068\u540C\u3058\uFF0832\u56DE\u30EB\u30FC\u30D7\u3057\u30661\u500B\u9078\u3076\uFF09
+    // \u7D50\u679C\u3092 \`state\` (Reservoir\u578B) \u306B\u4FDD\u6301
+    let frame_mod = scene.frame_count % 2u;
+
+    let read_offset = frame_mod * stride;           // 0 or stride
+    let write_offset = (1u - frame_mod) * stride;
+
+    var state: Reservoir;
+    state.w_sum = 0.0; state.M = 0.0; state.W = 0.0;
+
+    let CANDIDATE_COUNT = 4u; // \u518D\u5229\u7528\u3059\u308B\u306A\u3089\u521D\u671F\u5019\u88DC\u306F\u6E1B\u3089\u3057\u3066\u3082OK (32 -> 4)
+    for (var i = 0u; i < CANDIDATE_COUNT; i++) {
+        let light_idx = u32(rand_pcg(rng) * f32(scene.light_count));
+        let r_u = rand_pcg(rng);
+        let r_v = rand_pcg(rng);
+        let candidate = evaluate_light_sample(light_idx, r_u, r_v);
+
+        let p_hat = evaluate_p_hat(hit_p, normal, candidate);
+        let weight = p_hat / max(candidate.pdf, 1e-6);
+
+        update_reservoir(&state, light_idx, r_u, r_v, weight, 1.0, rng);
+    }
+    
+    // RIS\u3067\u9078\u3070\u308C\u305F\u5019\u88DC\u306E p_hat \u3092\u8A08\u7B97\u3057\u3066\u304A\u304F\uFF08\u5F8C\u3067\u4F7F\u3046\uFF09
+    // \u203B\u6700\u9069\u5316: update_reservoir\u5185\u3067\u4FDD\u5B58\u3057\u3066\u304A\u304F\u3068\u901F\u3044
+    var p_hat_current = 0.0;
+        {
+        let winner = evaluate_light_sample(state.light_idx, state.r_u, state.r_v);
+        p_hat_current = evaluate_p_hat(hit_p, normal, winner);
+        
+        // RIS\u6BB5\u968E\u3067\u306E W \u3092\u4EEE\u8A08\u7B97
+        if p_hat_current > 0.0 {
+            state.W = state.w_sum / (state.M * p_hat_current);
+        } else {
+            state.W = 0.0;
+        }
     }
 
-    // Albedo if light
-    let uv0 = get_uv(tri.v0);
-    let uv1 = get_uv(tri.v1);
-    let uv2 = get_uv(tri.v2);
-    let tex_uv = uv0 * u + uv1 * v + uv2 * w;
-    var L = tri.data0.rgb;
-    let base_tex = tri.data2.x;
-    if base_tex > -0.5 {
-        L *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
+
+    // --- Phase 2: \u6642\u9593\u7684\u518D\u5229\u7528 (Temporal Reuse) ---
+    // \u30D0\u30C3\u30D5\u30A1\u304B\u3089\u524D\u56DE\u306E\u81EA\u5206\u3092\u8AAD\u307F\u8FBC\u3080
+
+    let prev_idx = read_offset + p_idx;
+    let prev_data = reservoirs[prev_idx];
+    
+    // \u524D\u56DE\u306E\u30C7\u30FC\u30BF\u304C\u6709\u52B9\u304B\u30C1\u30A7\u30C3\u30AF\uFF08\u30AB\u30E1\u30E9\u304C\u52D5\u3044\u3066\u3044\u306A\u3044\u524D\u63D0\u306A\u3089\u305D\u306E\u307E\u307E\u4F7F\u3048\u308B\uFF09
+    // \u203B\u53B3\u5BC6\u306B\u306F\u3053\u3053\u3067\u30EA\u30D7\u30ED\u30B8\u30A7\u30AF\u30B7\u30E7\u30F3\u3084\u3001\u6CD5\u7DDA\u30FB\u6DF1\u5EA6\u306E\u985E\u4F3C\u5EA6\u30C1\u30A7\u30C3\u30AF\u304C\u5FC5\u8981
+    // \u4ECA\u56DE\u306F\u300C\u306A\u3057\u300D\u3067\u7A81\u3063\u8FBC\u3080\uFF08\u591A\u5C11\u306E\u6B8B\u50CF\u306F\u8A31\u5BB9\uFF09
+
+    var prev_res: Reservoir;
+    prev_res.light_idx = prev_data.light_idx;
+    prev_res.W = prev_data.W;
+    prev_res.M = prev_data.M;
+    prev_res.r_u = prev_data.r_u;
+    prev_res.r_v = prev_data.r_v;
+    
+    // \u524D\u56DE\u306E\u52DD\u8005\u304C\u3001\u4ECA\u306E\u81EA\u5206\u306B\u3068\u3063\u3066\u3069\u308C\u304F\u3089\u3044\u5B09\u3057\u3044\u304B (p_hat) \u3092\u518D\u8A55\u4FA1
+    let prev_winner = evaluate_light_sample(prev_res.light_idx, prev_res.r_u, prev_res.r_v);
+    let p_hat_prev = evaluate_p_hat(hit_p, normal, prev_winner);
+    
+    // \u5F71\u30C1\u30A7\u30C3\u30AF\u306F\u307E\u3060\u3057\u306A\u3044\uFF01p_hat > 0 \u306A\u3089\u30DE\u30FC\u30B8\u3059\u308B
+    if p_hat_prev > 0.0 {
+        merge_reservoir(&state, prev_res, p_hat_prev, rng);
+        // \u52DD\u8005\u304C\u5165\u308C\u66FF\u308F\u3063\u305F\u304B\u3082\u3057\u308C\u306A\u3044\u306E\u3067 p_hat_current \u3092\u66F4\u65B0\u3057\u305F\u3044\u304C\u3001
+        // \u53B3\u5BC6\u306B\u306F\u6700\u5F8C\u306B1\u56DE\u3084\u308C\u3070\u3044\u3044
     }
 
-    let pdf = (dist_sq / (cos_theta_l * area)) / f32(light_count);
 
-    return LightSample(L, unit_l, dist, pdf);
+    // --- Phase 3: \u7A7A\u9593\u7684\u518D\u5229\u7528 (Spatial Reuse) ---
+    // \u96A3\u306E\u30D4\u30AF\u30BB\u30EB\u3092\u30E9\u30F3\u30C0\u30E0\u306B\u9078\u3093\u3067\u30DE\u30FC\u30B8
+
+    let SPATIAL_COUNT = 2u; // 2\u301C3\u8FD1\u508D\u3092\u898B\u308B
+    let RADIUS = 30.0; // \u534A\u5F8430\u30D4\u30AF\u30BB\u30EB\u304F\u3089\u3044\u5E83\u3081\u306B\u63A2\u3059
+
+    for (var i = 0u; i < SPATIAL_COUNT; i++) {
+        // \u30E9\u30F3\u30C0\u30E0\u306A\u30AA\u30D5\u30BB\u30C3\u30C8
+        let offset = random_in_unit_disk(rng) * RADIUS;
+        let nx = i32(f32(scene.width) * 0.0 + f32(p_idx % scene.width) + offset.x); // \u7C21\u6613\u8A08\u7B97
+        let ny = i32(f32(scene.height) * 0.0 + f32(p_idx / scene.width) + offset.y);
+        
+        // \u753B\u9762\u5916\u30C1\u30A7\u30C3\u30AF
+        if nx < 0 || nx >= i32(scene.width) || ny < 0 || ny >= i32(scene.height) { continue; }
+
+        let n_idx = u32(ny * i32(scene.width) + nx);
+        let neighbor_data = reservoirs[read_offset + n_idx];
+
+        var n_res: Reservoir;
+        n_res.light_idx = neighbor_data.light_idx;
+        n_res.W = neighbor_data.W;
+        n_res.M = neighbor_data.M;
+        n_res.r_u = neighbor_data.r_u;
+        n_res.r_v = neighbor_data.r_v;
+        
+        // \u5E7E\u4F55\u5B66\u7684\u985E\u4F3C\u5EA6\u30C1\u30A7\u30C3\u30AF\uFF08\u6CD5\u7DDA\u304C\u9055\u3044\u3059\u304E\u308B\u306A\u3089\u30DE\u30FC\u30B8\u3057\u306A\u3044\uFF09
+        // \u203B\u30D0\u30C3\u30D5\u30A1\u306B\u6CD5\u7DDA\u304C\u5165\u3063\u3066\u3044\u306A\u3044\u306E\u3067\u3001\u4ECA\u56DE\u306F\u30B9\u30AD\u30C3\u30D7\u3057\u3066\u300C\u5168\u90E8\u6DF7\u305C\u308B\u300D
+        // \uFF08\u89D2\u3067\u5149\u304C\u6F0F\u308C\u308B\u539F\u56E0\u306B\u306A\u308B\u304C\u3001\u307E\u305A\u306F\u52D5\u304B\u3059\u512A\u5148\uFF09
+
+        let n_winner = evaluate_light_sample(n_res.light_idx, n_res.r_u, n_res.r_v);
+        let p_hat_n = evaluate_p_hat(hit_p, normal, n_winner);
+
+        if p_hat_n > 0.0 {
+            merge_reservoir(&state, n_res, p_hat_n, rng);
+        }
+    }
+
+
+    // --- Phase 4: \u6700\u7D42\u6C7A\u5B9A\u3068\u4FDD\u5B58 ---
+    
+    // \u6700\u7D42\u7684\u306A\u52DD\u8005\u306E p_hat
+    let final_winner = evaluate_light_sample(state.light_idx, state.r_u, state.r_v);
+    let p_hat_final = evaluate_p_hat(hit_p, normal, final_winner);
+    
+    // Unbiased Weight (W)
+    if p_hat_final > 0.0 {
+        state.W = state.w_sum / (state.M * p_hat_final);
+    } else {
+        state.W = 0.0;
+    }
+    
+    // \u30D0\u30C3\u30D5\u30A1\u306B\u4FDD\u5B58\uFF08\u6B21\u30D5\u30EC\u30FC\u30E0\u7528\uFF09
+    var store_data: ReservoirData;
+    store_data.w_sum = state.w_sum; // \u203B\u5B9F\u306F\u4FDD\u5B58\u4E0D\u8981\u3060\u304C\u30C7\u30D0\u30C3\u30B0\u7528\u306B
+    store_data.M = state.M;
+    store_data.W = state.W;
+    store_data.light_idx = state.light_idx;
+    store_data.r_u = state.r_u;
+    store_data.r_v = state.r_v;
+    let out_idx = write_offset + p_idx;
+    reservoirs[out_idx] = store_data;
+
+    // --- Phase 5: \u30B7\u30E3\u30C9\u30A6\u30EC\u30A4\u7528\u306E\u30B5\u30F3\u30D7\u30EB\u8FD4\u5374 ---
+    
+    // \u3053\u3053\u3067\u521D\u3081\u3066\u300C\u53EF\u8996\u6027\uFF08Shadow\uFF09\u300D\u3092\u30C1\u30A7\u30C3\u30AF\u3055\u308C\u308B\u3053\u3068\u306B\u306A\u308B
+    // \u8FD4\u308A\u5024\u306FLightSample\u578B
+    var sample_out: LightSample;
+    sample_out.L = final_winner.L;
+    let l_vec_final = final_winner.pos - hit_p;
+    let dist_sq_final = dot(l_vec_final, l_vec_final);
+    let dist_final = sqrt(dist_sq_final);
+    
+    // \u30BC\u30ED\u9664\u7B97\u5BFE\u7B56
+    if dist_final > 1e-6 {
+        sample_out.dir = l_vec_final / dist_final;
+        sample_out.dist = dist_final;
+    } else {
+        sample_out.dir = vec3(0.0, 1.0, 0.0); // \u30C0\u30DF\u30FC
+        sample_out.dist = 0.0;
+    }
+    
+    // PDF\u30C8\u30EA\u30C3\u30AF:
+    // \u5F93\u6765\u306E ray_color \u306F (L / pdf) \u3067\u8A08\u7B97\u3057\u3066\u3044\u308B\u3002
+    // ReSTIR\u306F (L * W) \u3067\u8A08\u7B97\u3057\u305F\u3044\u3002
+    // \u3064\u307E\u308A pdf = 1.0 / W \u3068\u507D\u308C\u3070\u3001\u65E2\u5B58\u30B3\u30FC\u30C9\u3092\u5909\u3048\u305A\u306B\u6E08\u3080\u3002
+
+    if state.W > 0.0 {
+        sample_out.pdf = 1.0 / state.W;
+    } else {
+        sample_out.pdf = 0.0;
+    }
+
+    return sample_out;
 }
 
 fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: vec3<f32>) -> f32 {
@@ -575,7 +815,7 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 //   Main Path Tracer Loop
 // =========================================================
 
-fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
+fn ray_color(r_in: Ray, p_idx: u32, rng: ptr<function, u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3(1.0);
     var radiance = vec3(0.0);
@@ -679,11 +919,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 
         // --- Material Setup ---
         var f0 = mix(vec3(0.04), albedo, metallic);
-        var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1); 
+        var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.3); 
 
         // --- NEE ---
         if !is_specular && mat_type != 2u {
-            let light_s = sample_light_source(hit_p, rng);
+            let light_s = sample_lights_restir_reuse(hit_p, normal, p_idx, rng);
             if light_s.pdf > 0.0 {
                 let shadow_ray = Ray(hit_p + normal * 1e-4, light_s.dir);
                 let shadow_hit = intersect_tlas(shadow_ray, T_MIN, light_s.dist - 2e-4);
@@ -759,7 +999,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
+        col += ray_color(Ray(scene.camera.origin.xyz + off, d), p_idx, &rng);
     }
     col /= f32(SPP);
 
@@ -937,6 +1177,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "texture");
       __publicField(this, "defaultTexture");
       __publicField(this, "sampler");
+      __publicField(this, "reservoirBuffer");
       __publicField(this, "bufferSize", 0);
       __publicField(this, "canvas");
       __publicField(this, "blasOffset", 0);
@@ -1050,17 +1291,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         size: this.bufferSize,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
       });
-      for (let n = 0; n < 2; n++) this.historyTextures[n] && this.historyTextures[n].destroy(), this.historyTextures[n] = this.device.createTexture({
+      for (let r = 0; r < 2; r++) this.historyTextures[r] && this.historyTextures[r].destroy(), this.historyTextures[r] = this.device.createTexture({
         size: [
           e,
           t
         ],
         format: "rgba16float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST
-      }), this.historyTextureViews[n] = this.historyTextures[n].createView();
+      }), this.historyTextureViews[r] = this.historyTextures[r].createView();
+      const n = e * t * 32 * 2;
+      this.reservoirBuffer && this.reservoirBuffer.destroy(), this.reservoirBuffer = this.device.createBuffer({
+        label: "ReservoirBuffer",
+        size: n,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+      });
     }
     resetAccumulation() {
-      this.accumulateBuffer && this.device.queue.writeBuffer(this.accumulateBuffer, 0, new Float32Array(this.bufferSize / 4));
+      !this.accumulateBuffer || !this.reservoirBuffer || (this.device.queue.writeBuffer(this.accumulateBuffer, 0, new Float32Array(this.bufferSize / 4)), this.device.queue.writeBuffer(this.reservoirBuffer, 0, new Float32Array(this.canvas.width * this.canvas.height * 32 * 2 / 4)));
     }
     async loadTexturesFromWorld(e) {
       const t = e.textureCount;
@@ -1158,7 +1405,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       l[8] = this.jitter.x, l[9] = this.jitter.y, this.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData), this.prevCameraData.set(e);
     }
     recreateBindGroup() {
-      !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || !this.lightsBuffer || (this.bindGroup = this.device.createBindGroup({
+      !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || !this.lightsBuffer || !this.reservoirBuffer || (this.bindGroup = this.device.createBindGroup({
         layout: this.bindGroupLayout,
         entries: [
           {
@@ -1212,6 +1459,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             resource: {
               buffer: this.lightsBuffer
             }
+          },
+          {
+            binding: 10,
+            resource: {
+              buffer: this.reservoirBuffer
+            }
           }
         ]
       }), this.postprocessBindGroup = this.device.createBindGroup({
@@ -1252,9 +1505,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!this.bindGroup || !this.postprocessBindGroup) return;
       this.totalFrames++, this.seed++;
       const t = (u, g) => {
-        let b = 1, m = 0;
-        for (; u > 0; ) b = b / g, m = m + b * (u % g), u = Math.floor(u / g);
-        return m;
+        let b = 1, v = 0;
+        for (; u > 0; ) b = b / g, v = v + b * (u % g), u = Math.floor(u / g);
+        return v;
       }, n = t(this.totalFrames % 16 + 1, 2) - 0.5, r = t(this.totalFrames % 16 + 1, 3) - 0.5;
       this.jitter = {
         x: n / this.canvas.width,
@@ -1284,7 +1537,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function te(i) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-BGTA25rB.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-BGNCteKb.js", {
       name: i == null ? void 0 : i.name
     });
   }
@@ -1425,7 +1678,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       console.log(`Scene Stats (Worker Proxy): V=${this.vertices.length / 4}, Topo=${this.mesh_topology.length / 12}, I=${this.instances.length / 16}, TLAS=${this.tlas.length / 8}, BLAS=${this.blas.length / 8}, Anim=${this._animations.length}, Lights=${this._lights.length / 2}`);
     }
   }
-  const p = {
+  const _ = {
     defaultWidth: 720,
     defaultHeight: 480,
     defaultDepth: 10,
@@ -1488,7 +1741,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "onRecordStart", null);
       __publicField(this, "onConnectHost", null);
       __publicField(this, "onConnectWorker", null);
-      this.canvas = this.el(p.ids.canvas), this.btnRender = this.el(p.ids.renderBtn), this.sceneSelect = this.el(p.ids.sceneSelect), this.inputWidth = this.el(p.ids.resWidth), this.inputHeight = this.el(p.ids.resHeight), this.inputFile = this.setupFileInput(), this.inputDepth = this.el(p.ids.maxDepth), this.inputSPP = this.el(p.ids.sppFrame), this.btnRecompile = this.el(p.ids.recompileBtn), this.inputUpdateInterval = this.el(p.ids.updateInterval), this.animSelect = this.el(p.ids.animSelect), this.btnRecord = this.el(p.ids.recordBtn), this.inputRecFps = this.el(p.ids.recFps), this.inputRecDur = this.el(p.ids.recDuration), this.inputRecSpp = this.el(p.ids.recSpp), this.inputRecBatch = this.el(p.ids.recBatch), this.btnHost = this.el(p.ids.btnHost), this.btnWorker = this.el(p.ids.btnWorker), this.statusDiv = this.el(p.ids.statusDiv), this.statsDiv = this.createStatsDiv(), this.bindEvents();
+      this.canvas = this.el(_.ids.canvas), this.btnRender = this.el(_.ids.renderBtn), this.sceneSelect = this.el(_.ids.sceneSelect), this.inputWidth = this.el(_.ids.resWidth), this.inputHeight = this.el(_.ids.resHeight), this.inputFile = this.setupFileInput(), this.inputDepth = this.el(_.ids.maxDepth), this.inputSPP = this.el(_.ids.sppFrame), this.btnRecompile = this.el(_.ids.recompileBtn), this.inputUpdateInterval = this.el(_.ids.updateInterval), this.animSelect = this.el(_.ids.animSelect), this.btnRecord = this.el(_.ids.recordBtn), this.inputRecFps = this.el(_.ids.recFps), this.inputRecDur = this.el(_.ids.recDuration), this.inputRecSpp = this.el(_.ids.recSpp), this.inputRecBatch = this.el(_.ids.recBatch), this.btnHost = this.el(_.ids.btnHost), this.btnWorker = this.el(_.ids.btnWorker), this.statusDiv = this.el(_.ids.statusDiv), this.statsDiv = this.createStatsDiv(), this.bindEvents();
     }
     el(e) {
       const t = document.getElementById(e);
@@ -1496,7 +1749,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       return t;
     }
     setupFileInput() {
-      const e = this.el(p.ids.objFile);
+      const e = this.el(_.ids.objFile);
       return e && (e.accept = ".obj,.glb,.vrm"), e;
     }
     createStatsDiv() {
@@ -1525,7 +1778,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       });
       const e = () => {
         var _a;
-        return (_a = this.onResolutionChange) == null ? void 0 : _a.call(this, parseInt(this.inputWidth.value) || p.defaultWidth, parseInt(this.inputHeight.value) || p.defaultHeight);
+        return (_a = this.onResolutionChange) == null ? void 0 : _a.call(this, parseInt(this.inputWidth.value) || _.defaultWidth, parseInt(this.inputHeight.value) || _.defaultHeight);
       };
       this.inputWidth.addEventListener("change", e), this.inputHeight.addEventListener("change", e), this.btnRecompile.addEventListener("click", () => {
         var _a;
@@ -1577,8 +1830,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     getRenderConfig() {
       return {
-        width: parseInt(this.inputWidth.value, 10) || p.defaultWidth,
-        height: parseInt(this.inputHeight.value, 10) || p.defaultHeight,
+        width: parseInt(this.inputWidth.value, 10) || _.defaultWidth,
+        height: parseInt(this.inputHeight.value, 10) || _.defaultHeight,
         fps: parseInt(this.inputRecFps.value, 10) || 30,
         duration: parseFloat(this.inputRecDur.value) || 3,
         spp: parseInt(this.inputRecSpp.value, 10) || 64,
@@ -1604,7 +1857,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: r, ArrayBufferTarget: s } = await O(async () => {
+      const { Muxer: r, ArrayBufferTarget: s } = await z(async () => {
         const { Muxer: h, ArrayBufferTarget: u } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: h,
@@ -1712,7 +1965,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     ]
   };
-  class F {
+  class $ {
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -1927,7 +2180,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (this.ws) return;
       this.myRole = e, (_a = this.onStatusChange) == null ? void 0 : _a.call(this, `Connecting as ${e.toUpperCase()}...`);
       const t = "xWUaLfXQQkHZ9VmF";
-      this.ws = new WebSocket(`${p.signalingServerUrl}?token=${t}`), this.ws.onopen = () => {
+      this.ws = new WebSocket(`${_.signalingServerUrl}?token=${t}`), this.ws.onopen = () => {
         var _a2;
         console.log("WS Connected"), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, `Waiting for Peer (${e.toUpperCase()})`), this.sendSignal({
           type: e === "host" ? "register_host" : "register_worker"
@@ -1965,7 +2218,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       switch (e.type) {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
-          const t = new F(e.workerId, (n) => this.sendSignal(n));
+          const t = new $(e.workerId, (n) => this.sendSignal(n));
           this.workers.set(e.workerId, t), t.onDataChannelOpen = () => {
             var _a2;
             console.log(`[Host] Open for ${e.workerId}`), t.sendData({
@@ -2006,7 +2259,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       var _a, _b, _c;
       switch (e.type) {
         case "offer":
-          e.fromId && (this.hostClient = new F(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
+          e.fromId && (this.hostClient = new $(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
             var _a2, _b2;
             (_a2 = this.hostClient) == null ? void 0 : _a2.sendData({
               type: "HELLO",
@@ -2040,23 +2293,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       s && await s.sendRenderRequest(t, n, r);
     }
   }
-  let v = false, w = null, k = null, x = null, R = [], E = /* @__PURE__ */ new Map(), D = 0, P = 0, L = 0, B = null, y = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
-  const G = 20, a = new re(), f = new ee(a.canvas), d = new ne(), M = new ie(f, d, a.canvas), _ = new ae();
-  let S = 0, N = 0, T = 0, z = performance.now();
+  let m = false, w = null, C = null, x = null, R = [], M = /* @__PURE__ */ new Map(), D = 0, P = 0, L = 0, B = null, y = /* @__PURE__ */ new Map(), k = /* @__PURE__ */ new Map(), W = false, A = null;
+  const G = 20, a = new re(), f = new ee(a.canvas), d = new ne(), E = new ie(f, d, a.canvas), p = new ae();
+  let S = 0, N = 0, T = 0, O = performance.now();
   const oe = () => {
-    const i = parseInt(a.inputDepth.value, 10) || p.defaultDepth, e = parseInt(a.inputSPP.value, 10) || p.defaultSPP;
+    const i = parseInt(a.inputDepth.value, 10) || _.defaultDepth, e = parseInt(a.inputSPP.value, 10) || _.defaultSPP;
     f.buildPipeline(i, e);
-  }, H = () => {
+  }, F = () => {
     const { width: i, height: e } = a.getRenderConfig();
     f.updateScreenSize(i, e), d.hasWorld && (d.updateCamera(i, e), f.updateSceneUniforms(d.cameraData, 0, d.lightCount)), f.recreateBindGroup(), f.resetAccumulation(), S = 0, N = 0;
-  }, U = async (i, e = true) => {
-    v = false, console.log(`Loading Scene: ${i}...`);
+  }, I = async (i, e = true) => {
+    m = false, console.log(`Loading Scene: ${i}...`);
     let t, n;
-    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), H(), a.updateAnimList(d.getAnimationList()), e && (v = true, a.updateRenderButton(true));
+    i === "viewer" && w && (C === "obj" ? t = w : C === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), F(), a.updateAnimList(d.getAnimationList()), e && (m = true, a.updateRenderButton(true));
   }, le = async () => {
     f.updateCombinedGeometry(d.vertices, d.normals, d.uvs), f.updateCombinedBVH(d.tlas, d.blas), f.updateBuffer("topology", d.mesh_topology), f.updateBuffer("instance", d.instances), f.updateBuffer("lights", d.lights), f.updateSceneUniforms(d.cameraData, 0, d.lightCount);
-  }, I = () => {
-    if (M.recording || (requestAnimationFrame(I), !v || !d.hasWorld)) return;
+  }, U = () => {
+    if (E.recording || (requestAnimationFrame(U), !m || !d.hasWorld)) return;
     let i = parseInt(a.inputUpdateInterval.value, 10) || 0;
     if (i > 0 && S >= i && d.update(N / (i || 1) / 60), d.hasNewData) {
       let t = false;
@@ -2064,12 +2317,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     S++, T++, N++, f.compute(S), f.present();
     const e = performance.now();
-    e - z >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, z = e);
+    e - O >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, O = e);
   }, q = async (i) => {
     const e = a.sceneSelect.value, t = e !== "viewer";
-    if (!t && (!w || !k)) return;
-    const n = a.getRenderConfig(), r = t ? e : void 0, s = t ? "DUMMY" : w, o = t ? "obj" : k;
-    n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), y.set(i, "loading"), await _.sendSceneToWorker(i, s, o, n)) : (console.log("Broadcasting scene to all workers..."), _.getWorkerIds().forEach((l) => y.set(l, "loading")), await _.broadcastScene(s, o, n));
+    if (!t && (!w || !C)) return;
+    const n = a.getRenderConfig(), r = t ? e : void 0, s = t ? "DUMMY" : w, o = t ? "obj" : C;
+    n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), y.set(i, "loading"), await p.sendSceneToWorker(i, s, o, n)) : (console.log("Broadcasting scene to all workers..."), p.getWorkerIds().forEach((l) => y.set(l, "loading")), await p.broadcastScene(s, o, n));
   }, V = async (i) => {
     if (y.get(i) !== "idle") {
       console.log(`Worker ${i} is ${y.get(i)}, skipping assignment.`);
@@ -2077,12 +2330,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     if (R.length === 0) return;
     const e = R.shift();
-    e && (y.set(i, "busy"), C.set(i, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${i}`), await _.sendRenderRequest(i, e.start, e.count, {
+    e && (y.set(i, "busy"), k.set(i, e), console.log(`Assigning Job ${e.start} - ${e.start + e.count} to ${i}`), await p.sendRenderRequest(i, e.start, e.count, {
       ...B,
       fileType: "obj"
     }));
   }, ce = async () => {
-    const i = Array.from(E.keys()).sort((c, h) => c - h), { Muxer: e, ArrayBufferTarget: t } = await O(async () => {
+    const i = Array.from(M.keys()).sort((c, h) => c - h), { Muxer: e, ArrayBufferTarget: t } = await z(async () => {
       const { Muxer: c, ArrayBufferTarget: h } = await import("./webm-muxer-MLtUgOCn.js");
       return {
         Muxer: c,
@@ -2098,7 +2351,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     });
     for (const c of i) {
-      const h = E.get(c);
+      const h = M.get(c);
       if (h) for (const u of h) n.addVideoChunk(new EncodedVideoChunk({
         type: u.type,
         timestamp: u.timestamp,
@@ -2116,7 +2369,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }), o = URL.createObjectURL(s), l = document.createElement("a");
     l.href = o, l.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(l), l.click(), document.body.removeChild(l), URL.revokeObjectURL(o), a.setStatus("Finished!");
   }, j = async (i, e, t) => {
-    console.log(`[Worker] Starting Render: Frames ${i} - ${i + e}`), a.setStatus(`Remote Rendering: ${i}-${i + e}`), v = false;
+    console.log(`[Worker] Starting Render: Frames ${i} - ${i + e}`), a.setStatus(`Remote Rendering: ${i}-${i + e}`), m = false;
     const n = {
       ...t,
       startFrame: i,
@@ -2124,31 +2377,31 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     try {
       a.setRecordingState(true, `Remote: ${e} f`);
-      const r = await M.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
-      console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await _.sendRenderResult(r, i), a.setRecordingState(false), a.setStatus("Idle");
+      const r = await E.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
+      console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await p.sendRenderResult(r, i), a.setRecordingState(false), a.setStatus("Idle");
     } catch (r) {
       console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
     } finally {
-      v = true, requestAnimationFrame(I);
+      m = true, requestAnimationFrame(U);
     }
   }, de = async () => {
     if (!A) return;
     const { start: i, count: e, config: t } = A;
     A = null, await j(i, e, t);
   };
-  _.onStatusChange = (i) => a.setStatus(`Status: ${i}`);
-  _.onWorkerLeft = (i) => {
+  p.onStatusChange = (i) => a.setStatus(`Status: ${i}`);
+  p.onWorkerLeft = (i) => {
     console.log(`Worker Left: ${i}`), a.setStatus(`Worker Left: ${i}`), y.delete(i);
-    const e = C.get(i);
-    e && (console.warn(`Worker ${i} failed job ${e.start}. Re-queueing.`), R.unshift(e), C.delete(i), a.setStatus(`Re-queued Job ${e.start}`));
+    const e = k.get(i);
+    e && (console.warn(`Worker ${i} failed job ${e.start}. Re-queueing.`), R.unshift(e), k.delete(i), a.setStatus(`Re-queued Job ${e.start}`));
   };
-  _.onWorkerReady = (i) => {
+  p.onWorkerReady = (i) => {
     console.log(`Worker ${i} is READY`), a.setStatus(`Worker ${i} Ready!`), y.set(i, "idle"), x === "host" && R.length > 0 && V(i);
   };
-  _.onWorkerJoined = (i) => {
+  p.onWorkerJoined = (i) => {
     a.setStatus(`Worker Joined: ${i}`), y.set(i, "idle"), x === "host" && R.length > 0 && q(i);
   };
-  _.onRenderRequest = async (i, e, t) => {
+  p.onRenderRequest = async (i, e, t) => {
     if (console.log(`[Worker] Received Render Request: Frames ${i} - ${i + e}`), W) {
       console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${i}`), A = {
         start: i,
@@ -2159,28 +2412,28 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     await j(i, e, t);
   };
-  _.onRenderResult = async (i, e, t) => {
-    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), E.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), y.set(t, "idle"), C.delete(t), await V(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
+  p.onRenderResult = async (i, e, t) => {
+    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), M.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), y.set(t, "idle"), k.delete(t), await V(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
   };
-  _.onSceneReceived = async (i, e) => {
-    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await U(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await _.sendWorkerReady(), de();
+  p.onSceneReceived = async (i, e) => {
+    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), C = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await I(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await p.sendWorkerReady(), de();
   };
   const ue = () => {
     a.onRenderStart = () => {
-      v = true;
+      m = true;
     }, a.onRenderStop = () => {
-      v = false;
-    }, a.onSceneSelect = (i) => U(i, false), a.onResolutionChange = H, a.onRecompile = (i, e) => {
-      v = false, f.buildPipeline(i, e), f.recreateBindGroup(), f.resetAccumulation(), S = 0, v = true;
+      m = false;
+    }, a.onSceneSelect = (i) => I(i, false), a.onResolutionChange = F, a.onRecompile = (i, e) => {
+      m = false, f.buildPipeline(i, e), f.recreateBindGroup(), f.resetAccumulation(), S = 0, m = true;
     }, a.onFileSelect = async (i) => {
       var _a;
-      ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), k = "obj") : (w = await i.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", U("viewer", false);
+      ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), C = "obj") : (w = await i.arrayBuffer(), C = "glb"), a.sceneSelect.value = "viewer", I("viewer", false);
     }, a.onAnimSelect = (i) => d.setAnimation(i), a.onRecordStart = async () => {
-      if (!M.recording) if (x === "host") {
-        const i = _.getWorkerIds();
+      if (!E.recording) if (x === "host") {
+        const i = p.getWorkerIds();
         if (B = a.getRenderConfig(), L = Math.ceil(B.fps * B.duration), !confirm(`Distribute recording? (Workers: ${i.length})
 Auto Scene Sync enabled.`)) return;
-        R = [], E.clear(), D = 0, C.clear();
+        R = [], M.clear(), D = 0, k.clear();
         for (let e = 0; e < L; e += G) {
           const t = Math.min(G, L - e);
           R.push({
@@ -2190,24 +2443,24 @@ Auto Scene Sync enabled.`)) return;
         }
         P = R.length, i.forEach((e) => y.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${P} jobs (Waiting for workers...)`), i.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await q()) : console.log("No workers yet. Waiting...");
       } else {
-        v = false, a.setRecordingState(true);
+        m = false, a.setRecordingState(true);
         const i = a.getRenderConfig();
         try {
           const e = performance.now();
-          await M.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
+          await E.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
             const n = document.createElement("a");
             n.href = t, n.download = `raytrace_${Date.now()}.webm`, n.click(), URL.revokeObjectURL(t);
           }), console.log(`Recording took ${performance.now() - e}[ms]`);
         } catch {
           alert("Recording failed.");
         } finally {
-          a.setRecordingState(false), v = true, a.updateRenderButton(true), requestAnimationFrame(I);
+          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(U);
         }
       }
     }, a.onConnectHost = () => {
-      x === "host" ? (_.disconnect(), x = null, a.setConnectionState(null)) : (_.connect("host"), x = "host", a.setConnectionState("host"));
+      x === "host" ? (p.disconnect(), x = null, a.setConnectionState(null)) : (p.connect("host"), x = "host", a.setConnectionState("host"));
     }, a.onConnectWorker = () => {
-      x === "worker" ? (_.disconnect(), x = null, a.setConnectionState(null)) : (_.connect("worker"), x = "worker", a.setConnectionState("worker"));
+      x === "worker" ? (p.disconnect(), x = null, a.setConnectionState(null)) : (p.connect("worker"), x = "worker", a.setConnectionState("worker"));
     }, a.setConnectionState(null);
   };
   async function he() {
@@ -2217,7 +2470,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + i);
       return;
     }
-    ue(), oe(), H(), U("cornell", false), requestAnimationFrame(I);
+    ue(), oe(), F(), I("cornell", false), requestAnimationFrame(U);
   }
   he().catch(console.error);
 })();

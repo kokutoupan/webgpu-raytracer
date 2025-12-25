@@ -207,8 +207,84 @@ impl World {
                 // Populate Lights Buffer
                 if let Some(tris) = emissive_map.get(geom_idx) {
                     for &tri_idx in tris {
-                        self.buffers.lights.push(i as u32); // Instance Index
-                        self.buffers.lights.push(tri_idx);
+                        // Calculate world-space area for the light triangle
+                        let base_top = tri_idx as usize * 20;
+                        let v0_idx = self.buffers.mesh_topology[base_top] as usize;
+                        let v1_idx = self.buffers.mesh_topology[base_top + 1] as usize;
+                        let v2_idx = self.buffers.mesh_topology[base_top + 2] as usize;
+
+                        let v0_local = Vec3::new(
+                            self.buffers.vertices[v0_idx * 4],
+                            self.buffers.vertices[v0_idx * 4 + 1],
+                            self.buffers.vertices[v0_idx * 4 + 2],
+                        );
+                        let v1_local = Vec3::new(
+                            self.buffers.vertices[v1_idx * 4],
+                            self.buffers.vertices[v1_idx * 4 + 1],
+                            self.buffers.vertices[v1_idx * 4 + 2],
+                        );
+                        let v2_local = Vec3::new(
+                            self.buffers.vertices[v2_idx * 4],
+                            self.buffers.vertices[v2_idx * 4 + 1],
+                            self.buffers.vertices[v2_idx * 4 + 2],
+                        );
+
+                        let v0_world = inst.transform.transform_point3(v0_local);
+                        let v1_world = inst.transform.transform_point3(v1_local);
+                        let v2_world = inst.transform.transform_point3(v2_local);
+
+                        let u_edge = v1_world - v0_world;
+                        let v_edge = v2_world - v0_world;
+                        let cross_e = u_edge.cross(v_edge);
+                        let area = cross_e.length() * 0.5;
+                        let normal = cross_e.normalize_or_zero();
+
+                        // Pre-calculate Emission
+                        let mat_type_bits = self.buffers.mesh_topology[base_top + 7];
+                        let albedo = Vec3::new(
+                            f32::from_bits(self.buffers.mesh_topology[base_top + 4]),
+                            f32::from_bits(self.buffers.mesh_topology[base_top + 5]),
+                            f32::from_bits(self.buffers.mesh_topology[base_top + 6]),
+                        );
+                        let emissive = Vec3::new(
+                            f32::from_bits(self.buffers.mesh_topology[base_top + 16]),
+                            f32::from_bits(self.buffers.mesh_topology[base_top + 17]),
+                            f32::from_bits(self.buffers.mesh_topology[base_top + 18]),
+                        );
+
+                        // If mat_type == 3 (Light), use Albedo as emission, otherwise use Emissive
+                        let emission = if mat_type_bits == 3 { albedo } else { emissive };
+
+                        // Push PackedLight (20 floats total)
+                        // 1. position (vec3) + area (f32)
+                        self.buffers.lights.push(v0_world.x.to_bits());
+                        self.buffers.lights.push(v0_world.y.to_bits());
+                        self.buffers.lights.push(v0_world.z.to_bits());
+                        self.buffers.lights.push(area.to_bits());
+
+                        // 2. emission (vec3) + pad (f32)
+                        self.buffers.lights.push(emission.x.to_bits());
+                        self.buffers.lights.push(emission.y.to_bits());
+                        self.buffers.lights.push(emission.z.to_bits());
+                        self.buffers.lights.push(0);
+
+                        // 3. u_edge (vec3) + pad (f32)
+                        self.buffers.lights.push(u_edge.x.to_bits());
+                        self.buffers.lights.push(u_edge.y.to_bits());
+                        self.buffers.lights.push(u_edge.z.to_bits());
+                        self.buffers.lights.push(0);
+
+                        // 4. v_edge (vec3) + pad (f32)
+                        self.buffers.lights.push(v_edge.x.to_bits());
+                        self.buffers.lights.push(v_edge.y.to_bits());
+                        self.buffers.lights.push(v_edge.z.to_bits());
+                        self.buffers.lights.push(0);
+
+                        // 5. normal (vec3) + pad (f32)
+                        self.buffers.lights.push(normal.x.to_bits());
+                        self.buffers.lights.push(normal.y.to_bits());
+                        self.buffers.lights.push(normal.z.to_bits());
+                        self.buffers.lights.push(0);
                     }
                 }
 

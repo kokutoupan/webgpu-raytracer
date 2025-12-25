@@ -47,9 +47,17 @@ struct MeshTopology {
     data3: vec4<f32>  // rgb: EmissiveColor, w: OcclusionTex
 }
 
-struct LightRef {
-    inst_idx: u32,
-    tri_idx: u32
+struct PackedLight {
+    position: vec3<f32>,
+    area: f32,
+    emission: vec3<f32>,
+    pad: f32,
+    u_edge: vec3<f32>,
+    pad_u: f32,
+    v_edge: vec3<f32>,
+    pad_v: f32,
+    normal: vec3<f32>,
+    pad_n: f32
 }
 
 struct BVHNode {
@@ -146,7 +154,7 @@ struct LightCandidate {
 @group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
 @group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; 
 @group(0) @binding(6) var<storage, read> instances: array<Instance>;
-@group(0) @binding(9) var<storage, read> lights: array<LightRef>;
+@group(0) @binding(9) var<storage, read> lights: array<PackedLight>;
 
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
@@ -393,51 +401,22 @@ fn update_reservoir(res: ptr<function, Reservoir>, light_idx: u32, r_u: f32, r_v
 // 指定したライトIDと乱数(r_u, r_v)を使って、ライト上の点と明るさを計算する
 // ※ここでは「可視性(壁の裏かどうか)」はチェックしません！
 fn evaluate_light_sample(light_idx: u32, r_u: f32, r_v: f32) -> LightCandidate {
-    let l_ref = lights[light_idx];
-    let tri = topology[l_ref.tri_idx];
-    let inst = instances[l_ref.inst_idx];
-    let m = get_transform(inst);
-
-    // 頂点座標
-    let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
-    let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
-    let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
+    let lp = lights[light_idx];
 
     // 重心座標計算 (r_u, r_v から u, v, w を作る)
     let sqrt_r1 = sqrt(r_u);
     let u = 1.0 - sqrt_r1;
     let v = r_v * sqrt_r1;
-    let w = 1.0 - u - v;
 
-    let p = v0 * u + v1 * v + v2 * w;
+    // ワールド空間位置
+    let p = lp.position + lp.u_edge * u + lp.v_edge * v;
     
-    // 法線と面積
-    let edge1 = v1 - v0;
-    let edge2 = v2 - v0;
-    let cross_e = cross(edge1, edge2);
-    let area = length(cross_e) * 0.5;
-    let n = normalize(cross_e);
-
-    // 発光色取得 (テクスチャ対応)
-    let mat_type = bitcast<u32>(tri.data0.w);
-    var albedo = tri.data0.rgb;
-    var emissive = tri.data3.rgb;
-
-    // マテリアルタイプに応じて発光色を決定
-    // mat_type 3u (Light) なら Albedo を、それ以外なら Emissive を使う
-    var L = select(emissive, albedo, mat_type == 3u);
-
-    let base_tex = tri.data2.x;
-    if base_tex > -0.5 {
-        let uv0 = get_uv(tri.v0);
-        let uv1 = get_uv(tri.v1);
-        let uv2 = get_uv(tri.v2);
-        let tex_uv = uv0 * u + uv1 * v + uv2 * w;
-        L *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
-    }
+    // 面法線と面積、および事前計算済み発光色
+    let n = lp.normal;
+    let area = lp.area;
+    let L = lp.emission;
     
     // PDF = 1 / (Area * TotalLights)
-    // 面積によるPDF。ライト選択確率(1/N)も含める
     let pdf = 1.0 / (area * f32(scene.light_count));
 
     return LightCandidate(L, p, n, pdf);
