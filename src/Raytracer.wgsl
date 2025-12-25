@@ -5,6 +5,8 @@
 const PI = 3.141592653589793;
 const T_MIN = 0.001;
 const T_MAX = 1e30;
+const SPATIAL_COUNT = 2u;      // 何個の近傍を探すか (2〜5くらい)
+const SPATIAL_RADIUS = 30.0;   // 探索半径 (ピクセル単位)
 // These are replaced by TypeScript before compilation
 const MAX_DEPTH = 10u;
 const SPP = 1u;
@@ -105,6 +107,33 @@ struct ScatterResult {
 }
 
 // =========================================================
+//   ReSTIR GI Structures
+// =========================================================
+
+struct GIReservoir {
+    // [Slot 0] 16 bytes
+    sample_dir: vec3<f32>,       // 12 bytes
+    sample_dist: f32,            // 4 bytes
+
+    // [Slot 1] 16 bytes
+    sample_radiance: vec3<f32>,  // 12 bytes
+    w_sum: f32,                  // 4 bytes
+
+    // [Slot 2] 16 bytes
+    creation_pos: vec3<f32>,     // 12 bytes
+    M: f32,                      // 4 bytes
+
+    // [Slot 3] 16 bytes
+    creation_normal: vec3<f32>,  // 12 bytes
+    W: f32,                      // 4 bytes
+    // [Slot 4] 16 bytes (Alignment padding)
+    creation_mat_id: u32,        // 4 bytes
+    pad0: u32,                   // 12 bytes padding to align struct to 16 bytes
+    pad1: u32,
+    pad2: u32,
+}
+
+// =========================================================
 //   Bindings
 // =========================================================
 
@@ -119,6 +148,8 @@ struct ScatterResult {
 
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
+
+@group(0) @binding(10) var<storage, read_write> gi_reservoir: array<GIReservoir>;
 
 // =========================================================
 //   Buffer Accessors
@@ -191,6 +222,72 @@ fn build_onb(n: vec3<f32>) -> ONB {
 
 fn local_to_world(onb: ONB, a: vec3<f32>) -> vec3<f32> {
     return a.x * onb.u + a.y * onb.v + a.z * onb.w;
+}
+
+// =========================================================
+//   ReSTIR Helpers
+// =========================================================
+
+// 現在のフレーム用のインデックスと、過去フレーム用のインデックスを計算する
+fn get_reservoir_offsets(pixel_idx: u32) -> vec2<u32> {
+    let page_size = scene.width * scene.height;
+    
+    // frame_count が偶数のとき: Curr=0面, Prev=1面
+    // frame_count が奇数のとき: Curr=1面, Prev=0面
+    let current_page = (scene.frame_count % 2u) * page_size;
+    let prev_page = ((scene.frame_count + 1u) % 2u) * page_size;
+
+    return vec2(current_page + pixel_idx, prev_page + pixel_idx);
+}
+
+// ターゲット関数 p_hat (輝度ベース)
+fn evaluate_p_hat(radiance: vec3<f32>) -> f32 {
+    // 輝度(Luminance)を重要度とする
+    return dot(radiance, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// RIS Update: 候補をリザーバに結合する
+fn update_reservoir(
+    res: ptr<function, GIReservoir>,
+    dir: vec3<f32>,
+    radiance: vec3<f32>,
+    dist: f32,
+    weight: f32,
+    rng: ptr<function, u32>
+) -> bool {
+    (*res).w_sum += weight;
+    (*res).M += 1.0;
+
+    // 確率的に置換 (weight / w_sum)
+    if rand_pcg(rng) < (weight / (*res).w_sum) {
+        (*res).sample_dir = dir;
+        (*res).sample_radiance = radiance;
+        (*res).sample_dist = dist;
+        return true;
+    }
+    return false;
+}
+
+// マージ用: 別のリザーバを自分に結合する
+fn merge_reservoir(
+    dest: ptr<function, GIReservoir>,
+    src: GIReservoir,
+    p_hat_src: f32,
+    rng: ptr<function, u32>
+) -> bool {
+    let M = src.M;
+    let weight = p_hat_src * src.W * M; // RIS weight
+
+    (*dest).w_sum += weight;
+    (*dest).M += M;
+
+    if rand_pcg(rng) < (weight / (*dest).w_sum) {
+        (*dest).sample_dir = src.sample_dir;
+        (*dest).sample_radiance = src.sample_radiance;
+        (*dest).sample_dist = src.sample_dist;
+        return true;
+    }
+    return false;
 }
 
 // =========================================================
@@ -509,10 +606,16 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 //   Main Path Tracer Loop
 // =========================================================
 
-fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
+fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> {
     var ray = r_in;
     var throughput = vec3(1.0);
     var radiance = vec3(0.0);
+
+    // ReSTIR用のバッファオフセット計算
+    let pixel_idx = coord.y * scene.width + coord.x;
+    let offsets = get_reservoir_offsets(pixel_idx);
+    let curr_res_idx = offsets.x;
+    let prev_res_idx = offsets.y;
 
     var prev_bsdf_pdf = 0.0;
     var specular_bounce = true;
@@ -615,6 +718,172 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
         var f0 = mix(vec3(0.04), albedo, metallic);
         var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1); 
 
+        // ----------------------------------------------------------------
+        // ★ ReSTIR GI Logic (Depth == 0 and Diffuse-like)
+        // ----------------------------------------------------------------
+        // 修正: 金属（Metallicが高いもの）は ReSTIR GI (Diffuse) の対象外にする
+        let is_metallic = (mat_type == 1u) && (metallic > 0.1);
+        
+        // 「拡散反射成分が支配的なもの」だけを対象にする
+        // Specular (鏡) や Metallic (金属) は除外
+        let use_restir = (mat_type == 0u) || (!is_metallic && !is_specular && mat_type != 2u);
+
+        if depth == 0u && use_restir {
+            var state: GIReservoir;
+            // 初期化
+            state.w_sum = 0.0;
+            state.M = 0.0;
+            state.W = 0.0;
+            
+            // 1. Initial Candidate Generation (初期候補)
+            // 通常通りBSDFサンプリングして、1バウンス先のライティングを計算する
+            // ※ ここでは簡易的に「次の1バウンス」だけを評価します
+
+            var initial_dir: vec3<f32>;
+            var initial_Li = vec3(0.0);
+            var initial_dist = 0.0;
+            var initial_pdf = 0.0;
+
+            // BSDFサンプリング
+            let scatter = sample_diffuse(normal, albedo, rng); // Diffuseのみと仮定
+            if scatter.pdf > 0.0 {
+                initial_dir = scatter.dir;
+                initial_pdf = scatter.pdf;
+                
+                // レイを飛ばしてLiを取得 (再帰の代わりに1ステップだけトレース)
+                let bounce_ray = Ray(hit_p + normal * 1e-4, initial_dir);
+                let bounce_hit = intersect_tlas(bounce_ray, T_MIN, T_MAX);
+
+                if bounce_hit.inst_idx >= 0 {
+                    initial_dist = bounce_hit.t;
+                    // ヒット先の色を取得（簡易版：Emissive + BaseColor）
+                    // 本来はここでNEEや更なるバウンス評価が必要ですが、まずはヒット先のEmissive等で近似
+                    let b_tri = topology[u32(bounce_hit.tri_idx)];
+                    initial_Li = b_tri.data3.rgb; // Emissive
+                    // もしEmissiveが弱ければ、環境光や簡易ライティングを足す
+                    if length(initial_Li) < 1e-4 {
+                         // 簡易的にヒット面のAlbedoを間接光として扱う（本来はNGだがデバッグ用）
+                        initial_Li = b_tri.data0.rgb * 0.1;
+                    }
+                } else {
+                    // Sky color (もしあれば)
+                    initial_Li = vec3(0.0);
+                }
+            }
+
+            // 初期候補をリザーバに追加
+            let p_hat_initial = evaluate_p_hat(initial_Li);
+            // RIS Weight = p_hat / pdf (BSDF重点サンプリングの場合)
+            let w_initial = select(0.0, p_hat_initial / initial_pdf, initial_pdf > 1e-6);
+
+            update_reservoir(&state, initial_dir, initial_Li, initial_dist, w_initial, rng);
+
+            // 2. Temporal Reuse (時間的再利用)
+            // 前フレームのリザーバを読み込む
+            // ※ 本来はバックプロジェクションで「前の位置」のピクセルを読むべきだが、
+            //    まずは「同じピクセル位置」を読む (Camera固定ならこれで動く)
+            let prev_res = gi_reservoir[prev_res_idx];
+            
+            // 有効性チェック（法線とマテリアルID）
+            let normal_check = dot(prev_res.creation_normal, normal) > 0.9;
+            let mat_check = prev_res.creation_mat_id == bitcast<u32>(tri.data0.w); // mat_type
+
+            if normal_check && mat_check {
+                // 過去の候補の評価値 (保存されたRadianceを使用)
+                let p_hat_prev = evaluate_p_hat(prev_res.sample_radiance);
+                
+                // マージ
+                merge_reservoir(&state, prev_res, p_hat_prev, rng);
+                
+                // [修正後] w_sum も道連れにして比率を保つ
+                if state.M > 20.0 {
+                    state.w_sum *= (20.0 / state.M);
+                    state.M = 20.0;
+                }
+            }
+
+            // ----------------------------------------------------------------
+            // 3. Spatial Reuse (空間的再利用)
+            // ----------------------------------------------------------------
+            // 前フレームのデータ(prev_res_idx)から近傍を探してマージします
+            // ※同じパス内で現在の近傍(curr_res_idx)を読むと、まだ計算されていない可能性があり危険なため
+
+            for (var i = 0u; i < SPATIAL_COUNT; i++) {
+                // ランダムな近傍ピクセルを選択
+                let r_radius = sqrt(rand_pcg(rng)) * SPATIAL_RADIUS;
+                let r_angle = 2.0 * PI * rand_pcg(rng);
+                let offset = vec2<f32>(r_radius * cos(r_angle), r_radius * sin(r_angle));
+
+                let neighbor_coord = vec2<i32>(vec2<f32>(coord) + offset);
+                
+                // 画面内チェック
+                if neighbor_coord.x >= 0 && neighbor_coord.x < i32(scene.width) && neighbor_coord.y >= 0 && neighbor_coord.y < i32(scene.height) {
+
+                    let n_idx = u32(neighbor_coord.y) * scene.width + u32(neighbor_coord.x);
+                    
+                    // 近傍のリザーバを取得 (Prevフレームのページから読む)
+                    let n_offsets = get_reservoir_offsets(n_idx);
+                    let neighbor_res = gi_reservoir[n_offsets.y]; // .y が Prev
+                    
+                    // --- 幾何的類似度チェック (Geometry Validation) ---
+                    // これをやらないと、壁の裏や別オブジェクトの光が漏れてくる(Light Leaking)
+                    
+                    // 1. マテリアルIDチェック
+                    let mat_ok = neighbor_res.creation_mat_id == bitcast<u32>(tri.data0.w);
+                    
+                    // 2. 法線チェック (似た向きの面か)
+                    let norm_ok = dot(neighbor_res.creation_normal, normal) > 0.9;
+                    
+                    // 3. 位置(深度)チェック (距離が離れすぎていないか)
+                    // 簡易的に距離の二乗で判定。シーンのスケールに合わせて閾値調整が必要(例: 1.0)
+                    let dist_sq = dot(neighbor_res.creation_pos - hit_p, neighbor_res.creation_pos - hit_p);
+                    let pos_ok = dist_sq < 0.1; // シーンに合わせて調整してください
+
+                    if mat_ok && norm_ok && pos_ok {
+                        // 近傍の p_hat を再評価
+                        // (ReSTIR GIでは近傍のRadianceをそのまま使う近似が一般的)
+                        let p_hat_neighbor = evaluate_p_hat(neighbor_res.sample_radiance);
+                        
+                        // マージ実行
+                        merge_reservoir(&state, neighbor_res, p_hat_neighbor, rng);
+                    }
+                }
+            }
+            
+            // クランプ (Spatial Reuse後はMが増えすぎるので再度抑える)
+            if state.M > 50.0 {
+                state.w_sum *= (50.0 / state.M);
+                state.M = 50.0;
+            };
+
+            // 3. Finalize W (Unbiased Weight calculation)
+            let p_hat_final = evaluate_p_hat(state.sample_radiance);
+            if p_hat_final > 0.0 {
+                state.W = state.w_sum / (state.M * p_hat_final);
+            } else {
+                state.W = 0.0;
+            }
+
+            // 4. Store Reservoir (次フレームのために保存)
+            state.creation_pos = hit_p;
+            state.creation_normal = normal;
+            state.creation_mat_id = bitcast<u32>(tri.data0.w);
+            gi_reservoir[curr_res_idx] = state;
+
+            // 5. Shading (選ばれた候補を使って色を決定)
+            // Lo = Li * BSDF * cos / PDF
+            // ReSTIRでは: Lo = Li * BSDF * cos * W
+
+            let bsdf_val = eval_diffuse(albedo); // Diffuse BSDF = albedo / PI
+            let cos_theta = max(dot(normal, state.sample_dir), 0.0);
+
+            radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W * state.M; // ※ State.Wの定義によっては * M が不要な場合もあるが標準RISならWに含む
+
+            // ReSTIRで決まったのでループ終了 (GI計算済み)
+            break;
+        }
+
+
         // --- NEE ---
         if !is_specular && mat_type != 2u {
             let light_s = sample_light_source(hit_p, rng);
@@ -681,6 +950,9 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>) -> vec3<f32> {
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
     let p_idx = id.y * scene.width + id.x;
+    gi_reservoir[p_idx].w_sum = 0.0;
+    gi_reservoir[p_idx].M = 0.0;
+    gi_reservoir[p_idx].W = 0.0;
 
     var col = vec3(0.);
     for (var i = 0u; i < SPP; i++) {
@@ -695,7 +967,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng);
+        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng, id.xy);
     }
     col /= f32(SPP);
     

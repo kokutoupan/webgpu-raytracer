@@ -33,6 +33,9 @@ export class WebGPURenderer {
   defaultTexture!: GPUTexture;
   sampler!: GPUSampler;
 
+  // ReSTIR GI
+  reservoirBuffer!: GPUBuffer;
+
   private bufferSize = 0;
   private canvas: HTMLCanvasElement;
 
@@ -182,6 +185,19 @@ export class WebGPURenderer {
       });
       this.historyTextureViews[i] = this.historyTextures[i].createView();
     }
+
+    // ReSTIR GI Reservoir Buffer
+    // 構造体サイズ: 80 bytes
+    // Double buffering (Current + Prev) なので * 2
+    const reservoirStructSize = 80;
+    const reservoirSize = width * height * reservoirStructSize * 2;
+
+    if (this.reservoirBuffer) this.reservoirBuffer.destroy();
+    this.reservoirBuffer = this.device.createBuffer({
+      label: "GI Reservoir Buffer (Double)",
+      size: reservoirSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
   }
 
   resetAccumulation() {
@@ -464,7 +480,8 @@ export class WebGPURenderer {
       !this.geometryBuffer ||
       !this.nodesBuffer ||
       !this.sceneUniformBuffer ||
-      !this.lightsBuffer
+      !this.lightsBuffer ||
+      !this.reservoirBuffer
     )
       return;
 
@@ -483,6 +500,7 @@ export class WebGPURenderer {
         },
         { binding: 8, resource: this.sampler },
         { binding: 9, resource: { buffer: this.lightsBuffer } },
+        { binding: 10, resource: { buffer: this.reservoirBuffer } },
       ],
     });
 
