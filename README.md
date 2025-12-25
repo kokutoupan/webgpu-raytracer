@@ -1,4 +1,4 @@
-# WebGPU Ray Tracer
+# WebGPU Ray Tracer (Next-Gen Path Tracer)
 
 ![WebGPU](https://img.shields.io/badge/WebGPU-Enabled-green)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
@@ -13,129 +13,77 @@
 
 ## ✨ 主な機能 (Features)
 
-- **リアルタイム・パストレーシング**: WebGPU Compute Shader によるハードウェアアクセラレーション。
-- **高度な加速構造**: 2 段階 BVH (TLAS / BLAS) を採用し、動的なシーンや多数のオブジェクトを高速に処理。
-- **異種フォーマット対応**: `.obj`, `.glb` (glTF), `.vrm` ファイルのドラッグ＆ドロップ読み込みに対応。
-- **マテリアル表現**:
-  - Lambertian (拡散反射)
-  - Metallic (金属)
-  - Dielectric (ガラス/屈折)
-  - Emissive (発光体)
-- **テクスチャマッピング**: `texture_2d_array` を使用した効率的なテクスチャサンプリング。
-- **カメラ制御**: 被写界深度 (Depth of Field) 対応のカメラ。
-- **プログレッシブ・レンダリング**: フレームを蓄積してノイズを低減 (Accumulation Buffer)。
+### 🚀 先進機能
+
+- **ReSTIR (Reservoir-based Spatiotemporal Importance Resampling)**: 数千万ポリゴンや多数の光源を効率的にサンプリングし、ノイズを劇的に低減。
+- **TAA (Temporal Anti-Aliasing)**: サブピクセル・ジッタリングと時間軸の蓄積により、滑らかなエッジと安定した静止画を実現。
+- **分散レンダリング (Distributed Rendering)**: WebRTC を使用。複数のブラウザ、複数のデバイスをクラスター化して並列レンダリング。
+- **アダプティブ・プログレッシブ・リファインメント**: 放置するほど画像が美しくなり、最大 10,000 フレーム以上の極めて高精度な収束に対応。
+
+### 🎨 レンダリング表現
+
+- **フル PBR パストレーシング**: Lambertian (拡散), Metallic (金属), Dielectric (屈折/ガラス), Emissive (発光) をサポート。
+- **動的加速構造**: 高速な 2 段階 BVH (TLAS / BLAS) により、数十万トライアングルのシーンをリアルタイム処理。
+- **拡張モデルサポート**: `.obj`, `.glb` (glTF), `.vrm` ファイルの読み込み。
+
+### 🎬 ポストプロセス & ツール
+
+- **高度なデノイジング**: バイリニア補間、バイラテラルフィルタ、強力な Firefly 除去ロジックを搭載。
+- **ビデオ・レコーダー**: 収束したフレームをネイティブ WebM 形式（VP9 互換）で直接録画・ダウンロード可能。
+- **トーンマッピング**: ACES フィルムライクなトーンマッピングとガンマ補正。
+
+---
 
 ## 🏗 アーキテクチャ (Architecture)
 
-このプロジェクトは、パフォーマンスを最大化するために以下の役割分担を行っています。
+1.  **TypeScript (Frontend)**:
+    - WebGPU API の管理、レンダリングループ、PostProcess 連携。
+    - WebRTC / Signaling による分散処理のオーケストレーション。
+2.  **Rust (WASM Core)**:
+    - 超高速な BVH 構築、ジオメトリ平坦化、アニメーション計算。
+    - 光源データの事前計算と最適化。
+3.  **WGSL (Compute Shaders)**:
+    - `Raytracer.wgsl`: コアとなる交差判定とパストレーシング。
+    - `PostProcess.wgsl`: TAA、デノイズ、トーンマッピング。
 
-1.  **Frontend (TypeScript)**:
-    - UI 制御、メインループ、WebGPU API の管理 (`src/main.ts`, `src/renderer.ts`)。
-    - ユーザー入力に基づく設定（解像度、SPP、深度など）の動的更新。
-      - SPP,DPS の更新は、shader のコンパイルが必要。
-2.  **Core Logic (Rust -> WASM)**:
-    - `rust-shader-tools/` ディレクトリ配下。
-    - 3D モデルのパース (gltf, obj)。
-    - BVH (TLAS/BLAS) の構築と平坦化。
-    - シーンデータの GPU バッファ用レイアウトへの変換。
-3.  **Rendering (WGSL)**:
-    - `src/shader.wgsl`。
-    - 交差判定 (Ray-Box, Ray-Triangle)。
-    - パストレーシングのロジック (モンテカルロ積分)。
+---
 
-### データフロー
+## 🔧 開発 (Development)
 
-処理の流れは以下の通りです：
-
-1.  **User Input / File** → **Main (TypeScript)**
-    - ユーザーによるファイルドロップや設定変更を受け付けます。
-2.  **Main** → **Rust Core (WASM)**
-    - 読み込んだ 3D データの解析と BVH の構築を依頼します。
-3.  **Rust Core (WASM)** → **Main**
-    - GPU 用に最適化されたフラットなバッファデータ（頂点、インデックス、ノード情報など）を返します。
-4.  **Main** → **WebGPU Buffers**
-    - 受け取ったデータを GPU メモリ（Storage Buffer）に転送します。
-5.  **WebGPU Buffers** → **Compute Shader (WGSL)**
-    - シェーダーがバッファとテクスチャをバインドして計算を実行します。
-6.  **Compute Shader** → **Canvas**
-    - 計算結果を蓄積し、トーンマッピングを行って画面に描画します。
-
-## 🚀 開発セットアップ (Development)
-
-開発には [Node.js](https://nodejs.org/) と [Rust](https://www.rust-lang.org/) (および `wasm-pack`) が必要です。
-
-### 1. 前提ツールのインストール
+### インストール & ビルド
 
 ```bash
-# Rustのwasmビルドツール
-cargo install wasm-pack
-```
-
-### 2. リポジトリのクローンと依存関係のインストール
-
-```Bash
-git clone https://github.com/kokutoupan/webgpu-raytracer.git
-cd webgpu-raytracer
-
-# パッケージのインストール
+# 1. 依存関係のインストール
 pnpm install
-# または npm install
-```
 
-### 3. Rust (WASM) のビルド
-
-Rust 側のコードを変更した場合は、WASM の再ビルドが必要です。
-
-```Bash
+# 2. Rust (WASM) のビルド (rust/-shader-tools内)
 cd rust-shader-tools
-wasm-pack build --target web
+wasm-pack build --target web --out-dir ../src/wasm
 cd ..
-```
 
-### 4. 開発サーバーの起動
-
-```Bash
+# 3. 開発サーバー起動
 pnpm dev
 ```
 
-ブラウザで http://localhost:5173 (または表示される URL) にアクセスしてください。WebGPU 対応ブラウザ（Chrome, Edge, Firefox Nightly など）が必要です。
+---
 
-### 🎮 操作方法 (Controls)
+## 🎮 画面の見方
 
-- Scene Select: プリセットシーンの切り替え。
-- File Input: .obj や .glb ファイルを選択してローカルモデルを表示。
-- Resolution: レンダリング解像度。変更するとバッファが再確保されます。
-- Max Depth: レイの最大反射回数。
-- SPP / Frame: 1 フレームあたりのサンプル数（Samples Per Pixel）。
-- Update Interval: アニメーション等の更新間隔。
-- Animation: glTF アニメーションが含まれる場合、インデックスで選択可能。
+- **Scene**: プリセットシーンの切り替え。
+- **SPP / Frame**: 1 フレームあたりの光線サンプリング数。高いほど 1 フレームの品質が上がります（重くなります）。
+- **Samples**: 現在までに累積されたトータルのサンプル数。放置すると増え続け、画像がクリアになります。
+- **Role**: `Host` で他クライアントを繋いで分散レンダリングを開始。
 
-### 📂 ディレクトリ構成 (File Structure)
+---
 
-新規開発者向けの主要ファイル解説です。
+## 🛠 技術スタック
 
-- src/
+- **Graphics API**: [WebGPU](https://gpuweb.github.io/gpuweb/)
+- **Programming**: [TypeScript](https://www.typescriptlang.org/), [Rust](https://www.rust-lang.org/) (WASM)
+- **Math**: GLAM (Rust), gl-matrix (TS)
+- **Bundler**: Vite
+- **Networking**: WebRTC (SimplePeer), Socket.io (Signaling)
 
-  - main.ts: エントリーポイント。DOM 操作とレンダリングループの制御。
-  - renderer.ts: WebGPURenderer クラス。WebGPU デバイスの初期化、パイプライン作成、バッファ管 理、描画コマンドの発行。
-  - world-bridge.ts: TypeScript と WASM のブリッジ。WASM メモリからのデータ取得を担当。
-  - shader.wgsl: レイトレーシングの全ロジックを含む Compute Shader。
-
-- rust-shader-tools/
-  - src/bvh/: BVH 構築ロジック (tlas.rs, blas.rs)。
-  - src/scene/: シーン、マテリアル、カメラの定義。
-  - src/lib.rs: WASM として公開される API のエントリポイント。
-
-### 🛠 技術スタック詳細
-
-- Languages: TypeScript, Rust, WGSL
-
-- Build Tool: Vite
-
-- Rust Crates: wasm-bindgen, glam (数学), gltf (ローダー), rand
-
-- Web APIs: WebGPU
-
-### License
+## License
 
 This project is licensed under the MIT License.
