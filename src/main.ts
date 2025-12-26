@@ -41,6 +41,13 @@ const rebuildPipeline = () => {
 };
 
 const updateResolution = () => {
+  // ★ 追加: 録画中はリサイズ処理（コンテキストの再構成）を行わないようにする
+  if (recorder.recording) {
+    console.warn(
+      "Resize blocked during recording to prevent resource invalidation."
+    );
+    return;
+  }
   const { width, height } = ui.getRenderConfig();
   renderer.updateScreenSize(width, height);
 

@@ -176,7 +176,29 @@ export class VideoRecorder {
 
       // Use createImageBitmap to create a stable snapshot of the canvas
       // This avoids race conditions with WebGPU swapchain updates
-      const bitmap = await createImageBitmap(this.canvas);
+      // ★ 修正: createImageBitmap の再試行ロジックを追加
+      let bitmap: ImageBitmap | null = null;
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          bitmap = await createImageBitmap(this.canvas);
+          break; // 成功したらループを抜ける
+        } catch (e) {
+          console.warn(
+            `Bitmap capture failed, retrying... (${retries} left)`,
+            e
+          );
+          retries--;
+          // 少し待機してから再試行（ブラウザの構成変更待ち）
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
+
+      if (!bitmap) {
+        throw new Error(
+          "Failed to capture frame after retries (Context Lost?)"
+        );
+      }
       const frame = new VideoFrame(bitmap, {
         timestamp: ((startFrameOffset + i) * 1000000) / config.fps,
         duration: 1000000 / config.fps,
