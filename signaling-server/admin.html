@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Raytracer Signaling Admin</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --card: #1e293b;
+        --text: #f8fafc;
+        --accent: #3b82f6;
+        --danger: #ef4444;
+        --success: #22c55e;
+      }
+      body {
+        font-family: "Inter", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        margin: 0;
+        padding: 20px;
+      }
+      h1 {
+        margin-bottom: 20px;
+        font-weight: 300;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 20px;
+      }
+      .card {
+        background: var(--card);
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+      }
+      .status-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+      .badge {
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: bold;
+      }
+      .badge-online {
+        background: var(--success);
+        color: white;
+      }
+      .badge-offline {
+        background: #64748b;
+        color: white;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 10px;
+        border-bottom: 1px solid #334155;
+      }
+
+      .log-container {
+        height: 500px;
+        overflow-y: auto;
+        background: #000;
+        padding: 10px;
+        font-family: "Fira Code", monospace;
+        font-size: 0.85rem;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column-reverse;
+      }
+      .log-entry {
+        margin-bottom: 4px;
+        border-left: 3px solid transparent;
+        padding-left: 8px;
+      }
+      .log-INFO {
+        border-color: var(--accent);
+      }
+      .log-ERROR {
+        border-color: var(--danger);
+        color: #fca5a5;
+      }
+      .log-time {
+        color: #64748b;
+        margin-right: 8px;
+      }
+
+      button {
+        cursor: pointer;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: bold;
+        transition: opacity 0.2s;
+      }
+      button:hover {
+        opacity: 0.8;
+      }
+      .btn-danger {
+        background: var(--danger);
+        color: white;
+      }
+      .btn-refresh {
+        background: var(--accent);
+        color: white;
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🛰️ Signaling Server Admin</h1>
+
+    <button class="btn-refresh" onclick="fetchStatus()">Refresh</button>
+
+    <div class="grid">
+      <div class="column">
+        <div class="card">
+          <div class="status-header">
+            <h2>Host Status</h2>
+            <span id="host-badge" class="badge">Checking...</span>
+          </div>
+          <div id="host-info">None</div>
+          <div style="margin-top: 20px">
+            <button
+              id="kick-btn"
+              class="btn-danger"
+              onclick="kickHost()"
+              disabled
+            >
+              Kick Host
+            </button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 20px">
+          <h2>Workers (<span id="worker-count">0</span>)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Address</th>
+              </tr>
+            </thead>
+            <tbody id="worker-list"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Live Logs</h2>
+        <div id="logs" class="log-container"></div>
+      </div>
+    </div>
+
+    <script>
+      async function fetchStatus() {
+        try {
+          const res = await fetch("/admin/api/status");
+          if (!res.ok) throw new Error("Failed to fetch status");
+          const data = await res.json();
+          updateUI(data);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      function updateUI(data) {
+        // Host
+        const hBadge = document.getElementById("host-badge");
+        const hInfo = document.getElementById("host-info");
+        const kBtn = document.getElementById("kick-btn");
+        if (data.host) {
+          hBadge.textContent = "ONLINE";
+          hBadge.className = "badge badge-online";
+          hInfo.innerHTML = `<strong>ID:</strong> ${data.host.id}<br><strong>Addr:</strong> ${data.host.address}`;
+          kBtn.disabled = false;
+        } else {
+          hBadge.textContent = "OFFLINE";
+          hBadge.className = "badge badge-offline";
+          hInfo.textContent = "No host connected.";
+          kBtn.disabled = true;
+        }
+
+        // Workers
+        document.getElementById("worker-count").textContent =
+          data.workers.length;
+        const wList = document.getElementById("worker-list");
+        wList.innerHTML = data.workers
+          .map(
+            (w) => `
+                <tr><td>${w.id.substring(0, 8)}...</td><td>${
+              w.address
+            }</td></tr>
+            `
+          )
+          .join("");
+
+        // Logs
+        const logContainer = document.getElementById("logs");
+        logContainer.innerHTML = data.logs
+          .reverse()
+          .map(
+            (l) => `
+                <div class="log-entry log-${l.level}">
+                    <span class="log-time">${new Date(
+                      l.time
+                    ).toLocaleTimeString()}</span>
+                    <span class="log-msg">${l.msg}</span>
+                </div>
+            `
+          )
+          .join("");
+      }
+
+      async function kickHost() {
+        if (!confirm("Are you sure you want to kick the host?")) return;
+        try {
+          const res = await fetch("/admin/api/kick-host", { method: "POST" });
+          if (res.ok) fetchStatus();
+        } catch (e) {
+          alert("Kick failed");
+        }
+      }
+
+      // Auto Refresh
+      setInterval(fetchStatus, 3000);
+      fetchStatus();
+    </script>
+  </body>
+</html>
