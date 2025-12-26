@@ -174,13 +174,17 @@ export class VideoRecorder {
         await encoder.flush();
       }
 
-      const frame = new VideoFrame(this.canvas, {
+      // Use createImageBitmap to create a stable snapshot of the canvas
+      // This avoids race conditions with WebGPU swapchain updates
+      const bitmap = await createImageBitmap(this.canvas);
+      const frame = new VideoFrame(bitmap, {
         timestamp: ((startFrameOffset + i) * 1000000) / config.fps,
         duration: 1000000 / config.fps,
       });
 
       encoder.encode(frame, { keyFrame: i % config.fps === 0 });
       frame.close();
+      bitmap.close();
 
       // 6. Wait for NEXT frame data before entering next iteration
       if (nextUpdatePromise) {
@@ -226,6 +230,8 @@ export class VideoRecorder {
 
   private async renderFrame(totalSpp: number) {
     let samplesDone = 0;
+    let lastPresentTime = performance.now();
+
     while (samplesDone < totalSpp) {
       const batch = Math.min(this.currentBatchSize, totalSpp - samplesDone);
       const t0 = performance.now();
@@ -234,7 +240,17 @@ export class VideoRecorder {
         this.renderer.compute(samplesDone + k);
       }
       samplesDone += batch;
-      this.renderer.present();
+
+      // THROTTLE PRESENT: Only present if >100ms passed OR finished
+      // This prevents massive BindGroup churn (which happens in present())
+      // and fixes the "valid no external instance reference" crash on fast GPUs.
+      const now = performance.now();
+      const isFinished = samplesDone >= totalSpp;
+      if (isFinished || now - lastPresentTime > 100) {
+        this.renderer.present();
+        lastPresentTime = now;
+      }
+
       await this.renderer.device.queue.onSubmittedWorkDone();
 
       const t1 = performance.now();
@@ -250,7 +266,6 @@ export class VideoRecorder {
         this.currentBatchSize * (0.8 + 0.2 * rawMultiplier)
       );
 
-      const prevBatch = this.currentBatchSize;
       // HARD CAP: 50. Doing >50 passes per JS frame is likely too much CPU/Driver overhead.
       // If the GPU is that fast, we are just limited by JS/Driver dispatch.
       this.currentBatchSize = Math.max(
@@ -258,13 +273,7 @@ export class VideoRecorder {
         Math.min(totalSpp, Math.min(nextBatch, 50))
       );
 
-      if (this.currentBatchSize !== prevBatch && Math.abs(elapsed - 100) > 20) {
-        console.log(
-          `[Worker] Batch Tuned: ${prevBatch} -> ${
-            this.currentBatchSize
-          } (Elapsed: ${elapsed.toFixed(1)}ms, Target: 100ms)`
-        );
-      }
+      // Removed logging to reduce console noise during high-speed recording
     }
   }
 }
