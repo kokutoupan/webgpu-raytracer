@@ -340,6 +340,14 @@ const executeWorkerRender = async (
 
   isRendering = false;
 
+  // Sync shader settings before recording
+  if (config.maxDepth !== undefined && config.shaderSpp !== undefined) {
+    console.log(
+      `[Worker] Updating Shader Pipeline: Depth=${config.maxDepth}, SPP=${config.shaderSpp}`
+    );
+    renderer.buildPipeline(config.maxDepth, config.shaderSpp);
+  }
+
   const workerConfig = {
     ...config,
     startFrame: startFrame,
@@ -664,6 +672,14 @@ signaling.onSceneReceived = async (data, config) => {
   isSceneLoading = true;
 
   ui.setRenderConfig(config);
+
+  // Sync shader settings
+  if (config.maxDepth !== undefined && config.shaderSpp !== undefined) {
+    console.log(
+      `[Worker] Syncing Shader settings: Depth=${config.maxDepth}, SPP=${config.shaderSpp}`
+    );
+    renderer.buildPipeline(config.maxDepth, config.shaderSpp);
+  }
 
   currentFileType = config.fileType;
   if (config.fileType === "obj") currentFileData = data as string;

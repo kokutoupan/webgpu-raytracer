@@ -6,6 +6,7 @@ export class VideoRecorder {
   private renderer: WebGPURenderer;
   private worldBridge: WorldBridge;
   private canvas: HTMLCanvasElement;
+  private currentBatchSize: number = 0;
 
   constructor(
     renderer: WebGPURenderer,
@@ -141,6 +142,7 @@ export class VideoRecorder {
     abortSignal?: AbortSignal
   ) {
     if (abortSignal?.aborted) throw new Error("Aborted");
+    this.currentBatchSize = config.batch; // Initialize with suggested batch
     // 1. Bootstrap: Update for first frame and wait for it
     const startFrame = startFrameOffset;
     this.worldBridge.update(startFrame / config.fps);
@@ -165,7 +167,7 @@ export class VideoRecorder {
       }
 
       // 4. Render CURRENT frame
-      await this.renderFrame(config.spp, config.batch);
+      await this.renderFrame(config.spp);
 
       // 5. Encode
       if (encoder.encodeQueueSize > 5) {
@@ -222,16 +224,41 @@ export class VideoRecorder {
     this.renderer.resetAccumulation();
   }
 
-  private async renderFrame(totalSpp: number, batchSize: number) {
+  private async renderFrame(totalSpp: number) {
     let samplesDone = 0;
     while (samplesDone < totalSpp) {
-      const batch = Math.min(batchSize, totalSpp - samplesDone);
+      const batch = Math.min(this.currentBatchSize, totalSpp - samplesDone);
+      const t0 = performance.now();
+
       for (let k = 0; k < batch; k++) {
         this.renderer.compute(samplesDone + k);
       }
       samplesDone += batch;
       this.renderer.present();
       await this.renderer.device.queue.onSubmittedWorkDone();
+
+      const t1 = performance.now();
+      const elapsed = t1 - t0;
+
+      // Auto-adjust batch size to target ~100ms (10 FPS)
+      // If elapsed is 0 (very fast), we cap the multiplier
+      const multiplier = elapsed > 0 ? 100 / elapsed : 2.0;
+
+      // Adjust with some damping to prevent oscillation
+      const nextBatch = Math.round(
+        this.currentBatchSize * (0.8 + 0.2 * multiplier)
+      );
+
+      const prevBatch = this.currentBatchSize;
+      this.currentBatchSize = Math.max(1, Math.min(totalSpp, nextBatch));
+
+      if (this.currentBatchSize !== prevBatch && Math.abs(elapsed - 100) > 20) {
+        console.log(
+          `[Worker] Batch Tuned: ${prevBatch} -> ${
+            this.currentBatchSize
+          } (Elapsed: ${elapsed.toFixed(1)}ms, Target: 100ms)`
+        );
+      }
     }
   }
 }

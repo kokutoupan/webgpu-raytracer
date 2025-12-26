@@ -234,6 +234,8 @@ export class UIManager {
       spp: parseInt(this.inputRecSpp.value, 10) || 64, // Corrected property name
       batch: parseInt(this.inputRecBatch.value, 10) || 4,
       anim: parseInt(this.animSelect.value, 10) || 0,
+      maxDepth: parseInt(this.inputDepth.value, 10) || Config.defaultDepth,
+      shaderSpp: parseInt(this.inputSPP.value, 10) || Config.defaultSPP,
     };
   }
 
@@ -251,5 +253,9 @@ export class UIManager {
     this.inputRecDur.value = config.duration.toString();
     this.inputRecSpp.value = config.spp.toString(); // Corrected property name
     this.inputRecBatch.value = config.batch.toString();
+    if ((config as any).maxDepth !== undefined)
+      this.inputDepth.value = (config as any).maxDepth.toString();
+    if ((config as any).shaderSpp !== undefined)
+      this.inputSPP.value = (config as any).shaderSpp.toString();
   }
 }

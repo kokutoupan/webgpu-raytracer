@@ -44,6 +44,8 @@ export type RenderConfig = {
   fileType: "obj" | "glb"; // ファイル形式
   anim: number; // Animation Index
   sceneName?: string; // For procedural scenes (e.g. "cornell_box")
+  maxDepth: number; // Shader Max Depth
+  shaderSpp: number; // Samples per dispatch
 };
 
 // DataChannelで送るデータ
