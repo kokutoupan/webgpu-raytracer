@@ -25,7 +25,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const H = "modulepreload", G = function(o) {
     return "/webgpu-raytracer/" + o;
-  }, E = {}, M = function(e, t, n) {
+  }, E = {}, L = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let l = function(d) {
@@ -1722,7 +1722,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: r, ArrayBufferTarget: i } = await M(async () => {
+      const { Muxer: r, ArrayBufferTarget: i } = await L(async () => {
         const { Muxer: l, ArrayBufferTarget: d } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: l,
@@ -1823,8 +1823,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         const n = Math.min(this.currentBatchSize, e - t), r = performance.now();
         for (let d = 0; d < n; d++) this.renderer.compute(t + d);
         t += n, this.renderer.present(), await this.renderer.device.queue.onSubmittedWorkDone();
-        const s = performance.now() - r, a = s > 0 ? 100 / s : 2, c = Math.round(this.currentBatchSize * (0.8 + 0.2 * a)), l = this.currentBatchSize;
-        this.currentBatchSize = Math.max(1, Math.min(e, c)), this.currentBatchSize !== l && Math.abs(s - 100) > 20 && console.log(`[Worker] Batch Tuned: ${l} -> ${this.currentBatchSize} (Elapsed: ${s.toFixed(1)}ms, Target: 100ms)`);
+        const s = performance.now() - r;
+        let a = s > 0 ? 100 / s : 1.5;
+        a = Math.min(a, 1.5);
+        const c = Math.round(this.currentBatchSize * (0.8 + 0.2 * a)), l = this.currentBatchSize;
+        this.currentBatchSize = Math.max(1, Math.min(e, Math.min(c, 50))), this.currentBatchSize !== l && Math.abs(s - 100) > 20 && console.log(`[Worker] Batch Tuned: ${l} -> ${this.currentBatchSize} (Elapsed: ${s.toFixed(1)}ms, Target: 100ms)`);
       }
     }
   }
@@ -1865,7 +1868,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     ]
   };
-  class P {
+  class M {
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -2166,7 +2169,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
           const t = (r) => {
-            const i = new P(r, (s) => this.sendSignal(s));
+            const i = new M(r, (s) => this.sendSignal(s));
             return this.workers.set(r, i), i.onDataChannelOpen = () => {
               var _a2;
               console.log(`[Host] Open for ${r}`), i.sendData({
@@ -2234,7 +2237,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         case "offer":
           e.fromId && await ((r) => {
             var _a2, _b;
-            return this.hostClient && this.hostClient.close(), this.hostClient = new P(r, (i) => this.sendSignal(i)), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
+            return this.hostClient && this.hostClient.close(), this.hostClient = new M(r, (i) => this.sendSignal(i)), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
               var _a3, _b2;
               (_a3 = this.hostClient) == null ? void 0 : _a3.sendData({
                 type: "HELLO",
@@ -2517,7 +2520,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (console.log(`[Host] Received ${e.length} chunks for ${t} from ${n}`), this.pendingChunks.set(t, e), this.completedJobs++, this.ui.setStatus(`Distributed Progress: ${this.completedJobs} / ${this.totalJobs} jobs`), this.workerStatus.set(n, "idle"), this.activeJobs.delete(n), await this.assignJob(n), this.completedJobs >= this.totalJobs) return console.log("[Host] All jobs complete. Triggering Muxing Callback."), "ALL_COMPLETE";
     }
     async muxAndDownload() {
-      const e = Array.from(this.pendingChunks.keys()).sort((l, d) => l - d), { Muxer: t, ArrayBufferTarget: n } = await M(async () => {
+      const e = Array.from(this.pendingChunks.keys()).sort((l, d) => l - d), { Muxer: t, ArrayBufferTarget: n } = await L(async () => {
         const { Muxer: l, ArrayBufferTarget: d } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: l,
@@ -2638,8 +2641,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   let y = false, x = null, R = null, w = null;
-  const I = 20, u = new X(), f = new O(u.canvas), h = new q(), B = new j(f, h, u.canvas), v = new V(), p = new Y(v, u), k = new Q(v, f, u, B);
-  let S = 0, D = 0, C = 0, L = performance.now();
+  const P = 20, u = new X(), f = new O(u.canvas), h = new q(), B = new j(f, h, u.canvas), v = new V(), p = new Y(v, u), k = new Q(v, f, u, B);
+  let S = 0, D = 0, C = 0, I = performance.now();
   const K = () => {
     const o = parseInt(u.inputDepth.value, 10) || _.defaultDepth, e = parseInt(u.inputSPP.value, 10) || _.defaultSPP;
     f.buildPipeline(o, e);
@@ -2661,7 +2664,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     S++, C++, D++, f.compute(S), f.present();
     const e = performance.now();
-    e - L >= 1e3 && (u.updateStats(C, 1e3 / C, S), C = 0, L = e);
+    e - I >= 1e3 && (u.updateStats(C, 1e3 / C, S), C = 0, I = e);
   };
   v.onStatusChange = (o) => u.setStatus(`Status: ${o}`);
   v.onWorkerStatus = async (o, e, t) => {
@@ -2691,8 +2694,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (!confirm(`Distribute recording? (Workers: ${o.length})
 Auto Scene Sync enabled.`)) return;
         p.jobQueue = [], p.pendingChunks.clear(), p.completedJobs = 0, p.activeJobs.clear();
-        for (let t = 0; t < e; t += I) {
-          const n = Math.min(I, e - t);
+        for (let t = 0; t < e; t += P) {
+          const n = Math.min(P, e - t);
           p.jobQueue.push({
             start: t,
             count: n
