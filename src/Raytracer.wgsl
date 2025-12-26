@@ -110,27 +110,26 @@ struct ScatterResult {
 //   ReSTIR GI Structures
 // =========================================================
 
+// 八面体エンコーディングによる法線圧縮 (vec3 -> vec2)
+fn pack_normal(n: vec3<f32>) -> vec2<f32> {
+    let p = n.xy * (1.0 / (abs(n.x) + abs(n.y) + abs(n.z)));
+    return select(p, (1.0 - abs(p.yx)) * select(vec2(-1.0), vec2(1.0), p.xy >= vec2(0.0)), n.z < 0.0);
+}
+
+fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
+    var n = vec3(p, 1.0 - abs(p.x) - abs(p.y));
+    let t = saturate(-n.z);
+    n.x += select(t, -t, n.x >= 0.0);
+    n.y += select(t, -t, n.y >= 0.0);
+    return normalize(n);
+}
+
 struct GIReservoir {
-    // [Slot 0] 16 bytes
-    sample_dir: vec3<f32>,       // 12 bytes
-    sample_dist: f32,            // 4 bytes
-
-    // [Slot 1] 16 bytes
-    sample_radiance: vec3<f32>,  // 12 bytes
-    w_sum: f32,                  // 4 bytes
-
-    // [Slot 2] 16 bytes
-    creation_pos: vec3<f32>,     // 12 bytes
-    M: f32,                      // 4 bytes
-
-    // [Slot 3] 16 bytes
-    creation_normal: vec3<f32>,  // 12 bytes
-    W: f32,                      // 4 bytes
-    // [Slot 4] 16 bytes (Alignment padding)
-    creation_mat_id: u32,        // 4 bytes
-    pad0: u32,                   // 12 bytes padding to align struct to 16 bytes
-    pad1: u32,
-    pad2: u32,
+    // 64 bytes (4 x vec4)
+    data0: vec4<f32>, // [dir.x, dir.y, dir.z, dist]
+    data1: vec4<f32>, // [radiance.x, radiance.y, radiance.z, w_sum]
+    data2: vec4<f32>, // [pos.x, pos.y, pos.z, M]
+    data3: vec4<f32>, // [norm_packed.x, norm_packed.y, W, mat_id (bitcast)]
 }
 
 // =========================================================
@@ -259,16 +258,15 @@ fn merge_reservoir_refined(
     normal: vec3<f32>,
     rng: ptr<function, u32>
 ) -> bool {
-    let M = src.M;
-    let weight = p_hat_dest * src.W * M; // RIS weight
+    let M = src.data2.w;
+    let weight = p_hat_dest * src.data3.z * M; // RIS weight (src.W is data3.z)
 
-    (*dest).w_sum += weight;
-    (*dest).M += M;
+    (*dest).data1.w += weight; // w_sum
+    (*dest).data2.w += M;      // M
 
-    if rand_pcg(rng) < (weight / (*dest).w_sum) {
-        (*dest).sample_dir = src.sample_dir;
-        (*dest).sample_radiance = src.sample_radiance;
-        (*dest).sample_dist = src.sample_dist;
+    if rand_pcg(rng) < (weight / (*dest).data1.w) {
+        (*dest).data0 = src.data0;
+        (*dest).data1 = vec4(src.data1.xyz, (*dest).data1.w);
         return true;
     }
     return false;
@@ -283,13 +281,12 @@ fn update_reservoir(
     weight: f32,
     rng: ptr<function, u32>
 ) -> bool {
-    (*res).w_sum += weight;
-    (*res).M += 1.0;
+    (*res).data1.w += weight; // w_sum
+    (*res).data2.w += 1.0;    // M
 
-    if rand_pcg(rng) < (weight / (*res).w_sum) {
-        (*res).sample_dir = dir;
-        (*res).sample_radiance = radiance;
-        (*res).sample_dist = dist;
+    if rand_pcg(rng) < (weight / (*res).data1.w) {
+        (*res).data0 = vec4(dir, dist);
+        (*res).data1 = vec4(radiance, (*res).data1.w);
         return true;
     }
     return false;
@@ -740,9 +737,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         if specular_bounce && use_restir {
             var state: GIReservoir;
             // 初期化
-            state.w_sum = 0.0;
-            state.M = 0.0;
-            state.W = 0.0;
+            state.data0 = vec4(0.0);
+            state.data1 = vec4(0.0);
+            state.data2 = vec4(0.0);
+            state.data3 = vec4(0.0);
             
             // 1. Initial Candidate Generation (初期候補)
             // 通常通りBSDFサンプリングして、1バウンス先のライティングを計算する
@@ -840,35 +838,29 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             // 初期候補をリザーバに追加
             let initial_cos = max(dot(normal, initial_dir), 0.0);
             let p_hat_initial = evaluate_p_hat(initial_Li, albedo, initial_cos);
-            // RIS Weight = p_hat / pdf (BSDF重点サンプリングの場合)
-            // [Firefly対策] PDFが極端に小さい場合に重みが爆発するのを防ぐ
+            // RIS Weight = p_hat / pdf
             let w_initial = select(0.0, p_hat_initial / max(initial_pdf, 1e-3), initial_pdf > 1e-8);
-
             update_reservoir(&state, initial_dir, initial_Li, initial_dist, w_initial, rng);
 
-            // 2. Temporal Reuse (時間的再利用)
-            // 前フレームのリザーバを読み込む
-            // ※ 本来はバックプロジェクションで「前の位置」のピクセルを読むべきだが、
-            //    まずは「同じピクセル位置」を読む (Camera固定ならこれで動く)
+            // 2. Temporal Reuse
             let prev_res = gi_reservoir[prev_res_idx];
-            
-            // 有効性チェック（法線とマテリアルID）
-            let normal_check = dot(prev_res.creation_normal, normal) > 0.9;
-            let mat_check = prev_res.creation_mat_id == bitcast<u32>(tri.data0.w); // mat_type
+            let prev_normal = unpack_normal(prev_res.data3.xy);
+            let prev_mat_id = bitcast<u32>(prev_res.data3.w);
+
+            let normal_check = dot(prev_normal, normal) > 0.9;
+            let mat_check = prev_mat_id == bitcast<u32>(tri.data0.w);
 
             if normal_check && mat_check {
-                // 過去の候補の評価値 (保存されたRadianceを使用)
-                // 現在の法線とAlbedoで再評価
-                let prev_cos = max(dot(normal, prev_res.sample_dir), 0.0);
-                let p_hat_prev = evaluate_p_hat(prev_res.sample_radiance, albedo, prev_cos);
-                
-                // マージ
+                let prev_dir = prev_res.data0.xyz;
+                let prev_radiance = prev_res.data1.xyz;
+                let prev_cos = max(dot(normal, prev_dir), 0.0);
+                let p_hat_prev = evaluate_p_hat(prev_radiance, albedo, prev_cos);
+
                 merge_reservoir_refined(&state, prev_res, p_hat_prev, albedo, normal, rng);
-                
-                // [修正後] w_sum も道連れにして比率を保つ
-                if state.M > 20.0 {
-                    state.w_sum *= (20.0 / state.M);
-                    state.M = 20.0;
+
+                if state.data2.w > 20.0 {
+                    state.data1.w *= (20.0 / state.data2.w);
+                    state.data2.w = 20.0;
                 }
             }
 
@@ -897,59 +889,55 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
                     
                     // --- 幾何的類似度チェック (Geometry Validation) ---
                     // これをやらないと、壁の裏や別オブジェクトの光が漏れてくる(Light Leaking)
-                    
-                    // 1. マテリアルIDチェック
-                    let mat_ok = neighbor_res.creation_mat_id == bitcast<u32>(tri.data0.w);
-                    
-                    // 2. 法線チェック (似た向きの面か)
-                    let norm_ok = dot(neighbor_res.creation_normal, normal) > 0.9;
-                    
-                    // 3. 位置(深度)チェック (距離が離れすぎていないか)
-                    // 簡易的に距離の二乗で判定。シーンのスケールに合わせて閾値調整が必要(例: 1.0)
-                    let dist_sq = dot(neighbor_res.creation_pos - hit_p, neighbor_res.creation_pos - hit_p);
-                    let pos_ok = dist_sq < 0.1; // シーンに合わせて調整してください
+
+                    let neighbor_normal = unpack_normal(neighbor_res.data3.xy);
+                    let neighbor_mat_id = bitcast<u32>(neighbor_res.data3.w);
+                    let neighbor_pos = neighbor_res.data2.xyz;
+
+                    let mat_ok = neighbor_mat_id == bitcast<u32>(tri.data0.w);
+                    let norm_ok = dot(neighbor_normal, normal) > 0.9;
+                    let dist_sq = dot(neighbor_pos - hit_p, neighbor_pos - hit_p);
+                    let pos_ok = dist_sq < 0.1;
 
                     if mat_ok && norm_ok && pos_ok {
-                        // 近傍の p_hat を再評価
-                        let n_cos = max(dot(normal, neighbor_res.sample_dir), 0.0);
-                        let p_hat_neighbor = evaluate_p_hat(neighbor_res.sample_radiance, albedo, n_cos);
-                        
-                        // マージ実行
+                        let n_dir = neighbor_res.data0.xyz;
+                        let n_radiance = neighbor_res.data1.xyz;
+                        let n_cos = max(dot(normal, n_dir), 0.0);
+                        let p_hat_neighbor = evaluate_p_hat(n_radiance, albedo, n_cos);
+
                         merge_reservoir_refined(&state, neighbor_res, p_hat_neighbor, albedo, normal, rng);
                     }
                 }
             }
             
             // クランプ (Spatial Reuse後はMが増えすぎるので再度抑える)
-            if state.M > 50.0 {
-                state.w_sum *= (50.0 / state.M);
-                state.M = 50.0;
+            if state.data2.w > 50.0 {
+                state.data1.w *= (50.0 / state.data2.w);
+                state.data2.w = 50.0;
             };
 
-            // 3. Finalize W (Unbiased Weight calculation)
-            let final_cos = max(dot(normal, state.sample_dir), 0.0);
-            let p_hat_final = evaluate_p_hat(state.sample_radiance, albedo, final_cos);
-            // [Firefly対策] ゼロ除算の回避と、重み自体のクランプ
-            state.W = select(0.0, state.w_sum / (state.M * p_hat_final + 1e-6), p_hat_final > 1e-6);
-            state.W = min(state.W, 10.0);
+            // 3. Finalize W
+            let final_dir = state.data0.xyz;
+            let final_radiance = state.data1.xyz;
+            let final_cos = max(dot(normal, final_dir), 0.0);
+            let p_hat_final = evaluate_p_hat(final_radiance, albedo, final_cos);
 
-            // 4. Store Reservoir (次フレームのために保存)
-            state.creation_pos = hit_p;
-            state.creation_normal = normal;
-            state.creation_mat_id = bitcast<u32>(tri.data0.w);
+            let w_sum = state.data1.w;
+            let M = state.data2.w;
+            state.data3.z = select(0.0, w_sum / (M * p_hat_final + 1e-6), p_hat_final > 1e-6);
+            state.data3.z = min(state.data3.z, 10.0); // W
+
+            // 4. Store Reservoir
+            state.data2 = vec4(hit_p, M);
+            state.data3.x = pack_normal(normal).x;
+            state.data3.y = pack_normal(normal).y;
+            state.data3.w = bitcast<f32>(bitcast<u32>(tri.data0.w));
             gi_reservoir[curr_res_idx] = state;
 
-            // 5. Shading (選ばれた候補を使って色を決定)
-            // Lo = Li * BSDF * cos / PDF
-            // ReSTIRでは: Lo = Li * BSDF * cos * W
-
-            let bsdf_val = eval_diffuse(albedo); // Diffuse BSDF = albedo / PI
-            let cos_theta = max(dot(normal, state.sample_dir), 0.0);
-
-            // [修正] radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W * state.M; 
-            // Standard ReSTIR estimator: Lo = Li * BSDF * cos * W. 
-            // Our W already includes normalization (w_sum / (M * p_hat)).
-            radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W;
+            // 5. Shading
+            let bsdf_val = eval_diffuse(albedo);
+            let cos_theta = max(dot(normal, final_dir), 0.0);
+            radiance += throughput * final_radiance * bsdf_val * cos_theta * state.data3.z;
 
             // ReSTIRで決まったのでこの深度の処理は完了（ただし、後続のNEE等がスキップされないよう順序に注意）
             // break; <-- ここで消さずに、NEEの後に移動

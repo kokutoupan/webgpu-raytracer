@@ -189,7 +189,7 @@ export class WebGPURenderer {
     // ReSTIR GI Reservoir Buffer
     // 構造体サイズ: 80 bytes
     // Double buffering (Current + Prev) なので * 2
-    const reservoirStructSize = 80;
+    const reservoirStructSize = 64;
     const reservoirSize = width * height * reservoirStructSize * 2;
 
     if (this.reservoirBuffer) this.reservoirBuffer.destroy();
