@@ -42,6 +42,8 @@ export class WebGPURenderer {
   // Cached for updating
   private blasOffset = 0;
   private vertexCount = 0;
+  private normOffset = 0;
+  private uvOffset = 0;
 
   private seed = Math.floor(Math.random() * 0xffffff);
 
@@ -119,24 +121,21 @@ export class WebGPURenderer {
   }
 
   buildPipeline(depth: number, spp: number) {
-    let raytraceCode = raytracerCodeRaw;
-    raytraceCode = raytraceCode.replace(
-      /const\s+MAX_DEPTH\s*=\s*\d+u;/,
-      `const MAX_DEPTH = ${depth}u;`
-    );
-    raytraceCode = raytraceCode.replace(
-      /const\s+SPP\s*=\s*\d+u;/,
-      `const SPP = ${spp}u;`
-    );
-
     const raytraceModule = this.device.createShaderModule({
       label: "RayTracing",
-      code: raytraceCode,
+      code: raytracerCodeRaw,
     });
     this.pipeline = this.device.createComputePipeline({
       label: "Main Pipeline",
       layout: "auto",
-      compute: { module: raytraceModule, entryPoint: "main" },
+      compute: {
+        module: raytraceModule,
+        entryPoint: "main",
+        constants: {
+          MAX_DEPTH: depth,
+          SPP: spp,
+        },
+      },
     });
     this.bindGroupLayout = this.pipeline.getBindGroupLayout(0);
 
@@ -336,7 +335,12 @@ export class WebGPURenderer {
     n: Float32Array,
     uv: Float32Array
   ): boolean {
-    const totalBytes = v.byteLength + n.byteLength + uv.byteLength;
+    const align = 256;
+    const posLen = v.byteLength;
+    this.normOffset = Math.ceil(posLen / align) * align;
+    const normLen = n.byteLength;
+    this.uvOffset = Math.ceil((this.normOffset + normLen) / align) * align;
+    const totalBytes = this.uvOffset + uv.byteLength;
 
     let needsRebind = false;
     if (!this.geometryBuffer || this.geometryBuffer.size < totalBytes)
@@ -363,19 +367,22 @@ export class WebGPURenderer {
     // Note: Positions and Normals are assumed to be stride-4 input arrays (x,y,z,w)
     // UVs are assumed to be stride-2 input arrays (u,v)
 
-    // Direct write to buffer to save CPU memory
-    let offset = 0;
-
     // 1. Write Positions
-    this.device.queue.writeBuffer(this.geometryBuffer, offset, v as any);
-    offset += v.byteLength;
+    this.device.queue.writeBuffer(this.geometryBuffer, 0, v as any);
 
     // 2. Write Normals
-    this.device.queue.writeBuffer(this.geometryBuffer, offset, n as any);
-    offset += n.byteLength;
+    this.device.queue.writeBuffer(
+      this.geometryBuffer,
+      this.normOffset,
+      n as any
+    );
 
     // 3. Write UVs
-    this.device.queue.writeBuffer(this.geometryBuffer, offset, uv as any);
+    this.device.queue.writeBuffer(
+      this.geometryBuffer,
+      this.uvOffset,
+      uv as any
+    );
 
     return needsRebind;
   }
@@ -490,7 +497,14 @@ export class WebGPURenderer {
       entries: [
         { binding: 1, resource: { buffer: this.accumulateBuffer } },
         { binding: 2, resource: { buffer: this.sceneUniformBuffer } },
-        { binding: 3, resource: { buffer: this.geometryBuffer } },
+        {
+          binding: 3,
+          resource: {
+            buffer: this.geometryBuffer,
+            offset: 0,
+            size: this.vertexCount * 16,
+          },
+        },
         { binding: 4, resource: { buffer: this.topologyBuffer } },
         { binding: 5, resource: { buffer: this.nodesBuffer } },
         { binding: 6, resource: { buffer: this.instanceBuffer } },
@@ -501,6 +515,22 @@ export class WebGPURenderer {
         { binding: 8, resource: this.sampler },
         { binding: 9, resource: { buffer: this.lightsBuffer } },
         { binding: 10, resource: { buffer: this.reservoirBuffer } },
+        {
+          binding: 11,
+          resource: {
+            buffer: this.geometryBuffer,
+            offset: this.normOffset,
+            size: this.vertexCount * 16,
+          },
+        },
+        {
+          binding: 12,
+          resource: {
+            buffer: this.geometryBuffer,
+            offset: this.uvOffset,
+            size: this.vertexCount * 8,
+          },
+        },
       ],
     });
 

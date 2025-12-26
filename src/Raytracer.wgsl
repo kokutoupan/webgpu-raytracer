@@ -7,9 +7,9 @@ const T_MIN = 0.001;
 const T_MAX = 1e30;
 const SPATIAL_COUNT = 2u;      // 何個の近傍を探すか (2〜5くらい)
 const SPATIAL_RADIUS = 30.0;   // 探索半径 (ピクセル単位)
-// These are replaced by TypeScript before compilation
-const MAX_DEPTH = 10u;
-const SPP = 1u;
+// These are replaced by Pipeline Overrides
+override MAX_DEPTH: u32;
+override SPP: u32;
 
 // =========================================================
 //   Structs
@@ -154,7 +154,9 @@ fn set_gi_w_sum(res: ptr<function, GIReservoir>, w_sum: f32) { (*res).data1.w = 
 @group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> scene: SceneUniforms;
 
-@group(0) @binding(3) var<storage, read> geometry: array<f32>; // [Pos(4)... | Norm(4)... | UV(2)...]
+@group(0) @binding(3) var<storage, read> geometry_pos: array<vec4<f32>>;
+@group(0) @binding(11) var<storage, read> geometry_norm: array<vec4<f32>>;
+@group(0) @binding(12) var<storage, read> geometry_uv: array<vec2<f32>>;
 @group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
 @group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; 
 @group(0) @binding(6) var<storage, read> instances: array<Instance>;
@@ -170,18 +172,15 @@ fn set_gi_w_sum(res: ptr<function, GIReservoir>, w_sum: f32) { (*res).data1.w = 
 // =========================================================
 
 fn get_pos(idx: u32) -> vec3<f32> {
-    let i = idx * 4u;
-    return vec3(geometry[i], geometry[i + 1u], geometry[i + 2u]);
+    return geometry_pos[idx].xyz;
 }
 
 fn get_normal(idx: u32) -> vec3<f32> {
-    let i = (scene.vertex_count * 4u) + (idx * 4u);
-    return vec3(geometry[i], geometry[i + 1u], geometry[i + 2u]);
+    return geometry_norm[idx].xyz;
 }
 
 fn get_uv(idx: u32) -> vec2<f32> {
-    let i = (scene.vertex_count * 8u) + (idx * 2u);
-    return vec2(geometry[i], geometry[i + 1u]);
+    return geometry_uv[idx];
 }
 
 fn get_transform(inst: Instance) -> mat4x4<f32> {
@@ -649,39 +648,39 @@ fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
 fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
     let t1 = (min_b - origin) * inv_d;
     let t2 = (max_b - origin) * inv_d;
-    let tmin = max(t_min, max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z)));
-    let tmax = min(t_max, min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z)));
-    return select(1e30, tmin, tmin <= tmax);
+    let t_near = min(t1, t2);
+    let t_far = max(t1, t2);
+    let tm_near = max(t_min, max(t_near.x, max(t_near.y, t_near.z)));
+    let tm_far = min(t_max, min(t_far.x, min(t_far.y, t_far.z)));
+    return select(T_MAX, tm_near, tm_near <= tm_far);
 }
 
 fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
     let e1 = v1 - v0; let e2 = v2 - v0;
     let h = cross(r.direction, e2); let a = dot(e1, h);
-    if abs(a) < 1e-4 { return -1.0; }
+    if abs(a) < 1e-6 { return -1.0; } // Increased epsilon
     let f = 1.0 / a; let s = r.origin - v0; let u = f * dot(s, h);
     if u < 0.0 || u > 1.0 { return -1.0; }
     let q = cross(s, e1); let v = f * dot(r.direction, q);
     if v < 0.0 || u + v > 1.0 { return -1.0; }
     let t = f * dot(e2, q);
-    if t > t_min && t < t_max { return t; }
-    return -1.0;
+    return select(-1.0, t, t > t_min && t < t_max);
 }
 
 fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 64>;
+    var stack: array<u32, 32>; // Reduced stack size
     var stackptr = 0u;
 
-    var idx = node_start_idx;
-    if intersect_aabb(nodes[idx].min_b.xyz, nodes[idx].max_b.xyz, r.origin, inv_d, t_min, closest_t) < 1e30 {
-        stack[stackptr] = idx; stackptr++;
+    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r.origin, inv_d, t_min, closest_t) < T_MAX {
+        stack[0] = node_start_idx; stackptr = 1u;
     }
 
     while stackptr > 0u {
         stackptr--;
-        idx = stack[stackptr];
+        let idx = stack[stackptr];
         let node = nodes[idx];
         let count = u32(node.max_b.w);
 
@@ -689,24 +688,20 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
             let first = u32(node.min_b.w);
             for (var i = 0u; i < count; i++) {
                 let tri_id = first + i;
-                let tri = topology[tri_id];
-                let v0 = get_pos(tri.v0);
-                let v1 = get_pos(tri.v1);
-                let v2 = get_pos(tri.v2);
-                let t = hit_triangle_raw(v0, v1, v2, r, t_min, closest_t);
+                let tr = topology[tri_id];
+                let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, closest_t);
                 if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
             }
         } else {
             let l = u32(node.min_b.w) + node_start_idx;
             let r_idx = l + 1u;
-            let nl = nodes[l];
-            let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, closest_t);
-            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, closest_t);
 
-            if dl < 1e30 && dr < 1e30 {
-                if dl < dr { stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_idx; stackptr++; }
-            } else if dl < 1e30 { stack[stackptr] = l; stackptr++; } else if dr < 1e30 { stack[stackptr] = r_idx; stackptr++; }
+            if dl < T_MAX && dr < T_MAX {
+                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
+                stackptr += 2u;
+            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
         }
     }
     return vec2<f32>(closest_t, hit_idx);
@@ -717,38 +712,32 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if scene.blas_base_idx == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 64>;
+    var stack: array<u32, 16>; // TLAS is usually shallow
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < 1e30 {
-        stack[stackptr] = 0u; stackptr++;
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < T_MAX {
+        stack[0] = 0u; stackptr = 1u;
     }
 
     while stackptr > 0u {
         stackptr--;
-        let idx = stack[stackptr];
-        let node = nodes[idx];
+        let node = nodes[stack[stackptr]];
 
         if node.max_b.w > 0.5 { // Leaf
             let inst_idx = u32(node.min_b.w);
             let inst = instances[inst_idx];
-            let inv = get_inv_transform(inst);
-            let r_local = Ray((inv * vec4(r.origin, 1.0)).xyz, (inv * vec4(r.direction, 0.0)).xyz);
-            let blas_start = scene.blas_base_idx + inst.blas_node_offset;
-            let blas = intersect_blas(r_local, t_min, res.t, blas_start);
-            if blas.y > -0.5 {
-                res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx);
-            }
+            let r_local = Ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
+            let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
+            if blas.y > -0.5 { res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx); }
         } else {
             let l = u32(node.min_b.w);
             let r_idx = l + 1u;
-            let nl = nodes[l];
-            let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, res.t);
-            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, res.t);
-            if dl < 1e30 && dr < 1e30 {
-                if dl < dr { stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_idx; stackptr++; }
-            } else if dl < 1e30 { stack[stackptr] = l; stackptr++; } else if dr < 1e30 { stack[stackptr] = r_idx; stackptr++; }
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, res.t);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, res.t);
+            if dl < T_MAX && dr < T_MAX {
+                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
+                stackptr += 2u;
+            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
         }
     }
     return res;
