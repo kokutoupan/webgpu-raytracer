@@ -729,11 +729,13 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         // ★ ReSTIR GI Logic (Depth == 0 and Diffuse-like)
         // ----------------------------------------------------------------
         // 修正: 金属（Metallicが高いもの）は ReSTIR GI (Diffuse) の対象外にする
-        let is_metallic = (mat_type == 1u) && (metallic > 0.1);
+        // let is_metallic = (mat_type == 1u) && (metallic > 0.1);
+        let is_shiny_metallic = (mat_type == 1u) && (metallic > 0.1) && (roughness < 0.4); // 閾値は調整推奨
+
         
         // 「拡散反射成分が支配的なもの」だけを対象にする
         // Specular (鏡) や Metallic (金属) は除外
-        let use_restir = (mat_type == 0u) || (!is_metallic && !is_specular && mat_type != 2u);
+        let use_restir = (mat_type == 0u) || (!is_shiny_metallic && !is_specular && mat_type != 2u);
 
         if specular_bounce && use_restir {
             var state: GIReservoir;
