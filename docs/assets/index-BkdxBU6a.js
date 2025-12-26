@@ -7,7 +7,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     if (e && e.supports && e.supports("modulepreload")) return;
     for (const r of document.querySelectorAll('link[rel="modulepreload"]')) n(r);
     new MutationObserver((r) => {
-      for (const s of r) if (s.type === "childList") for (const o of s.addedNodes) o.tagName === "LINK" && o.rel === "modulepreload" && n(o);
+      for (const s of r) if (s.type === "childList") for (const c of s.addedNodes) c.tagName === "LINK" && c.rel === "modulepreload" && n(c);
     }).observe(document, {
       childList: true,
       subtree: true
@@ -23,13 +23,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       fetch(r.href, s);
     }
   })();
-  const X = "modulepreload", K = function(i) {
+  const Y = "modulepreload", K = function(i) {
     return "/webgpu-raytracer/" + i;
-  }, N = {}, O = function(e, t, n) {
+  }, N = {}, $ = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
-      let h = function(u) {
-        return Promise.all(u.map((g) => Promise.resolve(g).then((y) => ({
+      let u = function(f) {
+        return Promise.all(f.map((g) => Promise.resolve(g).then((y) => ({
           status: "fulfilled",
           value: y
         }), (y) => ({
@@ -37,28 +37,28 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           reason: y
         }))));
       };
-      var o = h;
+      var c = u;
       document.getElementsByTagName("link");
-      const l = document.querySelector("meta[property=csp-nonce]"), c = (l == null ? void 0 : l.nonce) || (l == null ? void 0 : l.getAttribute("nonce"));
-      r = h(t.map((u) => {
-        if (u = K(u), u in N) return;
-        N[u] = true;
-        const g = u.endsWith(".css"), y = g ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${u}"]${y}`)) return;
+      const o = document.querySelector("meta[property=csp-nonce]"), l = (o == null ? void 0 : o.nonce) || (o == null ? void 0 : o.getAttribute("nonce"));
+      r = u(t.map((f) => {
+        if (f = K(f), f in N) return;
+        N[f] = true;
+        const g = f.endsWith(".css"), y = g ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${f}"]${y}`)) return;
         const v = document.createElement("link");
-        if (v.rel = g ? "stylesheet" : X, g || (v.as = "script"), v.crossOrigin = "", v.href = u, c && v.setAttribute("nonce", c), document.head.appendChild(v), g) return new Promise((J, Y) => {
-          v.addEventListener("load", J), v.addEventListener("error", () => Y(new Error(`Unable to preload CSS for ${u}`)));
+        if (v.rel = g ? "stylesheet" : Y, g || (v.as = "script"), v.crossOrigin = "", v.href = f, l && v.setAttribute("nonce", l), document.head.appendChild(v), g) return new Promise((X, J) => {
+          v.addEventListener("load", X), v.addEventListener("error", () => J(new Error(`Unable to preload CSS for ${f}`)));
         });
       }));
     }
-    function s(l) {
-      const c = new Event("vite:preloadError", {
+    function s(o) {
+      const l = new Event("vite:preloadError", {
         cancelable: true
       });
-      if (c.payload = l, window.dispatchEvent(c), !c.defaultPrevented) throw l;
+      if (l.payload = o, window.dispatchEvent(l), !l.defaultPrevented) throw o;
     }
-    return r.then((l) => {
-      for (const c of l || []) c.status === "rejected" && s(c.reason);
+    return r.then((o) => {
+      for (const l of o || []) l.status === "rejected" && s(l.reason);
       return e().catch(s);
     });
   }, Q = `// =========================================================
@@ -70,9 +70,9 @@ const T_MIN = 0.001;
 const T_MAX = 1e30;
 const SPATIAL_COUNT = 2u;      // \u4F55\u500B\u306E\u8FD1\u508D\u3092\u63A2\u3059\u304B (2\u301C5\u304F\u3089\u3044)
 const SPATIAL_RADIUS = 30.0;   // \u63A2\u7D22\u534A\u5F84 (\u30D4\u30AF\u30BB\u30EB\u5358\u4F4D)
-// These are replaced by TypeScript before compilation
-const MAX_DEPTH = 10u;
-const SPP = 1u;
+// These are replaced by Pipeline Overrides
+override MAX_DEPTH: u32;
+override SPP: u32;
 
 // =========================================================
 //   Structs
@@ -173,28 +173,42 @@ struct ScatterResult {
 //   ReSTIR GI Structures
 // =========================================================
 
-struct GIReservoir {
-    // [Slot 0] 16 bytes
-    sample_dir: vec3<f32>,       // 12 bytes
-    sample_dist: f32,            // 4 bytes
-
-    // [Slot 1] 16 bytes
-    sample_radiance: vec3<f32>,  // 12 bytes
-    w_sum: f32,                  // 4 bytes
-
-    // [Slot 2] 16 bytes
-    creation_pos: vec3<f32>,     // 12 bytes
-    M: f32,                      // 4 bytes
-
-    // [Slot 3] 16 bytes
-    creation_normal: vec3<f32>,  // 12 bytes
-    W: f32,                      // 4 bytes
-    // [Slot 4] 16 bytes (Alignment padding)
-    creation_mat_id: u32,        // 4 bytes
-    pad0: u32,                   // 12 bytes padding to align struct to 16 bytes
-    pad1: u32,
-    pad2: u32,
+// \u516B\u9762\u4F53\u30A8\u30F3\u30B3\u30FC\u30C7\u30A3\u30F3\u30B0\u306B\u3088\u308B\u6CD5\u7DDA\u5727\u7E2E (vec3 -> vec2)
+fn pack_normal(n: vec3<f32>) -> vec2<f32> {
+    let p = n.xy * (1.0 / (abs(n.x) + abs(n.y) + abs(n.z)));
+    return select(p, (1.0 - abs(p.yx)) * select(vec2(-1.0), vec2(1.0), p.xy >= vec2(0.0)), n.z < 0.0);
 }
+
+fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
+    var n = vec3(p, 1.0 - abs(p.x) - abs(p.y));
+    let t = saturate(-n.z);
+    n.x += select(t, -t, n.x >= 0.0);
+    n.y += select(t, -t, n.y >= 0.0);
+    return normalize(n);
+}
+
+struct GIReservoir {
+    // 64 bytes (4 x vec4)
+    data0: vec4<f32>, // [dir.x, dir.y, dir.z, dist]
+    data1: vec4<f32>, // [radiance.x, radiance.y, radiance.z, w_sum]
+    data2: vec4<f32>, // [pos.x, pos.y, pos.z, M]
+    data3: vec4<f32>, // [norm_packed.x, norm_packed.y, W, mat_id (bitcast)]
+}
+
+fn get_gi_sample_dir(res: GIReservoir) -> vec3<f32> { return res.data0.xyz; }
+fn get_gi_sample_dist(res: GIReservoir) -> f32 { return res.data0.w; }
+fn get_gi_sample_radiance(res: GIReservoir) -> vec3<f32> { return res.data1.xyz; }
+fn get_gi_w_sum(res: GIReservoir) -> f32 { return res.data1.w; }
+fn get_gi_creation_pos(res: GIReservoir) -> vec3<f32> { return res.data2.xyz; }
+fn get_gi_M(res: GIReservoir) -> f32 { return res.data2.w; }
+fn get_gi_creation_normal(res: GIReservoir) -> vec3<f32> { return unpack_normal(res.data3.xy); }
+fn get_gi_W(res: GIReservoir) -> f32 { return res.data3.z; }
+fn get_gi_creation_mat_id(res: GIReservoir) -> u32 { return bitcast<u32>(res.data3.w); }
+
+fn set_gi_W(res: ptr<function, GIReservoir>, W: f32) { (*res).data3.z = W; }
+fn set_gi_M(res: ptr<function, GIReservoir>, M: f32) { (*res).data2.w = M; }
+fn set_gi_w_sum(res: ptr<function, GIReservoir>, w_sum: f32) { (*res).data1.w = w_sum; }
+
 
 // =========================================================
 //   Bindings
@@ -203,7 +217,9 @@ struct GIReservoir {
 @group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> scene: SceneUniforms;
 
-@group(0) @binding(3) var<storage, read> geometry: array<f32>; // [Pos(4)... | Norm(4)... | UV(2)...]
+@group(0) @binding(3) var<storage, read> geometry_pos: array<vec4<f32>>;
+@group(0) @binding(11) var<storage, read> geometry_norm: array<vec4<f32>>;
+@group(0) @binding(12) var<storage, read> geometry_uv: array<vec2<f32>>;
 @group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
 @group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; 
 @group(0) @binding(6) var<storage, read> instances: array<Instance>;
@@ -219,18 +235,15 @@ struct GIReservoir {
 // =========================================================
 
 fn get_pos(idx: u32) -> vec3<f32> {
-    let i = idx * 4u;
-    return vec3(geometry[i], geometry[i + 1u], geometry[i + 2u]);
+    return geometry_pos[idx].xyz;
 }
 
 fn get_normal(idx: u32) -> vec3<f32> {
-    let i = (scene.vertex_count * 4u) + (idx * 4u);
-    return vec3(geometry[i], geometry[i + 1u], geometry[i + 2u]);
+    return geometry_norm[idx].xyz;
 }
 
 fn get_uv(idx: u32) -> vec2<f32> {
-    let i = (scene.vertex_count * 8u) + (idx * 2u);
-    return vec2(geometry[i], geometry[i + 1u]);
+    return geometry_uv[idx];
 }
 
 fn get_transform(inst: Instance) -> mat4x4<f32> {
@@ -322,16 +335,15 @@ fn merge_reservoir_refined(
     normal: vec3<f32>,
     rng: ptr<function, u32>
 ) -> bool {
-    let M = src.M;
-    let weight = p_hat_dest * src.W * M; // RIS weight
+    let M = src.data2.w;
+    let weight = p_hat_dest * src.data3.z * M; // RIS weight (src.W is data3.z)
 
-    (*dest).w_sum += weight;
-    (*dest).M += M;
+    (*dest).data1.w += weight; // w_sum
+    (*dest).data2.w += M;      // M
 
-    if rand_pcg(rng) < (weight / (*dest).w_sum) {
-        (*dest).sample_dir = src.sample_dir;
-        (*dest).sample_radiance = src.sample_radiance;
-        (*dest).sample_dist = src.sample_dist;
+    if rand_pcg(rng) < (weight / (*dest).data1.w) {
+        (*dest).data0 = src.data0;
+        (*dest).data1 = vec4(src.data1.xyz, (*dest).data1.w);
         return true;
     }
     return false;
@@ -346,16 +358,148 @@ fn update_reservoir(
     weight: f32,
     rng: ptr<function, u32>
 ) -> bool {
-    (*res).w_sum += weight;
-    (*res).M += 1.0;
+    (*res).data1.w += weight; // w_sum
+    (*res).data2.w += 1.0;    // M
 
-    if rand_pcg(rng) < (weight / (*res).w_sum) {
-        (*res).sample_dir = dir;
-        (*res).sample_radiance = radiance;
-        (*res).sample_dist = dist;
+    if rand_pcg(rng) < (weight / (*res).data1.w) {
+        (*res).data0 = vec4(dir, dist);
+        (*res).data1 = vec4(radiance, (*res).data1.w);
         return true;
     }
     return false;
+}
+
+// 1. Initial Candidate Generation
+fn generate_initial_gi_candidate(
+    hit_p: vec3<f32>,
+    normal: vec3<f32>,
+    albedo: vec3<f32>,
+    rng: ptr<function, u32>
+) -> GIReservoir {
+    var res: GIReservoir;
+    res.data0 = vec4(0.0);
+    res.data1 = vec4(0.0);
+    res.data2 = vec4(0.0);
+    res.data3 = vec4(0.0);
+
+    let scatter = sample_diffuse(normal, albedo, rng);
+    if scatter.pdf <= 0.0 { return res; }
+
+    let bounce_ray = Ray(hit_p + normal * 1e-4, scatter.dir);
+    let bounce_hit = intersect_tlas(bounce_ray, T_MIN, T_MAX);
+
+    var Li = vec3(0.0);
+    var dist = 0.0;
+
+    if bounce_hit.inst_idx >= 0 {
+        dist = bounce_hit.t;
+        let b_tri = topology[u32(bounce_hit.tri_idx)];
+        let b_inst = instances[u32(bounce_hit.inst_idx)];
+        let b_inv = get_inv_transform(b_inst);
+
+        let b_pos0 = get_pos(b_tri.v0);
+        let b_pos1 = get_pos(b_tri.v1);
+        let b_pos2 = get_pos(b_tri.v2);
+        let b_r_local = Ray((b_inv * vec4(bounce_ray.origin, 1.)).xyz, (b_inv * vec4(bounce_ray.direction, 0.)).xyz);
+        let b_e1 = b_pos1 - b_pos0; let b_e2 = b_pos2 - b_pos0;
+        let b_s = b_r_local.origin - b_pos0;
+        let b_h = cross(b_r_local.direction, b_e2);
+        let b_f = 1.0 / dot(b_e1, b_h);
+        let b_u = b_f * dot(b_s, b_h);
+        let b_q = cross(b_s, b_e1);
+        let b_v = b_f * dot(b_r_local.direction, b_q);
+        let b_w = 1.0 - b_u - b_v;
+
+        let b_uv = get_uv(b_tri.v0) * b_w + get_uv(b_tri.v1) * b_u + get_uv(b_tri.v2) * b_v;
+        let b_ln = normalize(get_normal(b_tri.v0) * b_w + get_normal(b_tri.v1) * b_u + get_normal(b_tri.v2) * b_v);
+        let b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+        let b_p = bounce_ray.origin + bounce_ray.direction * bounce_hit.t;
+
+        var b_em = b_tri.data3.rgb;
+        if b_tri.data2.w > -0.5 { b_em *= textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.w), 0.0).rgb; }
+        Li = b_em;
+
+        let b_mat_type = bitcast<u32>(b_tri.data0.w);
+        if b_mat_type != 3u && b_mat_type != 2u {
+            let b_ls = sample_light_source(b_p, rng);
+            if b_ls.pdf > 0.0 {
+                let b_sr = Ray(b_p + b_normal * 1e-4, b_ls.dir);
+                if intersect_tlas(b_sr, T_MIN, b_ls.dist - 2e-4).inst_idx == -1 {
+                    var b_alb = b_tri.data0.rgb;
+                    if b_tri.data2.x > -0.5 { b_alb *= textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.x), 0.0).rgb; }
+                    Li += eval_diffuse(b_alb) * b_ls.L * max(dot(b_normal, b_ls.dir), 0.0) / b_ls.pdf;
+                }
+            }
+        }
+    }
+    if length(Li) < 1e-4 { Li = albedo * 0.05; }
+    let ph = evaluate_p_hat(Li, albedo, max(dot(normal, scatter.dir), 0.0));
+    update_reservoir(&res, scatter.dir, Li, dist, select(0.0, ph / max(scatter.pdf, 1e-3), scatter.pdf > 1e-8), rng);
+    return res;
+}
+
+// 2. Temporal Reuse
+fn apply_temporal_reuse_gi(
+    state: ptr<function, GIReservoir>,
+    prev_res_idx: u32,
+    normal: vec3<f32>,
+    albedo: vec3<f32>,
+    mat_type: u32,
+    rng: ptr<function, u32>
+) {
+    let pr = gi_reservoir[prev_res_idx];
+    if dot(get_gi_creation_normal(pr), normal) > 0.9 && get_gi_creation_mat_id(pr) == mat_type {
+        let ph = evaluate_p_hat(get_gi_sample_radiance(pr), albedo, max(dot(normal, get_gi_sample_dir(pr)), 0.0));
+        merge_reservoir_refined(state, pr, ph, albedo, normal, rng);
+        let m = get_gi_M(*state);
+        if m > 20.0 { set_gi_w_sum(state, get_gi_w_sum(*state) * (20.0 / m)); set_gi_M(state, 20.0); }
+    }
+}
+
+// 3. Spatial Reuse
+fn apply_spatial_reuse_gi(
+    state: ptr<function, GIReservoir>,
+    coord: vec2<u32>,
+    normal: vec3<f32>,
+    albedo: vec3<f32>,
+    mat_type: u32,
+    hit_p: vec3<f32>,
+    rng: ptr<function, u32>
+) {
+    for (var i = 0u; i < SPATIAL_COUNT; i++) {
+        let rad = sqrt(rand_pcg(rng)) * SPATIAL_RADIUS;
+        let ang = 2.0 * PI * rand_pcg(rng);
+        let nc = vec2<i32>(vec2<f32>(coord) + vec2(rad * cos(ang), rad * sin(ang)));
+        if nc.x >= 0 && nc.x < i32(scene.width) && nc.y >= 0 && nc.y < i32(scene.height) {
+            let nr = gi_reservoir[get_reservoir_offsets(u32(nc.y) * scene.width + u32(nc.x)).y];
+            if get_gi_creation_mat_id(nr) == mat_type && dot(get_gi_creation_normal(nr), normal) > 0.9 && dot(get_gi_creation_pos(nr) - hit_p, get_gi_creation_pos(nr) - hit_p) < 0.1 {
+                let ph = evaluate_p_hat(get_gi_sample_radiance(nr), albedo, max(dot(normal, get_gi_sample_dir(nr)), 0.0));
+                merge_reservoir_refined(state, nr, ph, albedo, normal, rng);
+            }
+        }
+    }
+    let m = get_gi_M(*state);
+    if m > 50.0 { set_gi_w_sum(state, get_gi_w_sum(*state) * (50.0 / m)); set_gi_M(state, 50.0); }
+}
+
+// 4. Finalize
+fn finalize_gi_reservoir(
+    state: ptr<function, GIReservoir>,
+    hit_p: vec3<f32>,
+    normal: vec3<f32>,
+    albedo: vec3<f32>,
+    mat_type: u32,
+    curr_res_idx: u32
+) {
+    let ph = evaluate_p_hat(get_gi_sample_radiance(*state), albedo, max(dot(normal, get_gi_sample_dir(*state)), 0.0));
+    let m = get_gi_M(*state);
+    let w = select(0.0, get_gi_w_sum(*state) / (m * ph + 1e-6), ph > 1e-6);
+    set_gi_W(state, min(w, 10.0));
+    (*state).data2 = vec4(hit_p, m);
+    let pn = pack_normal(normal);
+    (*state).data3.x = pn.x; (*state).data3.y = pn.y;
+    (*state).data3.w = bitcast<f32>(mat_type);
+    gi_reservoir[curr_res_idx] = *state;
 }
 
 // =========================================================
@@ -567,39 +711,39 @@ fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
 fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
     let t1 = (min_b - origin) * inv_d;
     let t2 = (max_b - origin) * inv_d;
-    let tmin = max(t_min, max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z)));
-    let tmax = min(t_max, min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z)));
-    return select(1e30, tmin, tmin <= tmax);
+    let t_near = min(t1, t2);
+    let t_far = max(t1, t2);
+    let tm_near = max(t_min, max(t_near.x, max(t_near.y, t_near.z)));
+    let tm_far = min(t_max, min(t_far.x, min(t_far.y, t_far.z)));
+    return select(T_MAX, tm_near, tm_near <= tm_far);
 }
 
 fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
     let e1 = v1 - v0; let e2 = v2 - v0;
     let h = cross(r.direction, e2); let a = dot(e1, h);
-    if abs(a) < 1e-4 { return -1.0; }
+    if abs(a) < 1e-6 { return -1.0; } // Increased epsilon
     let f = 1.0 / a; let s = r.origin - v0; let u = f * dot(s, h);
     if u < 0.0 || u > 1.0 { return -1.0; }
     let q = cross(s, e1); let v = f * dot(r.direction, q);
     if v < 0.0 || u + v > 1.0 { return -1.0; }
     let t = f * dot(e2, q);
-    if t > t_min && t < t_max { return t; }
-    return -1.0;
+    return select(-1.0, t, t > t_min && t < t_max);
 }
 
 fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 64>;
+    var stack: array<u32, 32>; // Reduced stack size
     var stackptr = 0u;
 
-    var idx = node_start_idx;
-    if intersect_aabb(nodes[idx].min_b.xyz, nodes[idx].max_b.xyz, r.origin, inv_d, t_min, closest_t) < 1e30 {
-        stack[stackptr] = idx; stackptr++;
+    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r.origin, inv_d, t_min, closest_t) < T_MAX {
+        stack[0] = node_start_idx; stackptr = 1u;
     }
 
     while stackptr > 0u {
         stackptr--;
-        idx = stack[stackptr];
+        let idx = stack[stackptr];
         let node = nodes[idx];
         let count = u32(node.max_b.w);
 
@@ -607,24 +751,20 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
             let first = u32(node.min_b.w);
             for (var i = 0u; i < count; i++) {
                 let tri_id = first + i;
-                let tri = topology[tri_id];
-                let v0 = get_pos(tri.v0);
-                let v1 = get_pos(tri.v1);
-                let v2 = get_pos(tri.v2);
-                let t = hit_triangle_raw(v0, v1, v2, r, t_min, closest_t);
+                let tr = topology[tri_id];
+                let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, closest_t);
                 if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
             }
         } else {
             let l = u32(node.min_b.w) + node_start_idx;
             let r_idx = l + 1u;
-            let nl = nodes[l];
-            let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, closest_t);
-            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, closest_t);
 
-            if dl < 1e30 && dr < 1e30 {
-                if dl < dr { stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_idx; stackptr++; }
-            } else if dl < 1e30 { stack[stackptr] = l; stackptr++; } else if dr < 1e30 { stack[stackptr] = r_idx; stackptr++; }
+            if dl < T_MAX && dr < T_MAX {
+                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
+                stackptr += 2u;
+            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
         }
     }
     return vec2<f32>(closest_t, hit_idx);
@@ -635,38 +775,32 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     if scene.blas_base_idx == 0u { return res; }
 
     let inv_d = 1.0 / r.direction;
-    var stack: array<u32, 64>;
+    var stack: array<u32, 16>; // TLAS is usually shallow
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < 1e30 {
-        stack[stackptr] = 0u; stackptr++;
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < T_MAX {
+        stack[0] = 0u; stackptr = 1u;
     }
 
     while stackptr > 0u {
         stackptr--;
-        let idx = stack[stackptr];
-        let node = nodes[idx];
+        let node = nodes[stack[stackptr]];
 
         if node.max_b.w > 0.5 { // Leaf
             let inst_idx = u32(node.min_b.w);
             let inst = instances[inst_idx];
-            let inv = get_inv_transform(inst);
-            let r_local = Ray((inv * vec4(r.origin, 1.0)).xyz, (inv * vec4(r.direction, 0.0)).xyz);
-            let blas_start = scene.blas_base_idx + inst.blas_node_offset;
-            let blas = intersect_blas(r_local, t_min, res.t, blas_start);
-            if blas.y > -0.5 {
-                res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx);
-            }
+            let r_local = Ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
+            let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
+            if blas.y > -0.5 { res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx); }
         } else {
             let l = u32(node.min_b.w);
             let r_idx = l + 1u;
-            let nl = nodes[l];
-            let nr = nodes[r_idx];
-            let dl = intersect_aabb(nl.min_b.xyz, nl.max_b.xyz, r.origin, inv_d, t_min, res.t);
-            let dr = intersect_aabb(nr.min_b.xyz, nr.max_b.xyz, r.origin, inv_d, t_min, res.t);
-            if dl < 1e30 && dr < 1e30 {
-                if dl < dr { stack[stackptr] = r_idx; stackptr++; stack[stackptr] = l; stackptr++; } else { stack[stackptr] = l; stackptr++; stack[stackptr] = r_idx; stackptr++; }
-            } else if dl < 1e30 { stack[stackptr] = l; stackptr++; } else if dr < 1e30 { stack[stackptr] = r_idx; stackptr++; }
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, res.t);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, res.t);
+            if dl < T_MAX && dr < T_MAX {
+                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
+                stackptr += 2u;
+            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
         }
     }
     return res;
@@ -681,7 +815,6 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
     var throughput = vec3(1.0);
     var radiance = vec3(0.0);
 
-    // ReSTIR\u7528\u306E\u30D0\u30C3\u30D5\u30A1\u30AA\u30D5\u30BB\u30C3\u30C8\u8A08\u7B97
     let pixel_idx = coord.y * scene.width + coord.x;
     let offsets = get_reservoir_offsets(pixel_idx);
     let curr_res_idx = offsets.x;
@@ -711,366 +844,96 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         let e1 = v1_pos - v0_pos;
         let e2 = v2_pos - v0_pos;
         let h_val = cross(r_local.direction, e2);
-        let a = dot(e1, h_val);
-        let f_val = 1.0 / a;
+        let f_val = 1.0 / dot(e1, h_val);
         let u_bar = f_val * dot(s, h_val);
         let q = cross(s, e1);
         let v_bar = f_val * dot(r_local.direction, q);
         let w_bar = 1.0 - u_bar - v_bar;
 
-        // Normals
+        let hit_p = ray.origin + ray.direction * hit.t;
+        let uv0 = get_uv(tri.v0);
+        let uv1 = get_uv(tri.v1);
+        let uv2 = get_uv(tri.v2);
+        let tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
+
         let n0 = get_normal(tri.v0);
         let n1 = get_normal(tri.v1);
         let n2 = get_normal(tri.v2);
         let ln = normalize(n0 * w_bar + n1 * u_bar + n2 * v_bar);
         var normal = normalize((vec4(ln, 0.0) * inv).xyz);
 
-        let hit_p = ray.origin + ray.direction * hit.t;
-        
-        // Textures & Attributes
-        let uv0 = get_uv(tri.v0);
-        let uv1 = get_uv(tri.v1);
-        let uv2 = get_uv(tri.v2);
-        let tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
-        
-        // 1. Base Color
         var albedo = tri.data0.rgb;
-        let base_tex = tri.data2.x;
-        if base_tex > -0.5 {
-            albedo *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
-        }
+        if tri.data2.x > -0.5 { albedo *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.x), 0.0).rgb; }
 
-        // 2. Normal Map
-        let normal_tex = tri.data2.z;
-        if normal_tex > -0.5 {
-            let n_map = textureSampleLevel(tex, smp, tex_uv, i32(normal_tex), 0.0).rgb * 2.0 - 1.0;
+        if tri.data2.z > -0.5 {
+            let n_map = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.z), 0.0).rgb * 2.0 - 1.0;
             let T = normalize(e1);
             let B = normalize(cross(ln, T));
             let ln_mapped = normalize(T * n_map.x + B * n_map.y + ln * n_map.z);
             normal = normalize((vec4(ln_mapped, 0.0) * inv).xyz);
         }
 
-        let front_face = dot(ray.direction, normal) < 0.0;
-        normal = select(-normal, normal, front_face);
+        normal = select(-normal, normal, dot(ray.direction, normal) < 0.0);
 
-        // 3. Metallic / Roughness
         var metallic = tri.data1.x;
         var roughness = tri.data1.y;
-        let met_rough_tex = tri.data2.y;
-        if met_rough_tex > -0.5 {
-            let mr = textureSampleLevel(tex, smp, tex_uv, i32(met_rough_tex), 0.0).rgb;
-            metallic *= mr.b;
-            roughness *= mr.g;
+        if tri.data2.y > -0.5 {
+            let mr = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.y), 0.0).rgb;
+            metallic *= mr.b; roughness *= mr.g;
         }
         roughness = max(roughness, 0.005);
 
-        // 4. Emissive
         var emissive = tri.data3.rgb;
-        let em_tex = tri.data2.w;
-        if em_tex > -0.5 {
-            emissive *= textureSampleLevel(tex, smp, tex_uv, i32(em_tex), 0.0).rgb;
-        }
+        if tri.data2.w > -0.5 { emissive *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.w), 0.0).rgb; }
 
-        // --- Emission ---
         if mat_type == 3u || length(emissive) > 1e-4 {
             let em_val = select(emissive, albedo, mat_type == 3u);
-            if specular_bounce {
-                radiance += throughput * em_val;
-            } else {
-                let light_pdf_val = get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction);
-                let weight = power_heuristic(prev_bsdf_pdf, light_pdf_val);
-                radiance += throughput * em_val * weight;
-            }
+            if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction)); }
             if mat_type == 3u { break; }
         }
 
-        // --- Material Setup ---
-        var f0 = mix(vec3(0.04), albedo, metallic);
-        var is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1); 
+        let f0 = mix(vec3(0.04), albedo, metallic);
+        let is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1);
+        let is_shiny_metallic = (mat_type == 1u) && (metallic > 0.1) && (roughness < 0.4);
+        let use_restir = (mat_type == 0u) || (!is_shiny_metallic && !is_specular && mat_type != 2u);
 
-        // ----------------------------------------------------------------
-        // \u2605 ReSTIR GI Logic (Depth == 0 and Diffuse-like)
-        // ----------------------------------------------------------------
-        // \u4FEE\u6B63: \u91D1\u5C5E\uFF08Metallic\u304C\u9AD8\u3044\u3082\u306E\uFF09\u306F ReSTIR GI (Diffuse) \u306E\u5BFE\u8C61\u5916\u306B\u3059\u308B
-        let is_metallic = (mat_type == 1u) && (metallic > 0.1);
-        
-        // \u300C\u62E1\u6563\u53CD\u5C04\u6210\u5206\u304C\u652F\u914D\u7684\u306A\u3082\u306E\u300D\u3060\u3051\u3092\u5BFE\u8C61\u306B\u3059\u308B
-        // Specular (\u93E1) \u3084 Metallic (\u91D1\u5C5E) \u306F\u9664\u5916
-        let use_restir = (mat_type == 0u) || (!is_metallic && !is_specular && mat_type != 2u);
-
+        // ReSTIR GI (Indirect Lighting)
         if specular_bounce && use_restir {
-            var state: GIReservoir;
-            // \u521D\u671F\u5316
-            state.w_sum = 0.0;
-            state.M = 0.0;
-            state.W = 0.0;
-            
-            // 1. Initial Candidate Generation (\u521D\u671F\u5019\u88DC)
-            // \u901A\u5E38\u901A\u308ABSDF\u30B5\u30F3\u30D7\u30EA\u30F3\u30B0\u3057\u3066\u30011\u30D0\u30A6\u30F3\u30B9\u5148\u306E\u30E9\u30A4\u30C6\u30A3\u30F3\u30B0\u3092\u8A08\u7B97\u3059\u308B
-            // \u203B \u3053\u3053\u3067\u306F\u7C21\u6613\u7684\u306B\u300C\u6B21\u306E1\u30D0\u30A6\u30F3\u30B9\u300D\u3060\u3051\u3092\u8A55\u4FA1\u3057\u307E\u3059
+            var state = generate_initial_gi_candidate(hit_p, normal, albedo, rng);
+            apply_temporal_reuse_gi(&state, prev_res_idx, normal, albedo, mat_type, rng);
+            apply_spatial_reuse_gi(&state, coord, normal, albedo, mat_type, hit_p, rng);
+            finalize_gi_reservoir(&state, hit_p, normal, albedo, mat_type, curr_res_idx);
 
-            var initial_dir: vec3<f32>;
-            var initial_Li = vec3(0.0);
-            var initial_dist = 0.0;
-            var initial_pdf = 0.0;
-
-            // BSDF\u30B5\u30F3\u30D7\u30EA\u30F3\u30B0
-            let scatter = sample_diffuse(normal, albedo, rng); // Diffuse\u306E\u307F\u3068\u4EEE\u5B9A
-            if scatter.pdf > 0.0 {
-                initial_dir = scatter.dir;
-                initial_pdf = scatter.pdf;
-                
-                // \u30EC\u30A4\u3092\u98DB\u3070\u3057\u3066Li\u3092\u53D6\u5F97 (\u518D\u5E30\u306E\u4EE3\u308F\u308A\u306B1\u30B9\u30C6\u30C3\u30D7\u3060\u3051\u30C8\u30EC\u30FC\u30B9)
-                let bounce_ray = Ray(hit_p + normal * 1e-4, initial_dir);
-                let bounce_hit = intersect_tlas(bounce_ray, T_MIN, T_MAX);
-
-                if bounce_hit.inst_idx >= 0 {
-                    initial_dist = bounce_hit.t;
-
-                    let b_tri_idx = u32(bounce_hit.tri_idx);
-                    let b_inst_idx = u32(bounce_hit.inst_idx);
-                    let b_tri = topology[b_tri_idx];
-                    let b_inst = instances[b_inst_idx];
-                    let b_inv = get_inv_transform(b_inst);
-                    
-                    // 1\u30D0\u30A6\u30F3\u30B9\u5148\u306E\u70B9\u306B\u304A\u3051\u308B\u6CD5\u7DDA\u3068UV\u306E\u88DC\u9593
-                    let b_pos0 = get_pos(b_tri.v0);
-                    let b_pos1 = get_pos(b_tri.v1);
-                    let b_pos2 = get_pos(b_tri.v2);
-                    let b_r_local = Ray((b_inv * vec4(bounce_ray.origin, 1.)).xyz, (b_inv * vec4(bounce_ray.direction, 0.)).xyz);
-                    
-                    // \u91CD\u5FC3\u5EA7\u6A19\u306E\u8A08\u7B97
-                    let b_e1 = b_pos1 - b_pos0;
-                    let b_e2 = b_pos2 - b_pos0;
-                    let b_s = b_r_local.origin - b_pos0;
-                    let b_h = cross(b_r_local.direction, b_e2);
-                    let b_f = 1.0 / dot(b_e1, b_h);
-                    let b_u = b_f * dot(b_s, b_h);
-                    let b_q = cross(b_s, b_e1);
-                    let b_v = b_f * dot(b_r_local.direction, b_q);
-                    let b_w = 1.0 - b_u - b_v;
-
-                    let b_uv0 = get_uv(b_tri.v0);
-                    let b_uv1 = get_uv(b_tri.v1);
-                    let b_uv2 = get_uv(b_tri.v2);
-                    let b_uv = b_uv0 * b_w + b_uv1 * b_u + b_uv2 * b_v;
-
-                    let b_n0 = get_normal(b_tri.v0);
-                    let b_n1 = get_normal(b_tri.v1);
-                    let b_n2 = get_normal(b_tri.v2);
-                    let b_ln = normalize(b_n0 * b_w + b_n1 * b_u + b_n2 * b_v);
-                    let b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
-                    let b_p = bounce_ray.origin + bounce_ray.direction * bounce_hit.t;
-
-                    // 1. Emissive
-                    var b_emissive = b_tri.data3.rgb;
-                    let b_em_tex = b_tri.data2.w;
-                    if b_em_tex > -0.5 {
-                        b_emissive *= textureSampleLevel(tex, smp, b_uv, i32(b_em_tex), 0.0).rgb;
-                    }
-                    initial_Li = b_emissive;
-
-                    // 2. Direct Light (NEE) at hit point
-                    let b_mat_type = bitcast<u32>(b_tri.data0.w);
-                    if b_mat_type != 3u && b_mat_type != 2u {
-                        let b_light_s = sample_light_source(b_p, rng);
-                        if b_light_s.pdf > 0.0 {
-                            let b_shadow_ray = Ray(b_p + b_normal * 1e-4, b_light_s.dir);
-                            let b_shadow_hit = intersect_tlas(b_shadow_ray, T_MIN, b_light_s.dist - 2e-4);
-                            if b_shadow_hit.inst_idx == -1 {
-                                var b_albedo = b_tri.data0.rgb;
-                                let b_base_tex = b_tri.data2.x;
-                                if b_base_tex > -0.5 {
-                                    b_albedo *= textureSampleLevel(tex, smp, b_uv, i32(b_base_tex), 0.0).rgb;
-                                }
-                                let b_bsdf = eval_diffuse(b_albedo);
-                                initial_Li += b_bsdf * b_light_s.L * max(dot(b_normal, b_light_s.dir), 0.0) / b_light_s.pdf;
-                            }
-                        }
-                    }
-                } else {
-                    initial_Li = vec3(0.0);
-                }
-
-                // [Firefly/Darkness\u5BFE\u7B56] \u3082\u3057\u5019\u88DC\u304C\u5B8C\u5168\u306B\u9ED2\u3051\u308C\u3070\u3001\u308F\u305A\u304B\u306B\u53CD\u5C04\u7387\u3092\u8DB3\u3057\u3066\u53CE\u675F\u3092\u52A9\u3051\u308B
-                if length(initial_Li) < 1e-4 {
-                    initial_Li = albedo * 0.05;
-                }
-            }
-
-            // \u521D\u671F\u5019\u88DC\u3092\u30EA\u30B6\u30FC\u30D0\u306B\u8FFD\u52A0
-            let initial_cos = max(dot(normal, initial_dir), 0.0);
-            let p_hat_initial = evaluate_p_hat(initial_Li, albedo, initial_cos);
-            // RIS Weight = p_hat / pdf (BSDF\u91CD\u70B9\u30B5\u30F3\u30D7\u30EA\u30F3\u30B0\u306E\u5834\u5408)
-            // [Firefly\u5BFE\u7B56] PDF\u304C\u6975\u7AEF\u306B\u5C0F\u3055\u3044\u5834\u5408\u306B\u91CD\u307F\u304C\u7206\u767A\u3059\u308B\u306E\u3092\u9632\u3050
-            let w_initial = select(0.0, p_hat_initial / max(initial_pdf, 1e-3), initial_pdf > 1e-8);
-
-            update_reservoir(&state, initial_dir, initial_Li, initial_dist, w_initial, rng);
-
-            // 2. Temporal Reuse (\u6642\u9593\u7684\u518D\u5229\u7528)
-            // \u524D\u30D5\u30EC\u30FC\u30E0\u306E\u30EA\u30B6\u30FC\u30D0\u3092\u8AAD\u307F\u8FBC\u3080
-            // \u203B \u672C\u6765\u306F\u30D0\u30C3\u30AF\u30D7\u30ED\u30B8\u30A7\u30AF\u30B7\u30E7\u30F3\u3067\u300C\u524D\u306E\u4F4D\u7F6E\u300D\u306E\u30D4\u30AF\u30BB\u30EB\u3092\u8AAD\u3080\u3079\u304D\u3060\u304C\u3001
-            //    \u307E\u305A\u306F\u300C\u540C\u3058\u30D4\u30AF\u30BB\u30EB\u4F4D\u7F6E\u300D\u3092\u8AAD\u3080 (Camera\u56FA\u5B9A\u306A\u3089\u3053\u308C\u3067\u52D5\u304F)
-            let prev_res = gi_reservoir[prev_res_idx];
-            
-            // \u6709\u52B9\u6027\u30C1\u30A7\u30C3\u30AF\uFF08\u6CD5\u7DDA\u3068\u30DE\u30C6\u30EA\u30A2\u30EBID\uFF09
-            let normal_check = dot(prev_res.creation_normal, normal) > 0.9;
-            let mat_check = prev_res.creation_mat_id == bitcast<u32>(tri.data0.w); // mat_type
-
-            if normal_check && mat_check {
-                // \u904E\u53BB\u306E\u5019\u88DC\u306E\u8A55\u4FA1\u5024 (\u4FDD\u5B58\u3055\u308C\u305FRadiance\u3092\u4F7F\u7528)
-                // \u73FE\u5728\u306E\u6CD5\u7DDA\u3068Albedo\u3067\u518D\u8A55\u4FA1
-                let prev_cos = max(dot(normal, prev_res.sample_dir), 0.0);
-                let p_hat_prev = evaluate_p_hat(prev_res.sample_radiance, albedo, prev_cos);
-                
-                // \u30DE\u30FC\u30B8
-                merge_reservoir_refined(&state, prev_res, p_hat_prev, albedo, normal, rng);
-                
-                // [\u4FEE\u6B63\u5F8C] w_sum \u3082\u9053\u9023\u308C\u306B\u3057\u3066\u6BD4\u7387\u3092\u4FDD\u3064
-                if state.M > 20.0 {
-                    state.w_sum *= (20.0 / state.M);
-                    state.M = 20.0;
-                }
-            }
-
-            // ----------------------------------------------------------------
-            // 3. Spatial Reuse (\u7A7A\u9593\u7684\u518D\u5229\u7528)
-            // ----------------------------------------------------------------
-            // \u524D\u30D5\u30EC\u30FC\u30E0\u306E\u30C7\u30FC\u30BF(prev_res_idx)\u304B\u3089\u8FD1\u508D\u3092\u63A2\u3057\u3066\u30DE\u30FC\u30B8\u3057\u307E\u3059
-            // \u203B\u540C\u3058\u30D1\u30B9\u5185\u3067\u73FE\u5728\u306E\u8FD1\u508D(curr_res_idx)\u3092\u8AAD\u3080\u3068\u3001\u307E\u3060\u8A08\u7B97\u3055\u308C\u3066\u3044\u306A\u3044\u53EF\u80FD\u6027\u304C\u3042\u308A\u5371\u967A\u306A\u305F\u3081
-
-            for (var i = 0u; i < SPATIAL_COUNT; i++) {
-                // \u30E9\u30F3\u30C0\u30E0\u306A\u8FD1\u508D\u30D4\u30AF\u30BB\u30EB\u3092\u9078\u629E
-                let r_radius = sqrt(rand_pcg(rng)) * SPATIAL_RADIUS;
-                let r_angle = 2.0 * PI * rand_pcg(rng);
-                let offset = vec2<f32>(r_radius * cos(r_angle), r_radius * sin(r_angle));
-
-                let neighbor_coord = vec2<i32>(vec2<f32>(coord) + offset);
-                
-                // \u753B\u9762\u5185\u30C1\u30A7\u30C3\u30AF
-                if neighbor_coord.x >= 0 && neighbor_coord.x < i32(scene.width) && neighbor_coord.y >= 0 && neighbor_coord.y < i32(scene.height) {
-
-                    let n_idx = u32(neighbor_coord.y) * scene.width + u32(neighbor_coord.x);
-                    
-                    // \u8FD1\u508D\u306E\u30EA\u30B6\u30FC\u30D0\u3092\u53D6\u5F97 (Prev\u30D5\u30EC\u30FC\u30E0\u306E\u30DA\u30FC\u30B8\u304B\u3089\u8AAD\u3080)
-                    let n_offsets = get_reservoir_offsets(n_idx);
-                    let neighbor_res = gi_reservoir[n_offsets.y]; // .y \u304C Prev
-                    
-                    // --- \u5E7E\u4F55\u7684\u985E\u4F3C\u5EA6\u30C1\u30A7\u30C3\u30AF (Geometry Validation) ---
-                    // \u3053\u308C\u3092\u3084\u3089\u306A\u3044\u3068\u3001\u58C1\u306E\u88CF\u3084\u5225\u30AA\u30D6\u30B8\u30A7\u30AF\u30C8\u306E\u5149\u304C\u6F0F\u308C\u3066\u304F\u308B(Light Leaking)
-                    
-                    // 1. \u30DE\u30C6\u30EA\u30A2\u30EBID\u30C1\u30A7\u30C3\u30AF
-                    let mat_ok = neighbor_res.creation_mat_id == bitcast<u32>(tri.data0.w);
-                    
-                    // 2. \u6CD5\u7DDA\u30C1\u30A7\u30C3\u30AF (\u4F3C\u305F\u5411\u304D\u306E\u9762\u304B)
-                    let norm_ok = dot(neighbor_res.creation_normal, normal) > 0.9;
-                    
-                    // 3. \u4F4D\u7F6E(\u6DF1\u5EA6)\u30C1\u30A7\u30C3\u30AF (\u8DDD\u96E2\u304C\u96E2\u308C\u3059\u304E\u3066\u3044\u306A\u3044\u304B)
-                    // \u7C21\u6613\u7684\u306B\u8DDD\u96E2\u306E\u4E8C\u4E57\u3067\u5224\u5B9A\u3002\u30B7\u30FC\u30F3\u306E\u30B9\u30B1\u30FC\u30EB\u306B\u5408\u308F\u305B\u3066\u95BE\u5024\u8ABF\u6574\u304C\u5FC5\u8981(\u4F8B: 1.0)
-                    let dist_sq = dot(neighbor_res.creation_pos - hit_p, neighbor_res.creation_pos - hit_p);
-                    let pos_ok = dist_sq < 0.1; // \u30B7\u30FC\u30F3\u306B\u5408\u308F\u305B\u3066\u8ABF\u6574\u3057\u3066\u304F\u3060\u3055\u3044
-
-                    if mat_ok && norm_ok && pos_ok {
-                        // \u8FD1\u508D\u306E p_hat \u3092\u518D\u8A55\u4FA1
-                        let n_cos = max(dot(normal, neighbor_res.sample_dir), 0.0);
-                        let p_hat_neighbor = evaluate_p_hat(neighbor_res.sample_radiance, albedo, n_cos);
-                        
-                        // \u30DE\u30FC\u30B8\u5B9F\u884C
-                        merge_reservoir_refined(&state, neighbor_res, p_hat_neighbor, albedo, normal, rng);
-                    }
-                }
-            }
-            
-            // \u30AF\u30E9\u30F3\u30D7 (Spatial Reuse\u5F8C\u306FM\u304C\u5897\u3048\u3059\u304E\u308B\u306E\u3067\u518D\u5EA6\u6291\u3048\u308B)
-            if state.M > 50.0 {
-                state.w_sum *= (50.0 / state.M);
-                state.M = 50.0;
-            };
-
-            // 3. Finalize W (Unbiased Weight calculation)
-            let final_cos = max(dot(normal, state.sample_dir), 0.0);
-            let p_hat_final = evaluate_p_hat(state.sample_radiance, albedo, final_cos);
-            // [Firefly\u5BFE\u7B56] \u30BC\u30ED\u9664\u7B97\u306E\u56DE\u907F\u3068\u3001\u91CD\u307F\u81EA\u4F53\u306E\u30AF\u30E9\u30F3\u30D7
-            state.W = select(0.0, state.w_sum / (state.M * p_hat_final + 1e-6), p_hat_final > 1e-6);
-            state.W = min(state.W, 10.0);
-
-            // 4. Store Reservoir (\u6B21\u30D5\u30EC\u30FC\u30E0\u306E\u305F\u3081\u306B\u4FDD\u5B58)
-            state.creation_pos = hit_p;
-            state.creation_normal = normal;
-            state.creation_mat_id = bitcast<u32>(tri.data0.w);
-            gi_reservoir[curr_res_idx] = state;
-
-            // 5. Shading (\u9078\u3070\u308C\u305F\u5019\u88DC\u3092\u4F7F\u3063\u3066\u8272\u3092\u6C7A\u5B9A)
-            // Lo = Li * BSDF * cos / PDF
-            // ReSTIR\u3067\u306F: Lo = Li * BSDF * cos * W
-
-            let bsdf_val = eval_diffuse(albedo); // Diffuse BSDF = albedo / PI
-            let cos_theta = max(dot(normal, state.sample_dir), 0.0);
-
-            // [\u4FEE\u6B63] radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W * state.M; 
-            // Standard ReSTIR estimator: Lo = Li * BSDF * cos * W. 
-            // Our W already includes normalization (w_sum / (M * p_hat)).
-            radiance += throughput * state.sample_radiance * bsdf_val * cos_theta * state.W;
-
-            // ReSTIR\u3067\u6C7A\u307E\u3063\u305F\u306E\u3067\u3053\u306E\u6DF1\u5EA6\u306E\u51E6\u7406\u306F\u5B8C\u4E86\uFF08\u305F\u3060\u3057\u3001\u5F8C\u7D9A\u306ENEE\u7B49\u304C\u30B9\u30AD\u30C3\u30D7\u3055\u308C\u306A\u3044\u3088\u3046\u9806\u5E8F\u306B\u6CE8\u610F\uFF09
-            // break; <-- \u3053\u3053\u3067\u6D88\u3055\u305A\u306B\u3001NEE\u306E\u5F8C\u306B\u79FB\u52D5
+            radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, get_gi_sample_dir(state)), 0.0) * get_gi_W(state);
         }
 
-
-        // --- NEE ---
+        // Direct Light (NEE)
         if !is_specular && mat_type != 2u {
             let light_s = sample_light_source(hit_p, rng);
             if light_s.pdf > 0.0 {
-                let shadow_ray = Ray(hit_p + normal * 1e-4, light_s.dir);
-                let shadow_hit = intersect_tlas(shadow_ray, T_MIN, light_s.dist - 2e-4);
-
-                if shadow_hit.inst_idx == -1 {
-                    var bsdf_val = vec3(0.0);
-                    var bsdf_pdf_val = 0.0;
-                    let L = light_s.dir;
-                    let V = -ray.direction;
-
-                    if mat_type == 0u {
-                        bsdf_val = eval_diffuse(albedo);
-                        bsdf_pdf_val = max(dot(normal, L), 0.0) / PI;
-                    } else if mat_type == 1u {
-                        bsdf_val = eval_ggx(normal, V, L, roughness, f0);
-                        let H = normalize(V + L);
-                        bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(V, H), 0.0));
+                if intersect_tlas(Ray(hit_p + normal * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4).inst_idx == -1 {
+                    var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
+                    if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
+                        bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
+                        let H = normalize(-ray.direction + light_s.dir);
+                        bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-ray.direction, H), 0.0));
                     }
-
-                    if bsdf_pdf_val > 0.0 {
-                        let weight = power_heuristic(light_s.pdf, bsdf_pdf_val);
-                        radiance += throughput * bsdf_val * light_s.L * weight * max(dot(normal, L), 0.0) / light_s.pdf;
-                    }
+                    if bsdf_pdf_val > 0.0 { radiance += throughput * bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; }
                 }
             }
         }
 
-        // ReSTIR\u304C\u9069\u7528\u3055\u308C\u305F\u5834\u5408\u306F\u3001\u76F4\u63A5\u5149\u306E\u8A08\u7B97\u5F8C\u306B\u7D42\u4E86\u3059\u308B
-        if specular_bounce && use_restir {
-            break;
-        }
+        if specular_bounce && use_restir { break; }
 
-        // --- BSDF Sampling ---
         var scatter: ScatterResult;
-        if mat_type == 0u {
-            scatter = sample_diffuse(normal, albedo, rng);
-        } else if mat_type == 1u {
-            scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng);
-        } else {
-            let ior = tri.data1.z;
-            scatter = sample_dielectric(ray.direction, normal, ior, albedo, rng);
-        }
+        if mat_type == 0u { scatter = sample_diffuse(normal, albedo, rng); } else if mat_type == 1u { scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng); } else { scatter = sample_dielectric(ray.direction, normal, tri.data1.z, albedo, rng); }
 
         if scatter.pdf <= 0.0 || length(scatter.throughput) <= 0.0 { break; }
-
         throughput *= scatter.throughput;
         ray = Ray(hit_p + normal * 1e-4, scatter.dir);
         prev_bsdf_pdf = scatter.pdf;
         specular_bounce = scatter.is_specular;
 
-        // RR
         if depth > 3u {
             let p = max(throughput.r, max(throughput.g, throughput.b));
             if rand_pcg(rng) > p { break; }
@@ -1079,6 +942,8 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
     }
     return radiance;
 }
+
+
 
 // =========================================================
 //   Compute Main
@@ -1317,6 +1182,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "canvas");
       __publicField(this, "blasOffset", 0);
       __publicField(this, "vertexCount", 0);
+      __publicField(this, "normOffset", 0);
+      __publicField(this, "uvOffset", 0);
       __publicField(this, "seed", Math.floor(Math.random() * 16777215));
       __publicField(this, "historyTextures", []);
       __publicField(this, "historyTextureViews", []);
@@ -1391,21 +1258,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       ]);
     }
     buildPipeline(e, t) {
-      let n = Q;
-      n = n.replace(/const\s+MAX_DEPTH\s*=\s*\d+u;/, `const MAX_DEPTH = ${e}u;`), n = n.replace(/const\s+SPP\s*=\s*\d+u;/, `const SPP = ${t}u;`);
-      const r = this.device.createShaderModule({
+      const n = this.device.createShaderModule({
         label: "RayTracing",
-        code: n
+        code: Q
       });
       this.pipeline = this.device.createComputePipeline({
         label: "Main Pipeline",
         layout: "auto",
         compute: {
-          module: r,
-          entryPoint: "main"
+          module: n,
+          entryPoint: "main",
+          constants: {
+            MAX_DEPTH: e,
+            SPP: t
+          }
         }
       }), this.bindGroupLayout = this.pipeline.getBindGroupLayout(0);
-      const s = this.device.createShaderModule({
+      const r = this.device.createShaderModule({
         label: "PostProcess",
         code: Z
       });
@@ -1413,7 +1282,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         label: "PostProcess Pipeline",
         layout: "auto",
         compute: {
-          module: s,
+          module: r,
           entryPoint: "main"
         }
       }), this.postprocessBindGroupLayout = this.postprocessPipeline.getBindGroupLayout(0);
@@ -1438,7 +1307,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         format: "rgba16float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST
       }), this.historyTextureViews[s] = this.historyTextures[s].createView();
-      const r = e * t * 80 * 2;
+      const r = e * t * 64 * 2;
       this.reservoirBuffer && this.reservoirBuffer.destroy(), this.reservoirBuffer = this.device.createBuffer({
         label: "GI Reservoir Buffer (Double)",
         size: r,
@@ -1459,15 +1328,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       for (let r = 0; r < t; r++) {
         const s = e.getTexture(r);
         if (s) try {
-          const o = new Blob([
+          const c = new Blob([
             s
-          ]), l = await createImageBitmap(o, {
+          ]), o = await createImageBitmap(c, {
             resizeWidth: 1024,
             resizeHeight: 1024
           });
-          n.push(l);
-        } catch (o) {
-          console.warn(`Failed tex ${r}`, o), n.push(await this.createFallbackBitmap());
+          n.push(o);
+        } catch (c) {
+          console.warn(`Failed tex ${r}`, c), n.push(await this.createFallbackBitmap());
         }
         else n.push(await this.createFallbackBitmap());
       }
@@ -1516,32 +1385,34 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       return e === "topology" ? ((!this.topologyBuffer || this.topologyBuffer.size < n) && (r = true), this.topologyBuffer = this.ensureBuffer(this.topologyBuffer, n, "TopologyBuffer"), s = this.topologyBuffer) : e === "instance" ? ((!this.instanceBuffer || this.instanceBuffer.size < n) && (r = true), this.instanceBuffer = this.ensureBuffer(this.instanceBuffer, n, "InstanceBuffer"), s = this.instanceBuffer) : ((!this.lightsBuffer || this.lightsBuffer.size < n) && (r = true), this.lightsBuffer = this.ensureBuffer(this.lightsBuffer, n, "LightsBuffer"), s = this.lightsBuffer), this.device.queue.writeBuffer(s, 0, t, 0, t.length), r;
     }
     updateCombinedGeometry(e, t, n) {
-      const r = e.byteLength + t.byteLength + n.byteLength;
-      let s = false;
-      (!this.geometryBuffer || this.geometryBuffer.size < r) && (s = true);
-      const o = e.length / 4;
-      this.vertexCount = o, this.geometryBuffer = this.ensureBuffer(this.geometryBuffer, r, "GeometryBuffer"), !(n.length >= o * 2) && o > 0 && console.warn(`UV buffer mismatch: V=${o}, UV=${n.length / 2}. Filling 0.`);
-      let c = 0;
-      return this.device.queue.writeBuffer(this.geometryBuffer, c, e), c += e.byteLength, this.device.queue.writeBuffer(this.geometryBuffer, c, t), c += t.byteLength, this.device.queue.writeBuffer(this.geometryBuffer, c, n), s;
+      const s = e.byteLength;
+      this.normOffset = Math.ceil(s / 256) * 256;
+      const c = t.byteLength;
+      this.uvOffset = Math.ceil((this.normOffset + c) / 256) * 256;
+      const o = this.uvOffset + n.byteLength;
+      let l = false;
+      (!this.geometryBuffer || this.geometryBuffer.size < o) && (l = true);
+      const u = e.length / 4;
+      return this.vertexCount = u, this.geometryBuffer = this.ensureBuffer(this.geometryBuffer, o, "GeometryBuffer"), !(n.length >= u * 2) && u > 0 && console.warn(`UV buffer mismatch: V=${u}, UV=${n.length / 2}. Filling 0.`), this.device.queue.writeBuffer(this.geometryBuffer, 0, e), this.device.queue.writeBuffer(this.geometryBuffer, this.normOffset, t), this.device.queue.writeBuffer(this.geometryBuffer, this.uvOffset, n), l;
     }
     updateCombinedBVH(e, t) {
       const n = e.byteLength, r = t.byteLength, s = n + r;
-      let o = false;
-      return (!this.nodesBuffer || this.nodesBuffer.size < s) && (o = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, s, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, e), this.device.queue.writeBuffer(this.nodesBuffer, n, t), this.blasOffset = e.length / 8, o;
+      let c = false;
+      return (!this.nodesBuffer || this.nodesBuffer.size < s) && (c = true), this.nodesBuffer = this.ensureBuffer(this.nodesBuffer, s, "NodesBuffer"), this.device.queue.writeBuffer(this.nodesBuffer, 0, e), this.device.queue.writeBuffer(this.nodesBuffer, n, t), this.blasOffset = e.length / 8, c;
     }
     updateSceneUniforms(e, t, n) {
       if (this.lightCount = n, !this.sceneUniformBuffer) return;
-      const r = (c, h) => {
-        let u = 1, g = 0;
-        for (; c > 0; ) u = u / h, g = g + u * (c % h), c = Math.floor(c / h);
+      const r = (l, u) => {
+        let f = 1, g = 0;
+        for (; l > 0; ) f = f / u, g = g + f * (l % u), l = Math.floor(l / u);
         return g;
-      }, s = r(t % 16 + 1, 2) - 0.5, o = r(t % 16 + 1, 3) - 0.5;
+      }, s = r(t % 16 + 1, 2) - 0.5, c = r(t % 16 + 1, 3) - 0.5;
       this.jitter = {
         x: s / this.canvas.width,
-        y: o / this.canvas.height
+        y: c / this.canvas.height
       }, this.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.prevCameraData), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = this.seed, this.uniformMixedData[4] = n, this.uniformMixedData[5] = this.canvas.width, this.uniformMixedData[6] = this.canvas.height, this.uniformMixedData[7] = 0;
-      const l = new Float32Array(this.uniformMixedData.buffer);
-      l[8] = this.jitter.x, l[9] = this.jitter.y, this.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData), this.prevCameraData.set(e);
+      const o = new Float32Array(this.uniformMixedData.buffer);
+      o[8] = this.jitter.x, o[9] = this.jitter.y, this.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData), this.prevCameraData.set(e);
     }
     recreateBindGroup() {
       !this.renderTargetView || !this.accumulateBuffer || !this.geometryBuffer || !this.nodesBuffer || !this.sceneUniformBuffer || !this.lightsBuffer || !this.reservoirBuffer || (this.bindGroup = this.device.createBindGroup({
@@ -1562,7 +1433,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           {
             binding: 3,
             resource: {
-              buffer: this.geometryBuffer
+              buffer: this.geometryBuffer,
+              offset: 0,
+              size: this.vertexCount * 16
             }
           },
           {
@@ -1604,6 +1477,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             resource: {
               buffer: this.reservoirBuffer
             }
+          },
+          {
+            binding: 11,
+            resource: {
+              buffer: this.geometryBuffer,
+              offset: this.normOffset,
+              size: this.vertexCount * 16
+            }
+          },
+          {
+            binding: 12,
+            resource: {
+              buffer: this.geometryBuffer,
+              offset: this.uvOffset,
+              size: this.vertexCount * 8
+            }
           }
         ]
       }), this.postprocessBindGroup = this.device.createBindGroup({
@@ -1643,9 +1532,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     compute(e) {
       if (!this.bindGroup || !this.postprocessBindGroup) return;
       this.totalFrames++;
-      const t = (u, g) => {
+      const t = (f, g) => {
         let y = 1, v = 0;
-        for (; u > 0; ) y = y / g, v = v + y * (u % g), u = Math.floor(u / g);
+        for (; f > 0; ) y = y / g, v = v + y * (f % g), f = Math.floor(f / g);
         return v;
       }, n = t(this.totalFrames % 16 + 1, 2) - 0.5, r = t(this.totalFrames % 16 + 1, 3) - 0.5;
       this.prevJitter.x = this.jitter.x, this.prevJitter.y = this.jitter.y, this.jitter = {
@@ -1654,9 +1543,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }, this.uniformMixedData[0] = e, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = this.seed, this.uniformMixedData[4] = this.lightCount, this.uniformMixedData[5] = this.canvas.width, this.uniformMixedData[6] = this.canvas.height, this.uniformMixedData[7] = 0;
       const s = new Float32Array(this.uniformMixedData.buffer);
       s[8] = this.jitter.x, s[9] = this.jitter.y, s[10] = this.prevJitter.x, s[11] = this.prevJitter.y, this.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData);
-      const o = Math.ceil(this.canvas.width / 8), l = Math.ceil(this.canvas.height / 8), c = this.device.createCommandEncoder(), h = c.beginComputePass();
-      h.setPipeline(this.pipeline), h.setBindGroup(0, this.bindGroup), h.dispatchWorkgroups(o, l), h.end(), this.device.queue.submit([
-        c.finish()
+      const c = Math.ceil(this.canvas.width / 8), o = Math.ceil(this.canvas.height / 8), l = this.device.createCommandEncoder(), u = l.beginComputePass();
+      u.setPipeline(this.pipeline), u.setBindGroup(0, this.bindGroup), u.dispatchWorkgroups(c, o), u.end(), this.device.queue.submit([
+        l.finish()
       ]);
     }
     present() {
@@ -1676,7 +1565,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function te(i) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-BlRmgziK.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-D4DQfpKg.js", {
       name: i == null ? void 0 : i.name
     });
   }
@@ -1996,15 +1885,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: r, ArrayBufferTarget: s } = await O(async () => {
-        const { Muxer: h, ArrayBufferTarget: u } = await import("./webm-muxer-MLtUgOCn.js");
+      const { Muxer: r, ArrayBufferTarget: s } = await $(async () => {
+        const { Muxer: u, ArrayBufferTarget: f } = await import("./webm-muxer-MLtUgOCn.js");
         return {
-          Muxer: h,
-          ArrayBufferTarget: u
+          Muxer: u,
+          ArrayBufferTarget: f
         };
-      }, []), o = Math.ceil(e.fps * e.duration);
-      console.log(`Starting recording: ${o} frames @ ${e.fps}fps (VP9)`);
-      const l = new r({
+      }, []), c = Math.ceil(e.fps * e.duration);
+      console.log(`Starting recording: ${c} frames @ ${e.fps}fps (VP9)`);
+      const o = new r({
         target: new s(),
         video: {
           codec: "V_VP9",
@@ -2012,26 +1901,26 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           height: this.canvas.height,
           frameRate: e.fps
         }
-      }), c = new VideoEncoder({
-        output: (h, u) => l.addVideoChunk(h, u),
-        error: (h) => console.error("VideoEncoder Error:", h)
+      }), l = new VideoEncoder({
+        output: (u, f) => o.addVideoChunk(u, f),
+        error: (u) => console.error("VideoEncoder Error:", u)
       });
-      c.configure({
+      l.configure({
         codec: "vp09.00.10.08",
         width: this.canvas.width,
         height: this.canvas.height,
         bitrate: 12e6
       });
       try {
-        await this.renderAndEncode(o, e, c, t, e.startFrame || 0), await c.flush(), l.finalize();
-        const { buffer: h } = l.target, u = new Blob([
-          h
+        await this.renderAndEncode(c, e, l, t, e.startFrame || 0), await l.flush(), o.finalize();
+        const { buffer: u } = o.target, f = new Blob([
+          u
         ], {
           type: "video/webm"
-        }), g = URL.createObjectURL(u);
-        n(g, u);
-      } catch (h) {
-        throw console.error("Recording failed:", h), h;
+        }), g = URL.createObjectURL(f);
+        n(g, f);
+      } catch (u) {
+        throw console.error("Recording failed:", u), u;
       } finally {
         this.isRecording = false;
       }
@@ -2040,17 +1929,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (this.isRecording) throw new Error("Already recording");
       this.isRecording = true;
       const n = [], r = Math.ceil(e.fps * e.duration), s = new VideoEncoder({
-        output: (o, l) => {
-          const c = new Uint8Array(o.byteLength);
-          o.copyTo(c), n.push({
-            type: o.type,
-            timestamp: o.timestamp,
-            duration: o.duration,
-            data: c.buffer,
-            decoderConfig: l == null ? void 0 : l.decoderConfig
+        output: (c, o) => {
+          const l = new Uint8Array(c.byteLength);
+          c.copyTo(l), n.push({
+            type: c.type,
+            timestamp: c.timestamp,
+            duration: c.duration,
+            data: l.buffer,
+            decoderConfig: o == null ? void 0 : o.decoderConfig
           });
         },
-        error: (o) => console.error("VideoEncoder Error:", o)
+        error: (c) => console.error("VideoEncoder Error:", c)
       });
       s.configure({
         codec: "vp09.00.10.08",
@@ -2065,23 +1954,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     async renderAndEncode(e, t, n, r, s = 0) {
-      const o = s;
-      this.worldBridge.update(o / t.fps), await this.worldBridge.waitForNextUpdate();
-      for (let l = 0; l < e; l++) {
-        r(l, e), await new Promise((u) => setTimeout(u, 0)), await this.updateSceneBuffers();
-        let c = null;
-        if (l < e - 1) {
-          const u = s + l + 1;
-          this.worldBridge.update(u / t.fps), c = this.worldBridge.waitForNextUpdate();
+      const c = s;
+      this.worldBridge.update(c / t.fps), await this.worldBridge.waitForNextUpdate();
+      for (let o = 0; o < e; o++) {
+        r(o, e), await new Promise((f) => setTimeout(f, 0)), await this.updateSceneBuffers();
+        let l = null;
+        if (o < e - 1) {
+          const f = s + o + 1;
+          this.worldBridge.update(f / t.fps), l = this.worldBridge.waitForNextUpdate();
         }
         await this.renderFrame(t.spp, t.batch), n.encodeQueueSize > 5 && await n.flush();
-        const h = new VideoFrame(this.canvas, {
-          timestamp: (s + l) * 1e6 / t.fps,
+        const u = new VideoFrame(this.canvas, {
+          timestamp: (s + o) * 1e6 / t.fps,
           duration: 1e6 / t.fps
         });
-        n.encode(h, {
-          keyFrame: l % t.fps === 0
-        }), h.close(), c && await c;
+        n.encode(u, {
+          keyFrame: o % t.fps === 0
+        }), u.close(), l && await l;
       }
     }
     async updateSceneBuffers() {
@@ -2104,7 +1993,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     ]
   };
-  class G {
+  class O {
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -2171,14 +2060,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     async sendRenderResult(e, t) {
       if (!this.dc || this.dc.readyState !== "open") return;
       let n = 0;
-      const r = e.map((l) => {
-        const c = l.data.byteLength;
-        return n += c, {
-          type: l.type,
-          timestamp: l.timestamp,
-          duration: l.duration,
-          size: c,
-          decoderConfig: l.decoderConfig
+      const r = e.map((o) => {
+        const l = o.data.byteLength;
+        return n += l, {
+          type: o.type,
+          timestamp: o.timestamp,
+          duration: o.duration,
+          size: l,
+          decoderConfig: o.decoderConfig
         };
       });
       console.log(`[RTC] Sending Render Result: ${n} bytes, ${e.length} chunks`), this.sendData({
@@ -2188,15 +2077,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         chunksMeta: r
       });
       const s = new Uint8Array(n);
-      let o = 0;
-      for (const l of e) s.set(new Uint8Array(l.data), o), o += l.data.byteLength;
+      let c = 0;
+      for (const o of e) s.set(new Uint8Array(o.data), c), c += o.data.byteLength;
       await this.sendBinaryChunks(s);
     }
     async sendBinaryChunks(e) {
       let n = 0;
       const r = () => new Promise((s) => {
-        const o = setInterval(() => {
-          (!this.dc || this.dc.bufferedAmount < 65536) && (clearInterval(o), s());
+        const c = setInterval(() => {
+          (!this.dc || this.dc.bufferedAmount < 65536) && (clearInterval(c), s());
         }, 5);
       });
       for (; n < e.byteLength; ) {
@@ -2206,7 +2095,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           this.dc.send(e.subarray(n, s));
         } catch {
         }
-        n = s, n % (16384 * 5) === 0 && await new Promise((o) => setTimeout(o, 0));
+        n = s, n % (16384 * 5) === 0 && await new Promise((c) => setTimeout(c, 0));
       }
       console.log("[RTC] Transfer Complete");
     }
@@ -2357,7 +2246,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       switch (e.type) {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
-          const t = new G(e.workerId, (n) => this.sendSignal(n));
+          const t = new O(e.workerId, (n) => this.sendSignal(n));
           this.workers.set(e.workerId, t), t.onDataChannelOpen = () => {
             var _a2;
             console.log(`[Host] Open for ${e.workerId}`), t.sendData({
@@ -2398,7 +2287,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       var _a, _b, _c;
       switch (e.type) {
         case "offer":
-          e.fromId && (this.hostClient = new G(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
+          e.fromId && (this.hostClient = new O(e.fromId, (t) => this.sendSignal(t)), await this.hostClient.handleOffer(e.sdp), (_a = this.onStatusChange) == null ? void 0 : _a.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
             var _a2, _b2;
             (_a2 = this.hostClient) == null ? void 0 : _a2.sendData({
               type: "HELLO",
@@ -2432,36 +2321,36 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       s && await s.sendRenderRequest(t, n, r);
     }
   }
-  let m = false, w = null, k = null, x = null, R = [], I = /* @__PURE__ */ new Map(), D = 0, P = 0, U = 0, B = null, b = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), W = false, A = null;
-  const H = 20, a = new re(), f = new ee(a.canvas), d = new ne(), E = new ie(f, d, a.canvas), p = new ae();
-  let S = 0, z = 0, T = 0, $ = performance.now();
+  let m = false, w = null, k = null, x = null, R = [], I = /* @__PURE__ */ new Map(), A = 0, M = 0, L = 0, B = null, b = /* @__PURE__ */ new Map(), C = /* @__PURE__ */ new Map(), z = false, D = null;
+  const F = 20, a = new re(), h = new ee(a.canvas), d = new ne(), P = new ie(h, d, a.canvas), p = new ae();
+  let S = 0, W = 0, T = 0, H = performance.now();
   const oe = () => {
     const i = parseInt(a.inputDepth.value, 10) || _.defaultDepth, e = parseInt(a.inputSPP.value, 10) || _.defaultSPP;
-    f.buildPipeline(i, e);
-  }, F = () => {
+    h.buildPipeline(i, e);
+  }, G = () => {
     const { width: i, height: e } = a.getRenderConfig();
-    f.updateScreenSize(i, e), d.hasWorld && (d.updateCamera(i, e), f.updateSceneUniforms(d.cameraData, 0, d.lightCount)), f.recreateBindGroup(), f.resetAccumulation(), S = 0, z = 0;
-  }, M = async (i, e = true) => {
+    h.updateScreenSize(i, e), d.hasWorld && (d.updateCamera(i, e), h.updateSceneUniforms(d.cameraData, 0, d.lightCount)), h.recreateBindGroup(), h.resetAccumulation(), S = 0, W = 0;
+  }, E = async (i, e = true) => {
     m = false, console.log(`Loading Scene: ${i}...`);
     let t, n;
-    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await f.loadTexturesFromWorld(d), await le(), F(), a.updateAnimList(d.getAnimationList()), e && (m = true, a.updateRenderButton(true));
-  }, le = async () => {
-    f.updateCombinedGeometry(d.vertices, d.normals, d.uvs), f.updateCombinedBVH(d.tlas, d.blas), f.updateBuffer("topology", d.mesh_topology), f.updateBuffer("instance", d.instances), f.updateBuffer("lights", d.lights), f.updateSceneUniforms(d.cameraData, 0, d.lightCount);
-  }, L = () => {
-    if (E.recording || (requestAnimationFrame(L), !m || !d.hasWorld)) return;
+    i === "viewer" && w && (k === "obj" ? t = w : k === "glb" && (n = new Uint8Array(w).slice(0))), await d.loadScene(i, t, n), d.printStats(), await h.loadTexturesFromWorld(d), await ce(), G(), a.updateAnimList(d.getAnimationList()), e && (m = true, a.updateRenderButton(true));
+  }, ce = async () => {
+    h.updateCombinedGeometry(d.vertices, d.normals, d.uvs), h.updateCombinedBVH(d.tlas, d.blas), h.updateBuffer("topology", d.mesh_topology), h.updateBuffer("instance", d.instances), h.updateBuffer("lights", d.lights), h.updateSceneUniforms(d.cameraData, 0, d.lightCount);
+  }, U = () => {
+    if (P.recording || (requestAnimationFrame(U), !m || !d.hasWorld)) return;
     let i = parseInt(a.inputUpdateInterval.value, 10) || 0;
-    if (i > 0 && S >= i && d.update(z / (i || 1) / 60), d.hasNewData) {
+    if (i > 0 && S >= i && d.update(W / (i || 1) / 60), d.hasNewData) {
       let t = false;
-      t || (t = f.updateCombinedBVH(d.tlas, d.blas)), t || (t = f.updateBuffer("instance", d.instances)), d.hasNewGeometry && (t || (t = f.updateCombinedGeometry(d.vertices, d.normals, d.uvs)), t || (t = f.updateBuffer("topology", d.mesh_topology)), t || (t = f.updateBuffer("lights", d.lights)), d.hasNewGeometry = false), d.updateCamera(a.canvas.width, a.canvas.height), f.updateSceneUniforms(d.cameraData, 0, d.lightCount), t && f.recreateBindGroup(), f.resetAccumulation(), S = 0, d.hasNewData = false;
+      t || (t = h.updateCombinedBVH(d.tlas, d.blas)), t || (t = h.updateBuffer("instance", d.instances)), d.hasNewGeometry && (t || (t = h.updateCombinedGeometry(d.vertices, d.normals, d.uvs)), t || (t = h.updateBuffer("topology", d.mesh_topology)), t || (t = h.updateBuffer("lights", d.lights)), d.hasNewGeometry = false), d.updateCamera(a.canvas.width, a.canvas.height), h.updateSceneUniforms(d.cameraData, 0, d.lightCount), t && h.recreateBindGroup(), h.resetAccumulation(), S = 0, d.hasNewData = false;
     }
-    S++, T++, z++, f.compute(S), f.present();
+    S++, T++, W++, h.compute(S), h.present();
     const e = performance.now();
-    e - $ >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, $ = e);
+    e - H >= 1e3 && (a.updateStats(T, 1e3 / T, S), T = 0, H = e);
   }, q = async (i) => {
     const e = a.sceneSelect.value, t = e !== "viewer";
     if (!t && (!w || !k)) return;
-    const n = a.getRenderConfig(), r = t ? e : void 0, s = t ? "DUMMY" : w, o = t ? "obj" : k;
-    n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), b.set(i, "loading"), await p.sendSceneToWorker(i, s, o, n)) : (console.log("Broadcasting scene to all workers..."), p.getWorkerIds().forEach((l) => b.set(l, "loading")), await p.broadcastScene(s, o, n));
+    const n = a.getRenderConfig(), r = t ? e : void 0, s = t ? "DUMMY" : w, c = t ? "obj" : k;
+    n.sceneName = r, i ? (console.log(`Sending scene to specific worker: ${i}`), b.set(i, "loading"), await p.sendSceneToWorker(i, s, c, n)) : (console.log("Broadcasting scene to all workers..."), p.getWorkerIds().forEach((o) => b.set(o, "loading")), await p.broadcastScene(s, c, n));
   }, j = async (i) => {
     if (b.get(i) !== "idle") {
       console.log(`Worker ${i} is ${b.get(i)}, skipping assignment.`);
@@ -2473,12 +2362,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       ...B,
       fileType: "obj"
     }));
-  }, ce = async () => {
-    const i = Array.from(I.keys()).sort((c, h) => c - h), { Muxer: e, ArrayBufferTarget: t } = await O(async () => {
-      const { Muxer: c, ArrayBufferTarget: h } = await import("./webm-muxer-MLtUgOCn.js");
+  }, le = async () => {
+    const i = Array.from(I.keys()).sort((l, u) => l - u), { Muxer: e, ArrayBufferTarget: t } = await $(async () => {
+      const { Muxer: l, ArrayBufferTarget: u } = await import("./webm-muxer-MLtUgOCn.js");
       return {
-        Muxer: c,
-        ArrayBufferTarget: h
+        Muxer: l,
+        ArrayBufferTarget: u
       };
     }, []), n = new e({
       target: new t(),
@@ -2489,15 +2378,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         frameRate: B.fps
       }
     });
-    for (const c of i) {
-      const h = I.get(c);
-      if (h) for (const u of h) n.addVideoChunk(new EncodedVideoChunk({
-        type: u.type,
-        timestamp: u.timestamp,
-        duration: u.duration,
-        data: u.data
+    for (const l of i) {
+      const u = I.get(l);
+      if (u) for (const f of u) n.addVideoChunk(new EncodedVideoChunk({
+        type: f.type,
+        timestamp: f.timestamp,
+        duration: f.duration,
+        data: f.data
       }), {
-        decoderConfig: u.decoderConfig
+        decoderConfig: f.decoderConfig
       });
     }
     n.finalize();
@@ -2505,8 +2394,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       r
     ], {
       type: "video/webm"
-    }), o = URL.createObjectURL(s), l = document.createElement("a");
-    l.href = o, l.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(l), l.click(), document.body.removeChild(l), URL.revokeObjectURL(o), a.setStatus("Finished!");
+    }), c = URL.createObjectURL(s), o = document.createElement("a");
+    o.href = c, o.download = `distributed_trace_${Date.now()}.webm`, document.body.appendChild(o), o.click(), document.body.removeChild(o), URL.revokeObjectURL(c), a.setStatus("Finished!");
   }, V = async (i, e, t) => {
     console.log(`[Worker] Starting Render: Frames ${i} - ${i + e}`), a.setStatus(`Remote Rendering: ${i}-${i + e}`), m = false;
     const n = {
@@ -2516,17 +2405,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     try {
       a.setRecordingState(true, `Remote: ${e} f`);
-      const r = await E.recordChunks(n, (s, o) => a.setRecordingState(true, `Remote: ${s}/${o}`));
+      const r = await P.recordChunks(n, (s, c) => a.setRecordingState(true, `Remote: ${s}/${c}`));
       console.log("Sending Chunks back to Host..."), a.setRecordingState(true, "Uploading..."), await p.sendRenderResult(r, i), a.setRecordingState(false), a.setStatus("Idle");
     } catch (r) {
       console.error("Remote Recording Failed", r), a.setStatus("Recording Failed");
     } finally {
-      m = true, requestAnimationFrame(L);
+      m = true, requestAnimationFrame(U);
     }
   }, de = async () => {
-    if (!A) return;
-    const { start: i, count: e, config: t } = A;
-    A = null, await V(i, e, t);
+    if (!D) return;
+    const { start: i, count: e, config: t } = D;
+    D = null, await V(i, e, t);
   };
   p.onStatusChange = (i) => a.setStatus(`Status: ${i}`);
   p.onWorkerLeft = (i) => {
@@ -2541,8 +2430,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     a.setStatus(`Worker Joined: ${i}`), b.set(i, "idle"), x === "host" && R.length > 0 && q(i);
   };
   p.onRenderRequest = async (i, e, t) => {
-    if (console.log(`[Worker] Received Render Request: Frames ${i} - ${i + e}`), W) {
-      console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${i}`), A = {
+    if (console.log(`[Worker] Received Render Request: Frames ${i} - ${i + e}`), z) {
+      console.log(`[Worker] Scene loading in progress. Queueing Render Request for ${i}`), D = {
         start: i,
         count: e,
         config: t
@@ -2552,48 +2441,48 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     await V(i, e, t);
   };
   p.onRenderResult = async (i, e, t) => {
-    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), I.set(e, i), D++, a.setStatus(`Distributed Progress: ${D} / ${P} jobs`), b.set(t, "idle"), C.delete(t), await j(t), D >= P && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await ce());
+    console.log(`[Host] Received ${i.length} chunks for ${e} from ${t}`), I.set(e, i), A++, a.setStatus(`Distributed Progress: ${A} / ${M} jobs`), b.set(t, "idle"), C.delete(t), await j(t), A >= M && (console.log("All jobs complete. Muxing..."), a.setStatus("Muxing..."), await le());
   };
   p.onSceneReceived = async (i, e) => {
-    console.log("Scene received successfully."), W = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await M(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), W = false, console.log("Scene Loaded. Sending WORKER_READY."), await p.sendWorkerReady(), de();
+    console.log("Scene received successfully."), z = true, a.setRenderConfig(e), k = e.fileType, e.fileType, w = i, a.sceneSelect.value = e.sceneName || "viewer", await E(e.sceneName || "viewer", false), e.anim !== void 0 && (a.animSelect.value = e.anim.toString(), d.setAnimation(e.anim)), z = false, console.log("Scene Loaded. Sending WORKER_READY."), await p.sendWorkerReady(), de();
   };
   const ue = () => {
     a.onRenderStart = () => {
       m = true;
     }, a.onRenderStop = () => {
       m = false;
-    }, a.onSceneSelect = (i) => M(i, false), a.onResolutionChange = F, a.onRecompile = (i, e) => {
-      m = false, f.buildPipeline(i, e), f.recreateBindGroup(), f.resetAccumulation(), S = 0, m = true;
+    }, a.onSceneSelect = (i) => E(i, false), a.onResolutionChange = G, a.onRecompile = (i, e) => {
+      m = false, h.buildPipeline(i, e), h.recreateBindGroup(), h.resetAccumulation(), S = 0, m = true;
     }, a.onFileSelect = async (i) => {
       var _a;
-      ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), k = "obj") : (w = await i.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", M("viewer", false);
+      ((_a = i.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await i.text(), k = "obj") : (w = await i.arrayBuffer(), k = "glb"), a.sceneSelect.value = "viewer", E("viewer", false);
     }, a.onAnimSelect = (i) => d.setAnimation(i), a.onRecordStart = async () => {
-      if (!E.recording) if (x === "host") {
+      if (!P.recording) if (x === "host") {
         const i = p.getWorkerIds();
-        if (B = a.getRenderConfig(), U = Math.ceil(B.fps * B.duration), !confirm(`Distribute recording? (Workers: ${i.length})
+        if (B = a.getRenderConfig(), L = Math.ceil(B.fps * B.duration), !confirm(`Distribute recording? (Workers: ${i.length})
 Auto Scene Sync enabled.`)) return;
-        R = [], I.clear(), D = 0, C.clear();
-        for (let e = 0; e < U; e += H) {
-          const t = Math.min(H, U - e);
+        R = [], I.clear(), A = 0, C.clear();
+        for (let e = 0; e < L; e += F) {
+          const t = Math.min(F, L - e);
           R.push({
             start: e,
             count: t
           });
         }
-        P = R.length, i.forEach((e) => b.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${P} jobs (Waiting for workers...)`), i.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await q()) : console.log("No workers yet. Waiting...");
+        M = R.length, i.forEach((e) => b.set(e, "idle")), a.setStatus(`Distributed Progress: 0 / ${M} jobs (Waiting for workers...)`), i.length > 0 ? (a.setStatus("Syncing Scene to Workers..."), await q()) : console.log("No workers yet. Waiting...");
       } else {
         m = false, a.setRecordingState(true);
         const i = a.getRenderConfig();
         try {
           const e = performance.now();
-          await E.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
+          await P.record(i, (t, n) => a.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
             const n = document.createElement("a");
             n.href = t, n.download = `raytrace_${Date.now()}.webm`, n.click(), URL.revokeObjectURL(t);
           }), console.log(`Recording took ${performance.now() - e}[ms]`);
         } catch {
           alert("Recording failed.");
         } finally {
-          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(L);
+          a.setRecordingState(false), m = true, a.updateRenderButton(true), requestAnimationFrame(U);
         }
       }
     }, a.onConnectHost = () => {
@@ -2602,14 +2491,14 @@ Auto Scene Sync enabled.`)) return;
       x === "worker" ? (p.disconnect(), x = null, a.setConnectionState(null)) : (p.connect("worker"), x = "worker", a.setConnectionState("worker"));
     }, a.setConnectionState(null);
   };
-  async function he() {
+  async function fe() {
     try {
-      await f.init(), await d.initWasm();
+      await h.init(), await d.initWasm();
     } catch (i) {
       alert("Init failed: " + i);
       return;
     }
-    ue(), oe(), F(), M("cornell", false), requestAnimationFrame(L);
+    ue(), oe(), G(), E("cornell", false), requestAnimationFrame(U);
   }
-  he().catch(console.error);
+  fe().catch(console.error);
 })();
