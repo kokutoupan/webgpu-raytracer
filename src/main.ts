@@ -1,9 +1,12 @@
-import { WebGPURenderer } from "./renderer";
-import { WorldBridge } from "./world-bridge";
-import { Config } from "./config";
-import { UIManager } from "./ui/UIManager";
 import { VideoRecorder } from "./recorder/VideoRecorder";
 import { SignalingClient } from "./network/SignalingClient";
+import { DistributedHost } from "./distributed/DistributedHost";
+import { DistributedWorker } from "./distributed/DistributedWorker";
+import { WebGPURenderer } from "./renderer";
+import { WorldBridge } from "./world-bridge";
+import { UIManager } from "./ui/UIManager";
+import { Config } from "./config";
+import type { RenderConfig } from "./network/Protocol";
 
 // --- Global State ---
 let isRendering = false;
@@ -11,22 +14,8 @@ let currentFileData: string | ArrayBuffer | null = null;
 let currentFileType: "obj" | "glb" | null = null;
 let currentRole: "host" | "worker" | null = null;
 
-// --- Distributed State ---
-let jobQueue: { start: number; count: number }[] = [];
-let pendingChunks: Map<number, any[]> = new Map(); // startFrame -> SerializedChunk[]
-let completedJobs = 0;
-let totalJobs = 0;
-let totalRenderFrames = 0;
-let distributedConfig: any = null;
-let workerStatus: Map<string, "idle" | "loading" | "busy"> = new Map();
-let activeJobs: Map<string, { start: number; count: number }> = new Map();
-
 // --- Worker State ---
-let isSceneLoading = false;
-let isDistributedSceneLoaded = false; // Added: True only after receiving a remote scene
-let pendingRenderRequest: { start: number; count: number; config: any } | null =
-  null;
-const BATCH_SIZE = 20; // Moved to global
+const BATCH_SIZE = 20;
 
 // --- Modules ---
 const ui = new UIManager();
@@ -34,6 +23,9 @@ const renderer = new WebGPURenderer(ui.canvas);
 const worldBridge = new WorldBridge();
 const recorder = new VideoRecorder(renderer, worldBridge, ui.canvas);
 const signaling = new SignalingClient();
+
+const dHost = new DistributedHost(signaling, ui);
+const dWorker = new DistributedWorker(signaling, renderer, ui, recorder);
 
 // --- Main Application Loop ---
 let frameCount = 0;
@@ -178,508 +170,30 @@ const renderFrame = () => {
   }
 };
 
-// --- Distributed Helpers ---
-const sendSceneHelper = async (workerId?: string) => {
-  const currentScene = ui.sceneSelect.value;
-  const isProcedural = currentScene !== "viewer";
+// --- Signaling Callbacks (Coordination) ---
 
-  if (!isProcedural && (!currentFileData || !currentFileType)) return;
-
-  const config = ui.getRenderConfig();
-  const sceneName = isProcedural ? currentScene : undefined;
-
-  // For procedural, we send dummy data but with sceneName in config
-  const fileData = isProcedural ? "DUMMY" : currentFileData!;
-  const fileType = isProcedural ? "obj" : currentFileType!;
-
-  // Inject sceneName
-  (config as any).sceneName = sceneName;
-
-  if (workerId) {
-    console.log(`Sending scene to specific worker: ${workerId}`);
-    workerStatus.set(workerId, "loading");
-    await signaling.sendSceneToWorker(workerId, fileData, fileType, config);
-  } else {
-    console.log(`Broadcasting scene to all workers...`);
-    signaling.getWorkerIds().forEach((id) => workerStatus.set(id, "loading"));
-    await signaling.broadcastScene(fileData, fileType, config);
-  }
-};
-
-const assignJob = async (workerId: string) => {
-  // Only assign if worker is IDLE
-  if (workerStatus.get(workerId) !== "idle") {
-    console.log(
-      `Worker ${workerId} is ${workerStatus.get(
-        workerId
-      )}, skipping assignment.`
-    );
-    return;
-  }
-
-  if (jobQueue.length === 0) return;
-  if (!distributedConfig) {
-    console.warn(`[Host] No distributed config yet, skipping assignment.`);
-    return;
-  }
-
-  const job = jobQueue.shift();
-  if (!job) return;
-
-  workerStatus.set(workerId, "busy"); // Mark as busy
-  activeJobs.set(workerId, job); // Track active job
-  console.log(
-    `Assigning Job ${job.start} - ${job.start + job.count} to ${workerId}`
-  );
-
-  try {
-    await signaling.sendRenderRequest(workerId, job.start, job.count, {
-      ...distributedConfig,
-      fileType: distributedConfig.fileType || "obj",
-    });
-  } catch (e) {
-    console.error(`[Host] Failed to assign job to ${workerId}:`, e);
-    // Re-queue the job
-    jobQueue.unshift(job);
-    activeJobs.delete(workerId);
-    workerStatus.set(workerId, "idle");
-    ui.setStatus(`Assignment failed for ${workerId}, re-queued.}`);
-
-    // Try again for any idle worker after a short delay
-    setTimeout(() => {
-      for (const id of workerStatus.keys()) {
-        if (workerStatus.get(id) === "idle") assignJob(id);
-      }
-    }, 1000);
-  }
-};
-
-const triggerAssignments = () => {
-  for (const [id, status] of workerStatus.entries()) {
-    if (status === "idle") {
-      assignJob(id);
-    }
-  }
-};
-
-const muxAndDownload = async () => {
-  const sortedStarts = Array.from(pendingChunks.keys()).sort((a, b) => a - b);
-
-  // Create Muxer
-  const { Muxer, ArrayBufferTarget } = await import("webm-muxer");
-  const mult = new Muxer({
-    target: new ArrayBufferTarget(),
-    video: {
-      codec: "V_VP9",
-      width: distributedConfig.width,
-      height: distributedConfig.height,
-      frameRate: distributedConfig.fps,
-    },
-  });
-
-  for (const start of sortedStarts) {
-    const chunks = pendingChunks.get(start);
-    if (!chunks) continue;
-    for (const c of chunks) {
-      mult.addVideoChunk(
-        new EncodedVideoChunk({
-          type: c.type,
-          timestamp: c.timestamp,
-          duration: c.duration,
-          data: c.data,
-        }),
-        { decoderConfig: c.decoderConfig }
-      );
-    }
-  }
-
-  mult.finalize();
-  const { buffer } = mult.target;
-  const blob = new Blob([buffer], { type: "video/webm" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `distributed_trace_${Date.now()}.webm`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  ui.setStatus("Finished!");
-};
-
-// Worker Result Buffer
-let bufferedResults: { chunks: any[]; startFrame: number }[] = [];
-
-// Worker Abort Controller
-let currentWorkerAbortController: AbortController | null = null;
-
-const executeWorkerRender = async (
-  startFrame: number,
-  frameCount: number,
-  config: any
-) => {
-  // Lock to prevent overlapping renders
-  if (recorder.isRecording) {
-    console.warn("[Worker] Already recording/rendering, skipping request.");
-    return;
-  }
-
-  if (currentWorkerAbortController) {
-    currentWorkerAbortController.abort();
-  }
-  currentWorkerAbortController = new AbortController();
-  const signal = currentWorkerAbortController.signal;
-
-  currentWorkerJob = { start: startFrame, count: frameCount };
-  console.log(
-    `[Worker] Starting Render: Frames ${startFrame} - ${
-      startFrame + frameCount
-    }`
-  );
-  ui.setStatus(`Remote Rendering: ${startFrame}-${startFrame + frameCount}`);
-
-  isRendering = false;
-
-  // Sync shader settings before recording
-  if (config.maxDepth !== undefined && config.shaderSpp !== undefined) {
-    console.log(
-      `[Worker] Updating Shader Pipeline: Depth=${config.maxDepth}, SPP=${config.shaderSpp}`
-    );
-    renderer.buildPipeline(config.maxDepth, config.shaderSpp);
-  }
-
-  const workerConfig = {
-    ...config,
-    startFrame: startFrame,
-    duration: frameCount / config.fps,
-  };
-
-  try {
-    ui.setRecordingState(true, `Remote: ${frameCount} f`);
-
-    const chunks = await recorder.recordChunks(
-      workerConfig as any,
-      (f, t) => ui.setRecordingState(true, `Remote: ${f}/${t}`),
-      signal
-    );
-
-    console.log("Rendering Complete. Attempting to send result...");
-    ui.setRecordingState(true, "Uploading...");
-
-    // Buffer the result first
-    bufferedResults.push({ chunks, startFrame });
-    await trySendBufferedResults();
-
-    ui.setRecordingState(false);
-    ui.setStatus("Idle");
-  } catch (e: any) {
-    if (e.message === "Aborted") {
-      console.log("[Worker] Render Aborted");
-    } else {
-      console.error("Remote Recording Failed", e);
-      ui.setStatus("Recording Failed");
-    }
-  } finally {
-    currentWorkerJob = null;
-    currentWorkerAbortController = null;
-    isRendering = false;
-    requestAnimationFrame(renderFrame);
-  }
-};
-
-const trySendBufferedResults = async () => {
-  if (bufferedResults.length === 0) return;
-
-  console.log(
-    `[Worker] Attempting to send ${bufferedResults.length} buffered results...`
-  );
-
-  const remaining: typeof bufferedResults = [];
-  for (const res of bufferedResults) {
-    try {
-      await signaling.sendRenderResult(res.chunks, res.startFrame);
-      console.log(
-        `[Worker] Successfully sent buffered result for ${res.startFrame}`
-      );
-    } catch (e) {
-      console.warn(
-        `[Worker] Failed to send result for ${res.startFrame}, keeping in buffer.`
-      );
-      remaining.push(res);
-    }
-  }
-  bufferedResults = remaining;
-};
-
-const handlePendingRenderRequest = async () => {
-  if (!pendingRenderRequest) return;
-  const { start, count, config } = pendingRenderRequest;
-  pendingRenderRequest = null;
-
-  // Execute the delayed request
-  await executeWorkerRender(start, count, config);
-};
-
-// --- Host Grace Period State ---
-const disconnectedWorkers = new Map<
-  string,
-  { job: { start: number; count: number }; timeoutId: number }
->();
-const GRACE_PERIOD_MS = 30000; // 30 seconds
-
-// --- Signaling Callbacks (Global) ---
 signaling.onStatusChange = (msg) => ui.setStatus(`Status: ${msg}`);
 
-signaling.onWorkerLeft = (id) => {
-  console.log(`Worker Left: ${id}`);
-  ui.setStatus(`Worker Left: ${id}`);
-
-  // Check if it had an active job
-  const activeJob = activeJobs.get(id);
-  if (activeJob) {
-    console.warn(
-      `Worker ${id} disconnected with active job ${activeJob.start}. Starting grace period.`
-    );
-
-    // Clear old timeout if exists
-    if (disconnectedWorkers.has(id)) {
-      clearTimeout(disconnectedWorkers.get(id)!.timeoutId);
-    }
-
-    const timeoutId = setTimeout(() => {
-      console.log(
-        `Grace period expired for ${id}. Re-queueing job ${activeJob.start}.`
-      );
-      jobQueue.unshift(activeJob);
-      activeJobs.delete(id);
-      workerStatus.delete(id);
-      disconnectedWorkers.delete(id);
-      ui.setStatus(`Re-queued Job ${activeJob.start}`);
-      triggerAssignments();
-    }, GRACE_PERIOD_MS) as any;
-
-    disconnectedWorkers.set(id, { job: activeJob, timeoutId });
-  } else {
-    workerStatus.delete(id);
+signaling.onWorkerStatus = async (id, hasScene, job) => {
+  const result = await dHost.onWorkerStatus(id, hasScene, job);
+  if (result === "NEED_SCENE") {
+    console.log(`[Host] Worker ${id} needs scene. Syncing...`);
+    await dHost.sendSceneHelper(currentFileData, currentFileType, id);
   }
-};
-
-signaling.onWorkerReady = (id: string) => {
-  console.log(`Worker ${id} is READY (Connection established)`);
-  ui.setStatus(`Worker ${id} Connected!`);
-
-  // Clear grace period if any
-  if (disconnectedWorkers.has(id)) {
-    clearTimeout(disconnectedWorkers.get(id)!.timeoutId);
-    disconnectedWorkers.delete(id);
-  }
-
-  // We don't mark as idle or assign job here anymore.
-  // We wait for SCENE_LOADED or sendSceneHelper to finish.
-};
-
-signaling.onWorkerJoined = (id) => {
-  ui.setStatus(`Worker Joined: ${id}`);
-
-  // Check if it was a returning worker
-  if (disconnectedWorkers.has(id)) {
-    console.log(`Worker ${id} returned during grace period. Resuming.`);
-    clearTimeout(disconnectedWorkers.get(id)!.timeoutId);
-    disconnectedWorkers.delete(id);
-    // workerStatus and activeJobs are already set from before
-    return;
-  }
-
-  workerStatus.set(id, "loading");
-
-  if (currentRole === "host" && jobQueue.length > 0) {
-    sendSceneHelper(id);
-  }
-};
-
-signaling.onWorkerStatus = (id, hasScene, job) => {
-  console.log(
-    `[Host] Worker ${id} status: hasScene=${hasScene}, job=${job?.start}`
-  );
-
-  // Clear grace period if any
-  if (disconnectedWorkers.has(id)) {
-    clearTimeout(disconnectedWorkers.get(id)!.timeoutId);
-    disconnectedWorkers.delete(id);
-  }
-
-  if (!hasScene) {
-    if (workerStatus.get(id) === "loading") {
-      console.log(
-        `[Host] Worker ${id} has no scene but is already loading. Skipping redundant send.`
-      );
-      return;
-    }
-    if (workerStatus.get(id) === "busy") {
-      console.warn(
-        `[Host] Worker ${id} reports no scene while host thinks it is busy. Re-syncing.`
-      );
-    }
-
-    console.log(`[Host] Worker ${id} has no scene. Syncing...`);
-    workerStatus.set(id, "loading");
-    sendSceneHelper(id);
-    // If it HAD an active job, re-queue it because it definitely lost it
-    const activeJob = activeJobs.get(id);
-    if (activeJob) {
-      console.warn(
-        `[Host] Worker ${id} lost its job ${activeJob.start} due to refresh. Re-queuing.`
-      );
-      jobQueue.unshift(activeJob);
-      activeJobs.delete(id);
-    }
-  } else {
-    // Has scene. Check if the job matches.
-    const expectedJob = activeJobs.get(id);
-    if (expectedJob) {
-      if (!job || job.start !== expectedJob.start) {
-        console.warn(
-          `[Host] Worker ${id} lost its job ${expectedJob.start}. Re-queuing.`
-        );
-        jobQueue.unshift(expectedJob);
-        activeJobs.delete(id);
-        workerStatus.set(id, "idle");
-        triggerAssignments();
-      } else {
-        console.log(
-          `[Host] Worker ${id} is correctly continuing job ${job.start}`
-        );
-        workerStatus.set(id, "busy");
-      }
-    } else {
-      // Host thinks it's idle
-      if (job) {
-        // If the frame is already completed by someone else, stop it!
-        if (pendingChunks.has(job.start)) {
-          console.log(
-            `[Host] Worker ${id} is working on already completed job ${job.start}. Stopping.`
-          );
-          signaling.sendStopRender(id);
-          workerStatus.set(id, "idle");
-          assignJob(id);
-        } else {
-          console.warn(
-            `[Host] Worker ${id} is busy with ${job.start} but host thinks it is idle. Accepting anyway.`
-          );
-          activeJobs.set(id, job);
-          workerStatus.set(id, "busy");
-        }
-      } else {
-        workerStatus.set(id, "idle");
-        assignJob(id);
-      }
-    }
-  }
-};
-
-signaling.onHostHello = () => {
-  console.log(
-    "[Worker] Host Hello received. Syncing status and retrying results..."
-  );
-  trySendBufferedResults();
-
-  // Send current status to host
-  const hasScene = isDistributedSceneLoaded;
-  // If we are currently "recording" (remote render), we have a job
-  // We can track it via recorder state or main.ts state
-  // Let's use recorder.recording as a hint, but we need the actual job info.
-  // We can store the current job in a variable.
-  const job = currentWorkerJob
-    ? { start: currentWorkerJob.start, count: currentWorkerJob.count }
-    : undefined;
-  signaling.sendWorkerStatus(hasScene, job);
-};
-
-// Add this global to track current job on worker
-let currentWorkerJob: { start: number; count: number } | null = null;
-
-signaling.onRenderRequest = async (startFrame, frameCount, config) => {
-  console.log(
-    `[Worker] Received Render Request: Frames ${startFrame} - ${
-      startFrame + frameCount
-    }`
-  );
-
-  if (isSceneLoading || !isDistributedSceneLoaded) {
-    console.log(
-      `[Worker] Scene loading (or not synced) in progress. Queueing Render Request for ${startFrame}`
-    );
-    pendingRenderRequest = { start: startFrame, count: frameCount, config };
-    return;
-  }
-
-  await executeWorkerRender(startFrame, frameCount, config);
-};
-
-signaling.onStopRender = () => {
-  if (currentWorkerAbortController) {
-    console.log("[Worker] Host requested STOP_RENDER. Aborting...");
-    currentWorkerAbortController.abort();
-  }
-};
-
-signaling.onSceneLoaded = async (id) => {
-  if (workerStatus.get(id) !== "loading") {
-    console.log(
-      `[Host] Ignore redundant SCENE_LOADED from ${id} (Status: ${workerStatus.get(
-        id
-      )})`
-    );
-    return;
-  }
-  console.log(`[Host] Worker ${id} loaded the scene.`);
-  workerStatus.set(id, "idle");
-  await assignJob(id);
 };
 
 signaling.onRenderResult = async (chunks, startFrame, workerId) => {
-  if (pendingChunks.has(startFrame)) {
-    console.warn(
-      `[Host] Ignore duplicate result for ${startFrame} from ${workerId}`
-    );
-    workerStatus.set(workerId, "idle");
-    activeJobs.delete(workerId);
-    await assignJob(workerId);
-    return;
-  }
-  console.log(
-    `[Host] Received ${chunks.length} chunks for ${startFrame} from ${workerId}`
-  );
-
-  pendingChunks.set(startFrame, chunks);
-  completedJobs++;
-  ui.setStatus(`Distributed Progress: ${completedJobs} / ${totalJobs} jobs`);
-
-  workerStatus.set(workerId, "idle");
-  activeJobs.delete(workerId);
-
-  await assignJob(workerId);
-
-  if (completedJobs >= totalJobs) {
-    console.log("All jobs complete. Muxing...");
+  const result = await dHost.onRenderResult(chunks, startFrame, workerId);
+  if (result === "ALL_COMPLETE") {
+    console.log("[Host] All jobs complete. Muxing and downloading...");
     ui.setStatus("Muxing...");
-    await muxAndDownload();
+    await dHost.muxAndDownload();
   }
 };
 
 signaling.onSceneReceived = async (data, config) => {
-  console.log("Scene received successfully.");
-  isSceneLoading = true;
-
-  ui.setRenderConfig(config);
-
-  // Sync shader settings
-  if (config.maxDepth !== undefined && config.shaderSpp !== undefined) {
-    console.log(
-      `[Worker] Syncing Shader settings: Depth=${config.maxDepth}, SPP=${config.shaderSpp}`
-    );
-    renderer.buildPipeline(config.maxDepth, config.shaderSpp);
-  }
+  console.log("[Worker] Received Scene from Host.");
+  await dWorker.onSceneReceived(data, config);
 
   currentFileType = config.fileType;
   if (config.fileType === "obj") currentFileData = data as string;
@@ -693,13 +207,13 @@ signaling.onSceneReceived = async (data, config) => {
     worldBridge.setAnimation(config.anim);
   }
 
-  isDistributedSceneLoaded = true;
-  isSceneLoading = false;
+  dWorker.isDistributedSceneLoaded = true;
+  dWorker.isSceneLoading = false;
 
-  console.log("Distributed Scene Loaded. Sending SCENE_LOADED.");
+  console.log("[Worker] Distributed Scene Loaded. Signaling Host.");
   await signaling.sendSceneLoaded();
 
-  handlePendingRenderRequest();
+  dWorker.handlePendingRenderRequest();
 };
 
 // --- Event Binding ---
@@ -742,9 +256,9 @@ const bindEvents = () => {
 
     if (currentRole === "host") {
       const workers = signaling.getWorkerIds();
-      distributedConfig = ui.getRenderConfig();
-      totalRenderFrames = Math.ceil(
-        distributedConfig.fps * distributedConfig.duration
+      dHost.distributedConfig = ui.getRenderConfig() as RenderConfig;
+      const totalFrames = Math.ceil(
+        dHost.distributedConfig.fps * dHost.distributedConfig.duration
       );
 
       if (
@@ -755,28 +269,28 @@ const bindEvents = () => {
         return;
 
       // Init Job Queue
-      jobQueue = [];
-      pendingChunks.clear();
-      completedJobs = 0;
-      activeJobs.clear();
+      dHost.jobQueue = [];
+      dHost.pendingChunks.clear();
+      dHost.completedJobs = 0;
+      dHost.activeJobs.clear();
 
-      for (let f = 0; f < totalRenderFrames; f += BATCH_SIZE) {
-        const count = Math.min(BATCH_SIZE, totalRenderFrames - f);
-        jobQueue.push({ start: f, count });
+      for (let f = 0; f < totalFrames; f += BATCH_SIZE) {
+        const count = Math.min(BATCH_SIZE, totalFrames - f);
+        dHost.jobQueue.push({ start: f, count });
       }
-      totalJobs = jobQueue.length;
+      dHost.totalJobs = dHost.jobQueue.length;
 
       // Init Status
-      workers.forEach((w) => workerStatus.set(w, "idle"));
+      workers.forEach((w) => dHost.workerStatus.set(w, "idle"));
 
       ui.setStatus(
-        `Distributed Progress: 0 / ${totalJobs} jobs (Waiting for workers...)`
+        `Distributed Progress: 0 / ${dHost.totalJobs} jobs (Waiting for workers...)`
       );
 
       // Broadcast Scene to EXISTING workers
       if (workers.length > 0) {
         ui.setStatus("Syncing Scene to Workers...");
-        await sendSceneHelper();
+        await dHost.sendSceneHelper(currentFileData, currentFileType);
       } else {
         console.log("No workers yet. Waiting...");
       }
