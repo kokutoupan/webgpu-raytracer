@@ -2531,7 +2531,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     } catch (i) {
       i.message === "Aborted" ? console.log("[Worker] Render Aborted") : (console.error("Remote Recording Failed", i), c.setStatus("Recording Failed"));
     } finally {
-      M = null, T = null, x = true, requestAnimationFrame(G);
+      M = null, T = null, x = false, requestAnimationFrame(G);
     }
   }, ee = async () => {
     if (I.length === 0) return;
@@ -2663,7 +2663,7 @@ Auto Scene Sync enabled.`)) return;
         } catch {
           alert("Recording failed.");
         } finally {
-          c.setRecordingState(false), x = true, c.updateRenderButton(true), requestAnimationFrame(G);
+          c.setRecordingState(false), x = false, c.updateRenderButton(false), requestAnimationFrame(G);
         }
       }
     }, c.onConnectHost = () => {

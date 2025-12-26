@@ -374,7 +374,7 @@ const executeWorkerRender = async (
   } finally {
     currentWorkerJob = null;
     currentWorkerAbortController = null;
-    isRendering = true;
+    isRendering = false;
     requestAnimationFrame(renderFrame);
   }
 };
@@ -791,8 +791,8 @@ const bindEvents = () => {
         alert("Recording failed.");
       } finally {
         ui.setRecordingState(false);
-        isRendering = true;
-        ui.updateRenderButton(true);
+        isRendering = false;
+        ui.updateRenderButton(false);
         requestAnimationFrame(renderFrame);
       }
     }
