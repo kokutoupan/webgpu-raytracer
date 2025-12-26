@@ -241,16 +241,22 @@ export class VideoRecorder {
       const elapsed = t1 - t0;
 
       // Auto-adjust batch size to target ~100ms (10 FPS)
-      // If elapsed is 0 (very fast), we cap the multiplier
-      const multiplier = elapsed > 0 ? 100 / elapsed : 2.0;
+      // Cap the raw multiplier to prevent explosive growth (max 1.5x per step)
+      let rawMultiplier = elapsed > 0 ? 100 / elapsed : 1.5;
+      rawMultiplier = Math.min(rawMultiplier, 1.5);
 
-      // Adjust with some damping to prevent oscillation
+      // Adjust with more damping to prevent oscillation
       const nextBatch = Math.round(
-        this.currentBatchSize * (0.8 + 0.2 * multiplier)
+        this.currentBatchSize * (0.8 + 0.2 * rawMultiplier)
       );
 
       const prevBatch = this.currentBatchSize;
-      this.currentBatchSize = Math.max(1, Math.min(totalSpp, nextBatch));
+      // HARD CAP: 50. Doing >50 passes per JS frame is likely too much CPU/Driver overhead.
+      // If the GPU is that fast, we are just limited by JS/Driver dispatch.
+      this.currentBatchSize = Math.max(
+        1,
+        Math.min(totalSpp, Math.min(nextBatch, 50))
+      );
 
       if (this.currentBatchSize !== prevBatch && Math.abs(elapsed - 100) > 20) {
         console.log(
