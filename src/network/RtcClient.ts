@@ -15,6 +15,7 @@ export class RtcClient {
   private dc: RTCDataChannel | null = null;
   public readonly remoteId: string;
   private sendSignal: (msg: SignalingMessage) => void;
+  private transferLock: Promise<void> = Promise.resolve();
 
   // 受信バッファ
   private receiveBuffer: Uint8Array = new Uint8Array(0);
@@ -38,12 +39,33 @@ export class RtcClient {
   public onDataChannelOpen: (() => void) | null = null;
   public onAckReceived: ((receivedBytes: number) => void) | null = null;
   public onWorkerReady: (() => void) | null = null;
+  public onConnectionFailure: (() => void) | null = null;
+  public onWorkerStatus:
+    | ((
+        hasScene: boolean,
+        currentJob?: { start: number; count: number }
+      ) => void)
+    | null = null;
+  public onStopRender: (() => void) | null = null;
+  public onSceneLoaded: (() => void) | null = null;
 
   constructor(remoteId: string, sendSignal: (msg: SignalingMessage) => void) {
     this.remoteId = remoteId;
     this.sendSignal = sendSignal;
     this.pc = new RTCPeerConnection(RTC_CONFIG);
-    // ... (ICE Candidate等の処理は既存のまま) ...
+
+    this.pc.onconnectionstatechange = () => {
+      console.log(`[RTC] State Change: ${this.pc.connectionState}`);
+      if (
+        this.pc.connectionState === "failed" ||
+        this.pc.connectionState === "disconnected"
+      ) {
+        // failed is terminal, disconnected might recover but we want to be proactive
+        // if it stays disconnected for long. For now simple trigger.
+        if (this.onConnectionFailure) this.onConnectionFailure();
+      }
+    };
+
     this.pc.onicecandidate = (ev) => {
       if (ev.candidate)
         this.sendSignal({
@@ -89,64 +111,82 @@ export class RtcClient {
     fileType: "obj" | "glb",
     config: Omit<RenderConfig, "fileType">
   ) {
-    if (!this.dc || this.dc.readyState !== "open") return;
-
-    let buffer: Uint8Array;
-    if (typeof fileData === "string") {
-      buffer = new TextEncoder().encode(fileData);
-    } else {
-      buffer = new Uint8Array(fileData);
+    if (!this.dc || this.dc.readyState !== "open") {
+      throw new Error("DataChannel is not open");
     }
 
-    // 1. メタデータ送信
-    const metaMsg: DataChannelMessage = {
-      type: "SCENE_INIT",
-      totalBytes: buffer.byteLength,
-      config: { ...config, fileType },
-    };
-    this.sendData(metaMsg);
+    await (this.transferLock = this.transferLock
+      .then(async () => {
+        let buffer: Uint8Array;
+        if (typeof fileData === "string") {
+          buffer = new TextEncoder().encode(fileData);
+        } else {
+          buffer = new Uint8Array(fileData);
+        }
 
-    // 2. チャンク送信
-    await this.sendBinaryChunks(buffer);
+        // 1. メタデータ送信
+        const metaMsg: DataChannelMessage = {
+          type: "SCENE_INIT",
+          totalBytes: buffer.byteLength,
+          config: { ...config, fileType },
+        };
+        await this.sendData(metaMsg);
+
+        // 2. チャンク送信
+        await this.sendBinaryChunks(buffer);
+      })
+      .catch((e) => {
+        console.error("[RTC] sendScene failed:", e);
+        throw e;
+      }));
   }
 
   public async sendRenderResult(chunks: any[], startFrame: number) {
-    if (!this.dc || this.dc.readyState !== "open") return;
-
-    // Calculate total size and prepare metadata
-    let totalBytes = 0;
-    const chunksMeta = chunks.map((c) => {
-      const size = c.data.byteLength;
-      totalBytes += size;
-      return {
-        type: c.type,
-        timestamp: c.timestamp,
-        duration: c.duration,
-        size,
-        decoderConfig: c.decoderConfig,
-      };
-    });
-
-    console.log(
-      `[RTC] Sending Render Result: ${totalBytes} bytes, ${chunks.length} chunks`
-    );
-
-    this.sendData({
-      type: "RENDER_RESULT",
-      startFrame,
-      totalBytes,
-      chunksMeta,
-    });
-
-    // Combine buffers
-    const combinedBuffer = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const c of chunks) {
-      combinedBuffer.set(new Uint8Array(c.data), offset);
-      offset += c.data.byteLength;
+    if (!this.dc || this.dc.readyState !== "open") {
+      throw new Error("DataChannel is not open");
     }
 
-    await this.sendBinaryChunks(combinedBuffer);
+    await (this.transferLock = this.transferLock
+      .then(async () => {
+        // Calculate total size and prepare metadata
+        let totalBytes = 0;
+        const chunksMeta = chunks.map((c) => {
+          const size = c.data.byteLength;
+          totalBytes += size;
+          return {
+            type: c.type,
+            timestamp: c.timestamp,
+            duration: c.duration,
+            size,
+            decoderConfig: c.decoderConfig,
+          };
+        });
+
+        console.log(
+          `[RTC] Sending Render Result: ${totalBytes} bytes, ${chunks.length} chunks`
+        );
+
+        await this.sendData({
+          type: "RENDER_RESULT",
+          startFrame,
+          totalBytes,
+          chunksMeta,
+        });
+
+        // Combine buffers
+        const combinedBuffer = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const c of chunks) {
+          combinedBuffer.set(new Uint8Array(c.data), offset);
+          offset += c.data.byteLength;
+        }
+
+        await this.sendBinaryChunks(combinedBuffer);
+      })
+      .catch((e) => {
+        console.error("[RTC] sendRenderResult failed:", e);
+        throw e;
+      }));
   }
 
   private async sendBinaryChunks(buffer: Uint8Array) {
@@ -235,6 +275,17 @@ export class RtcClient {
     } else if (msg.type === "WORKER_READY") {
       console.log(`[RTC] Worker Ready Signal Received`);
       this.onWorkerReady?.();
+    } else if (msg.type === "WORKER_STATUS") {
+      console.log(
+        `[RTC] Worker Status Received: hasScene=${msg.hasScene}, job=${msg.currentJob?.start}`
+      );
+      this.onWorkerStatus?.(msg.hasScene, msg.currentJob);
+    } else if (msg.type === "STOP_RENDER") {
+      console.log(`[RTC] Stop Render Signal Received`);
+      this.onStopRender?.();
+    } else if (msg.type === "SCENE_LOADED") {
+      console.log(`[RTC] Scene Loaded Signal Received`);
+      this.onSceneLoaded?.();
     }
   }
 
@@ -293,8 +344,21 @@ export class RtcClient {
     }
   }
 
-  public sendData(msg: DataChannelMessage) {
-    if (this.dc?.readyState === "open") this.dc.send(JSON.stringify(msg));
+  public async sendData(msg: DataChannelMessage) {
+    if (this.dc?.readyState === "open") {
+      // Small wait if too much buffered to avoid drops
+      if (this.dc.bufferedAmount > 1024 * 1024) {
+        await new Promise<void>((resolve) => {
+          const i = setInterval(() => {
+            if (!this.dc || this.dc.bufferedAmount < 512 * 1024) {
+              clearInterval(i);
+              resolve();
+            }
+          }, 10);
+        });
+      }
+      this.dc.send(JSON.stringify(msg));
+    }
   }
 
   public sendAck(receivedBytes: number) {
@@ -317,6 +381,21 @@ export class RtcClient {
 
   public sendWorkerReady() {
     this.sendData({ type: "WORKER_READY" });
+  }
+
+  public sendWorkerStatus(
+    hasScene: boolean,
+    currentJob?: { start: number; count: number }
+  ) {
+    this.sendData({ type: "WORKER_STATUS", hasScene, currentJob });
+  }
+
+  public sendStopRender() {
+    this.sendData({ type: "STOP_RENDER" });
+  }
+
+  public sendSceneLoaded() {
+    this.sendData({ type: "SCENE_LOADED" });
   }
 
   public close() {

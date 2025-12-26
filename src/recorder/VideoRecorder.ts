@@ -2,7 +2,7 @@ import { WebGPURenderer } from "../renderer";
 import { WorldBridge } from "../world-bridge";
 
 export class VideoRecorder {
-  private isRecording = false;
+  public isRecording = false;
   private renderer: WebGPURenderer;
   private worldBridge: WorldBridge;
   private canvas: HTMLCanvasElement;
@@ -83,7 +83,8 @@ export class VideoRecorder {
 
   public async recordChunks(
     config: { fps: number; duration: number; spp: number; batch: number },
-    onProgress: (frame: number, total: number) => void
+    onProgress: (frame: number, total: number) => void,
+    abortSignal?: AbortSignal
   ): Promise<any[]> {
     // Return SerializedChunk[] but avoid circular dep on Protocol for now or import it
     if (this.isRecording) throw new Error("Already recording");
@@ -120,7 +121,8 @@ export class VideoRecorder {
         config,
         videoEncoder,
         onProgress,
-        (config as any).startFrame || 0
+        (config as any).startFrame || 0,
+        abortSignal
       );
       await videoEncoder.flush();
       return chunks;
@@ -135,14 +137,17 @@ export class VideoRecorder {
     config: { fps: number; spp: number; batch: number },
     encoder: VideoEncoder,
     onProgress: (f: number, t: number) => void,
-    startFrameOffset: number = 0
+    startFrameOffset: number = 0,
+    abortSignal?: AbortSignal
   ) {
+    if (abortSignal?.aborted) throw new Error("Aborted");
     // 1. Bootstrap: Update for first frame and wait for it
     const startFrame = startFrameOffset;
     this.worldBridge.update(startFrame / config.fps);
     await this.worldBridge.waitForNextUpdate();
 
     for (let i = 0; i < totalFrames; i++) {
+      if (abortSignal?.aborted) throw new Error("Aborted");
       onProgress(i, totalFrames);
 
       // Allow UI to breathe

@@ -30,8 +30,12 @@ type SignalingMessage =
 
 // --- 状態管理 ---
 
+// --- 状態管理 ---
+
 let hostSocket: ExtWebSocket | null = null;
 const workers = new Map<string, ExtWebSocket>();
+// Persistent sessions: id -> token
+const sessions = new Map<string, string>();
 
 // --- メインロジック ---
 
@@ -89,9 +93,9 @@ wss.on("connection", (ws: ExtWebSocket, req) => {
       return;
     }
 
-    let data: SignalingMessage;
+    let data: any;
     try {
-      data = JSON.parse(message.toString()) as SignalingMessage;
+      data = JSON.parse(message.toString());
     } catch (e) {
       console.error("Invalid JSON:", message);
       return;
@@ -123,9 +127,45 @@ wss.on("connection", (ws: ExtWebSocket, req) => {
       }
 
       case "register_worker": {
+        let finalId = ws.id;
+        // Session Resumption
+        if (data.sessionId && data.sessionToken) {
+          const storedToken = sessions.get(data.sessionId);
+          if (storedToken && storedToken === data.sessionToken) {
+            console.log(`Worker session resumed: ${data.sessionId}`);
+            finalId = data.sessionId;
+
+            // If there's an old socket, close it
+            const oldWs = workers.get(finalId);
+            if (oldWs && oldWs !== ws && oldWs.readyState === WebSocket.OPEN) {
+              oldWs.close();
+            }
+          } else {
+            console.warn(
+              `Invalid session resumption attempt: ${data.sessionId}`
+            );
+          }
+        }
+
+        // Assign/Update ID
+        ws.id = finalId;
         console.log(`Worker registered: ${ws.id}`);
         workers.set(ws.id, ws);
         ws.role = "worker";
+
+        // Generate new session token if it's a new session or we want to refresh
+        if (!sessions.has(ws.id)) {
+          const sessionToken = randomUUID();
+          sessions.set(ws.id, sessionToken);
+          sendTo(ws, { type: "session_info", sessionId: ws.id, sessionToken });
+        } else {
+          // Send existing session info to acknowledge resumption
+          sendTo(ws, {
+            type: "session_info",
+            sessionId: ws.id,
+            sessionToken: sessions.get(ws.id)!,
+          });
+        }
 
         // Hostに通知
         if (hostSocket && hostSocket.readyState === WebSocket.OPEN) {

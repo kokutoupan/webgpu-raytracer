@@ -1,7 +1,16 @@
 export type SignalingMessage =
   | { type: "register_host" }
   | { type: "host_exists" }
-  | { type: "register_worker" }
+  | {
+      type: "register_worker";
+      sessionId?: string;
+      sessionToken?: string;
+    }
+  | {
+      type: "session_info";
+      sessionId: string;
+      sessionToken: string;
+    }
   | { type: "worker_joined"; workerId: string }
   | { type: "worker_left"; workerId: string }
   | {
@@ -80,4 +89,11 @@ export type DataChannelMessage =
         decoderConfig?: VideoDecoderConfig | null;
       }[];
     }
-  | { type: "WORKER_READY" };
+  | {
+      type: "WORKER_STATUS";
+      hasScene: boolean;
+      currentJob?: { start: number; count: number };
+    }
+  | { type: "STOP_RENDER" }
+  | { type: "WORKER_READY" }
+  | { type: "SCENE_LOADED" };

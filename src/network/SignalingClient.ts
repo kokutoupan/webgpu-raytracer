@@ -25,6 +25,15 @@ export class SignalingClient {
   public onRenderRequest:
     | ((startFrame: number, frameCount: number, config: RenderConfig) => void)
     | null = null;
+  public onWorkerStatus:
+    | ((
+        id: string,
+        hasScene: boolean,
+        currentJob?: { start: number; count: number }
+      ) => void)
+    | null = null;
+  public onStopRender: (() => void) | null = null;
+  public onSceneLoaded: ((id: string) => void) | null = null;
 
   constructor() {}
 
@@ -39,9 +48,18 @@ export class SignalingClient {
     this.ws.onopen = () => {
       console.log("WS Connected");
       this.onStatusChange?.(`Waiting for Peer (${role.toUpperCase()})`);
-      this.sendSignal({
-        type: role === "host" ? "register_host" : "register_worker",
-      });
+
+      if (role === "worker") {
+        const sessionId = sessionStorage.getItem("raytracer_session_id");
+        const sessionToken = sessionStorage.getItem("raytracer_session_token");
+        this.sendSignal({
+          type: "register_worker",
+          sessionId: sessionId || undefined,
+          sessionToken: sessionToken || undefined,
+        });
+      } else {
+        this.sendSignal({ type: "register_host" });
+      }
     };
 
     this.ws.onmessage = (ev) => {
@@ -80,9 +98,9 @@ export class SignalingClient {
 
   public async sendRenderResult(chunks: any[], startFrame: number) {
     if (this.hostClient) {
-      // Blob to ArrayBuffer
-      // const buffer = await blob.arrayBuffer(); // No longer needed
       await this.hostClient.sendRenderResult(chunks, startFrame);
+    } else {
+      throw new Error("No Host Connection");
     }
   }
 
@@ -104,31 +122,59 @@ export class SignalingClient {
     switch (msg.type) {
       case "worker_joined":
         console.log(`Worker joined: ${msg.workerId}`);
-        const client = new RtcClient(msg.workerId, (m) => this.sendSignal(m));
-        this.workers.set(msg.workerId, client);
+        const setupClient = (id: string) => {
+          const client = new RtcClient(id, (m) => this.sendSignal(m));
+          this.workers.set(id, client);
 
-        client.onDataChannelOpen = () => {
-          console.log(`[Host] Open for ${msg.workerId}`);
-          // Initial Hello
-          client.sendData({ type: "HELLO", msg: "Hello from Host!" });
-          this.onWorkerJoined?.(msg.workerId);
+          client.onDataChannelOpen = () => {
+            console.log(`[Host] Open for ${id}`);
+            client.sendData({ type: "HELLO", msg: "Hello from Host!" });
+            this.onWorkerJoined?.(id);
+          };
+
+          client.onAckReceived = (bytes) => {
+            console.log(`Worker ${id} ACK: ${bytes}`);
+          };
+
+          client.onRenderResult = (chunks, startFrame) => {
+            console.log(
+              `Received Render Result from ${id}: ${chunks.length} chunks`
+            );
+            this.onRenderResult?.(chunks, startFrame, id);
+          };
+
+          client.onWorkerReady = () => {
+            this.onWorkerReady?.(id);
+          };
+
+          client.onWorkerStatus = (hasScene, job) => {
+            this.onWorkerStatus?.(id, hasScene, job);
+          };
+
+          client.onStopRender = () => {
+            this.onStopRender?.();
+          };
+
+          client.onSceneLoaded = () => {
+            this.onSceneLoaded?.(id);
+          };
+
+          client.onConnectionFailure = () => {
+            console.warn(`[Host] Connection failed for ${id}. Retrying...`);
+            client.close();
+            // Wait a bit before retrying to avoid spamming
+            setTimeout(() => {
+              if (this.workers.has(id)) {
+                setupClient(id);
+                this.workers.get(id)?.startAsHost();
+              }
+            }, 2000);
+          };
+
+          return client;
         };
 
-        client.onAckReceived = (bytes) => {
-          console.log(`Worker ${msg.workerId} ACK: ${bytes}`);
-        };
-
-        client.onRenderResult = (chunks, startFrame) => {
-          console.log(
-            `Received Render Result from ${msg.workerId}: ${chunks.length} chunks`
-          );
-          this.onRenderResult?.(chunks, startFrame, msg.workerId);
-        };
-
-        client.onWorkerReady = () => {
-          this.onWorkerReady?.(msg.workerId);
-        };
-
+        const client = setupClient(msg.workerId);
         await client.startAsHost();
         break;
       case "worker_left":
@@ -161,36 +207,79 @@ export class SignalingClient {
     }
   }
 
+  public async sendWorkerStatus(
+    hasScene: boolean,
+    currentJob?: { start: number; count: number }
+  ) {
+    if (this.hostClient) {
+      this.hostClient.sendWorkerStatus(hasScene, currentJob);
+    }
+  }
+
+  public async sendSceneLoaded() {
+    if (this.hostClient) {
+      this.hostClient.sendSceneLoaded();
+    }
+  }
+
   private async handleWorkerMessage(msg: SignalingMessage) {
     switch (msg.type) {
+      case "session_info":
+        console.log(`[Worker] Session Info Received: ${msg.sessionId}`);
+        sessionStorage.setItem("raytracer_session_id", msg.sessionId);
+        sessionStorage.setItem("raytracer_session_token", msg.sessionToken);
+        break;
       case "offer":
         if (msg.fromId) {
-          this.hostClient = new RtcClient(msg.fromId, (m) =>
-            this.sendSignal(m)
-          );
-          await this.hostClient.handleOffer(msg.sdp);
-          this.onStatusChange?.("Connected to Host!");
-          this.onHostConnected?.();
+          const setupHostClient = (id: string) => {
+            if (this.hostClient) this.hostClient.close();
+            this.hostClient = new RtcClient(id, (m) => this.sendSignal(m));
+            this.onStatusChange?.("Connected to Host!");
+            this.onHostConnected?.();
 
-          this.hostClient.onDataChannelOpen = () => {
-            this.hostClient?.sendData({
-              type: "HELLO",
-              msg: "Hello from Worker!",
-            });
-            this.onHostHello?.();
+            this.hostClient.onDataChannelOpen = () => {
+              this.hostClient?.sendData({
+                type: "HELLO",
+                msg: "Hello from Worker!",
+              });
+              this.onHostHello?.();
+            };
+
+            this.hostClient.onSceneReceived = (data, config) => {
+              this.onSceneReceived?.(data, config);
+              // Auto ACK
+              const size =
+                typeof data === "string" ? data.length : data.byteLength;
+              this.hostClient?.sendAck(size);
+            };
+
+            this.hostClient.onRenderRequest = (start, count, config) => {
+              this.onRenderRequest?.(start, count, config);
+            };
+
+            this.hostClient.onStopRender = () => {
+              this.onStopRender?.();
+            };
+
+            this.hostClient.onSceneLoaded = () => {
+              this.onSceneLoaded?.("host"); // Host isn't usually the target of SCENE_LOADED but for symmetry
+            };
+
+            this.hostClient.onConnectionFailure = () => {
+              console.warn(`[Worker] Connection failed for host ${id}.`);
+              // On worker side, we just close and wait for host to send a new offer
+              if (this.hostClient) {
+                this.hostClient.close();
+                this.hostClient = null;
+              }
+              this.onStatusChange?.("Disconnected from Host (Reconnecting...)");
+            };
+
+            return this.hostClient;
           };
 
-          this.hostClient.onSceneReceived = (data, config) => {
-            this.onSceneReceived?.(data, config);
-            // Auto ACK
-            const size =
-              typeof data === "string" ? data.length : data.byteLength;
-            this.hostClient?.sendAck(size);
-          };
-
-          this.hostClient.onRenderRequest = (start, count, config) => {
-            this.onRenderRequest?.(start, count, config);
-          };
+          const client = setupHostClient(msg.fromId);
+          await client.handleOffer(msg.sdp);
         }
         break;
       case "candidate":
@@ -234,5 +323,10 @@ export class SignalingClient {
     }
   }
 
-  // ... (broadcastRenderRequest can stay or be removed if unused)
+  public sendStopRender(workerId: string) {
+    const w = this.workers.get(workerId);
+    if (w) {
+      w.sendStopRender();
+    }
+  }
 }

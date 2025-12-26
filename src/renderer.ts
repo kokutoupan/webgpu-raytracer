@@ -252,6 +252,7 @@ export class WebGPURenderer {
         [1024, 1024]
       );
     }
+    await this.device.queue.onSubmittedWorkDone();
   }
 
   async createFallbackBitmap() {
