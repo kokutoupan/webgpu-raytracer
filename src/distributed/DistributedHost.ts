@@ -292,5 +292,6 @@ export class DistributedHost {
     a.click();
     URL.revokeObjectURL(url);
     this.ui.setStatus("Distributed Render Complete.");
+    this.signaling.sendRenderStop();
   }
 }

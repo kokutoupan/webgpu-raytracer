@@ -1,5 +1,7 @@
 export type SignalingMessage =
   | { type: "register_host" }
+  | { type: "render_start" }
+  | { type: "render_stop" }
   | { type: "host_exists" }
   | {
       type: "register_worker";

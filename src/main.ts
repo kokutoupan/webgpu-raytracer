@@ -290,6 +290,7 @@ const bindEvents = () => {
       // Broadcast Scene to EXISTING workers
       if (workers.length > 0) {
         ui.setStatus("Syncing Scene to Workers...");
+        signaling.sendRenderStart();
         await dHost.sendSceneHelper(currentFileData, currentFileType);
       } else {
         console.log("No workers yet. Waiting...");

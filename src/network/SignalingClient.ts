@@ -329,4 +329,12 @@ export class SignalingClient {
       w.sendStopRender();
     }
   }
+
+  public sendRenderStart() {
+    this.sendSignal({ type: "render_start" });
+  }
+
+  public sendRenderStop() {
+    this.sendSignal({ type: "render_stop" });
+  }
 }

@@ -128,6 +128,16 @@ interface ExtWebSocket extends WebSocket {
   remoteAddress?: string;
 }
 
+// クライアントから送られてくるメッセージの型
+type SignalingMessage =
+  | { type: "register_host" }
+  | { type: "register_worker" }
+  | { type: "render_start" }
+  | { type: "render_stop" }
+  | { type: "offer"; sdp: any; targetId: string; fromId?: string }
+  | { type: "answer"; sdp: any; targetId: string; fromId?: string }
+  | { type: "candidate"; candidate: any; targetId: string; fromId?: string };
+
 // --- 状態管理 ---
 
 let hostSocket: ExtWebSocket | null = null;
@@ -201,13 +211,16 @@ wss.on("connection", (ws: ExtWebSocket, req) => {
 
     switch (data.type) {
       case "register_host": {
-        console.log(`Host registered: ${ws.id}`);
-        // Allow overwriting host for development ease / reconnection
+        // First-come, first-served: If a host already exists, reject the new one.
         if (hostSocket != null && hostSocket.readyState === WebSocket.OPEN) {
-          console.log("Replacing existing host");
-          hostSocket.close();
+          console.warn(
+            `[Refused] Host registration from ${ws.id} refused. Host ${hostSocket.id} is already active.`
+          );
+          sendTo(ws, { type: "host_exists" });
+          return;
         }
 
+        console.log(`Host registered: ${ws.id}`);
         hostSocket = ws;
         ws.role = "host";
 
@@ -272,6 +285,16 @@ wss.on("connection", (ws: ExtWebSocket, req) => {
             workerId: ws.id,
           });
         }
+        break;
+      }
+
+      case "render_start": {
+        console.log(`[Host] Distributed Render Started.`);
+        break;
+      }
+
+      case "render_stop": {
+        console.log(`[Host] Distributed Render Finished.`);
         break;
       }
 
