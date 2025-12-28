@@ -677,9 +677,10 @@ export class WebGPURenderer {
   // ★ READBACK BUFFER for Robust Recording
   private readbackBuffer: GPUBuffer | null = null;
   private readbackBufferSize = 0;
+  private readbackResultBuffer: Uint8Array | null = null;
 
   async captureFrame(): Promise<{
-    data: ArrayBuffer;
+    data: ArrayBufferLike;
     width: number;
     height: number;
   }> {
@@ -728,9 +729,18 @@ export class WebGPURenderer {
     // VideoFrame init doesn't support stride directly for BufferSource.
     // We must repack if padded.
 
-    const result = new Uint8Array(w * h * 4);
+    const desiredSize = w * h * 4;
+    // Reuse CPU buffer
+    if (
+      !this.readbackResultBuffer ||
+      this.readbackResultBuffer.byteLength !== desiredSize
+    ) {
+      this.readbackResultBuffer = new Uint8Array(desiredSize);
+    }
+    const result = this.readbackResultBuffer;
+
     if (paddedBytesPerRow === unpaddedBytesPerRow) {
-      result.set(srcArray.subarray(0, w * h * 4));
+      result.set(srcArray.subarray(0, desiredSize));
     } else {
       for (let y = 0; y < h; y++) {
         const srcOffset = y * paddedBytesPerRow;
