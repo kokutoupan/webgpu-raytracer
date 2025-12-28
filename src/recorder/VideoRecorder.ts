@@ -179,11 +179,10 @@ export class VideoRecorder {
       try {
         const { data, width, height } = await this.renderer.captureFrame();
 
-        // Determine format based on preferred canvas format (which renderTarget uses)
-        const format =
-          navigator.gpu.getPreferredCanvasFormat() === "bgra8unorm"
-            ? "BGRA"
-            : "RGBA";
+        // Explicitly use RGBA because renderTarget is hardcoded to "rgba8unorm" in renderer.ts.
+        // Doing navigator.gpu.getPreferredCanvasFormat() is incorrect because we are reading
+        // from the intermediate render buffer, not the swapchain itself.
+        const format = "RGBA";
 
         const frame = new VideoFrame(data, {
           codedWidth: width,

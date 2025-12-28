@@ -1847,7 +1847,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         await this.renderFrame(t.spp), n.encodeQueueSize > 5 && await n.flush();
         try {
-          const { data: c, width: f, height: p } = await this.renderer.captureFrame(), m = navigator.gpu.getPreferredCanvasFormat() === "bgra8unorm" ? "BGRA" : "RGBA", C = new VideoFrame(c, {
+          const { data: c, width: f, height: p } = await this.renderer.captureFrame(), m = "RGBA", C = new VideoFrame(c, {
             codedWidth: f,
             codedHeight: p,
             format: m,
