@@ -641,21 +641,113 @@ export class WebGPURenderer {
     postPass.dispatchWorkgroups(dispatchX, dispatchY);
     postPass.end();
 
-    // 2. Copy renderTarget to Canvas
-    commandEncoder.copyTextureToTexture(
-      { texture: this.renderTarget },
-      { texture: this.context.getCurrentTexture() },
-      {
-        width: this.canvas.width,
-        height: this.canvas.height,
-        depthOrArrayLayers: 1,
-      }
-    );
+    // 2. Copy renderTarget to Canvas (Swapchain)
+    try {
+      const currentTexture = this.context.getCurrentTexture();
+      commandEncoder.copyTextureToTexture(
+        { texture: this.renderTarget },
+        { texture: currentTexture },
+        {
+          width: this.canvas.width,
+          height: this.canvas.height,
+          depthOrArrayLayers: 1,
+        }
+      );
+    } catch (e) {
+      console.warn("Skipping present(): Swapchain unavailable or invalid.", e);
+      // Do NOT submit invalid commands for the swapchain, but we can still
+      // submit the post-process pass if we want, or just abort this frame's display.
+      // However, since postPass sends to AccumulateBuffer/RenderTarget (internal),
+      // we SHOULD still ensure that runs if it affects history.
+
+      // Actually, postPass writes to RenderTarget.
+      // CopyTextureToTexture reads from RenderTarget.
+      // IF we fail to get swapchain, we just don't copy to screen.
+      // But we MUST finish the encoder if we started it?
+      // No, we can just use a new encoder or ensure we submit what we have.
+    }
 
     this.device.queue.submit([commandEncoder.finish()]);
 
     // Swap history index
     this.historyIndex = 1 - this.historyIndex;
     this.recreateBindGroup(); // To update history binding
+  }
+
+  // ★ READBACK BUFFER for Robust Recording
+  private readbackBuffer: GPUBuffer | null = null;
+  private readbackBufferSize = 0;
+
+  async captureFrame(): Promise<{
+    data: ArrayBuffer;
+    width: number;
+    height: number;
+  }> {
+    if (!this.renderTarget) throw new Error("No render target");
+
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+
+    // Bytes per row must be multiple of 256
+    const bytesPerPixel = 4;
+    const unpaddedBytesPerRow = w * bytesPerPixel;
+    const align = 256;
+    const paddedBytesPerRow = Math.ceil(unpaddedBytesPerRow / align) * align;
+    const totalSize = paddedBytesPerRow * h;
+
+    if (!this.readbackBuffer || this.readbackBufferSize < totalSize) {
+      if (this.readbackBuffer) this.readbackBuffer.destroy();
+      this.readbackBuffer = this.device.createBuffer({
+        size: totalSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      this.readbackBufferSize = totalSize;
+    }
+
+    const commandEncoder = this.device.createCommandEncoder();
+    commandEncoder.copyTextureToBuffer(
+      { texture: this.renderTarget },
+      {
+        buffer: this.readbackBuffer,
+        bytesPerRow: paddedBytesPerRow,
+        rowsPerImage: h,
+      },
+      { width: w, height: h, depthOrArrayLayers: 1 }
+    );
+
+    this.device.queue.submit([commandEncoder.finish()]);
+    await this.device.queue.onSubmittedWorkDone();
+
+    await this.readbackBuffer.mapAsync(GPUMapMode.READ);
+    const srcArray = new Uint8Array(this.readbackBuffer.getMappedRange());
+
+    // Copy to new buffer to unmap immediately
+    // If paddedBytesPerRow != unpaddedBytesPerRow, we must strip padding?
+    // VideoFrame supports stride? VideoFrame(data, { codedWidth, codedHeight, format: 'BGRA' or 'RGBA' })
+    // It usually expects tightly packed or you can specify layout?
+    // VideoFrame init doesn't support stride directly for BufferSource.
+    // We must repack if padded.
+
+    const result = new Uint8Array(w * h * 4);
+    if (paddedBytesPerRow === unpaddedBytesPerRow) {
+      result.set(srcArray.subarray(0, w * h * 4));
+    } else {
+      for (let y = 0; y < h; y++) {
+        const srcOffset = y * paddedBytesPerRow;
+        const dstOffset = y * unpaddedBytesPerRow;
+        result.set(
+          srcArray.subarray(srcOffset, srcOffset + unpaddedBytesPerRow),
+          dstOffset
+        );
+      }
+    }
+
+    this.readbackBuffer.unmap();
+
+    // Note: this.renderTarget is 'rgba8unorm', but navigator.gpu.getPreferredCanvasFormat() might be bgra8unorm.
+    // We created renderTarget with format: navigator.gpu.getPreferredCanvasFormat().
+    // So the data matches that. VideoFrame needs to know if it's RGBA or BGRA.
+
+    return { data: result.buffer, width: w, height: h };
   }
 }
