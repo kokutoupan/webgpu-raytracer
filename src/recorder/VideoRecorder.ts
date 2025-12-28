@@ -174,40 +174,32 @@ export class VideoRecorder {
         await encoder.flush();
       }
 
-      // Use createImageBitmap to create a stable snapshot of the canvas
-      // This avoids race conditions with WebGPU swapchain updates
-      // ★ 修正: createImageBitmap の再試行ロジックを追加
-      let bitmap: ImageBitmap | null = null;
-      let retries = 3;
-      while (retries > 0) {
-        try {
-          bitmap = await createImageBitmap(this.canvas);
-          break; // 成功したらループを抜ける
-        } catch (e) {
-          console.warn(
-            `Bitmap capture failed, retrying... (${retries} left)`,
-            e
-          );
-          retries--;
-          // 少し待機してから再試行（ブラウザの構成変更待ち）
-          await new Promise((r) => setTimeout(r, 50));
-        }
-      }
+      // Use GPU Readback to safely capture frame data, avoiding Swapchain/Canvas invalidation issues
+      // caused by popups or backgrounding.
+      try {
+        const { data, width, height } = await this.renderer.captureFrame();
 
-      if (!bitmap) {
-        throw new Error(
-          "Failed to capture frame after retries (Context Lost?)"
+        // Explicitly use RGBA because renderTarget is hardcoded to "rgba8unorm" in renderer.ts.
+        // Doing navigator.gpu.getPreferredCanvasFormat() is incorrect because we are reading
+        // from the intermediate render buffer, not the swapchain itself.
+        const format = "RGBA";
+
+        const frame = new VideoFrame(data, {
+          codedWidth: width,
+          codedHeight: height,
+          format: format,
+          timestamp: ((startFrameOffset + i) * 1000000) / config.fps,
+          duration: 1000000 / config.fps,
+        });
+
+        encoder.encode(frame, { keyFrame: i % config.fps === 0 });
+        frame.close();
+      } catch (err) {
+        console.warn(
+          `[VideoRecorder] Frame ${i} skipped: Readback failed.`,
+          err
         );
       }
-      const frame = new VideoFrame(bitmap, {
-        timestamp: ((startFrameOffset + i) * 1000000) / config.fps,
-        duration: 1000000 / config.fps,
-      });
-
-      encoder.encode(frame, { keyFrame: i % config.fps === 0 });
-      frame.close();
-      bitmap.close();
-
       // 6. Wait for NEXT frame data before entering next iteration
       if (nextUpdatePromise) {
         await nextUpdatePromise;
