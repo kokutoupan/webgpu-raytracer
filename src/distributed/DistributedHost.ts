@@ -88,8 +88,24 @@ export class DistributedHost {
   }
 
   public async assignJob(workerId: string) {
-    if (this.workerStatus.get(workerId) !== "idle") return;
-    if (this.jobQueue.length === 0) return;
+    const status = this.workerStatus.get(workerId);
+    console.log(
+      `[Host] Attempting to assign job to ${workerId} (Status: ${status})`
+    );
+
+    if (status !== "idle") {
+      console.log(
+        `[Host] Worker ${workerId} is not idle. Aborting assignment.`
+      );
+      return;
+    }
+
+    if (this.jobQueue.length === 0) {
+      console.log(
+        `[Host] Job queue is empty. No work to assign to ${workerId}.`
+      );
+      return;
+    }
 
     if (!this.distributedConfig) {
       console.warn("[Host] Distributed config is missing. Cannot assign job.");
@@ -117,7 +133,7 @@ export class DistributedHost {
       console.error(`[Host] Failed to send job to ${workerId}, re-queuing`, e);
       this.jobQueue.push(job);
       this.workerStatus.set(workerId, "idle");
-      this.activeJobs.delete(workerId);
+      this.activeJobs.delete(workerId); // Corrected from set to delete
 
       setTimeout(() => this.assignJob(workerId), 2000);
     }
@@ -155,7 +171,20 @@ export class DistributedHost {
 
   public onWorkerReady(id: string) {
     console.log(`[Host] Worker ${id} is ready (Manual Signal).`);
-    // This is a legacy signal, we now rely on SCENE_LOADED
+
+    // Check if we already assigned a job to this worker (which might be pending on their side)
+    if (this.activeJobs.has(id)) {
+      console.log(
+        `[Host] Worker ${id} sent READY but has active job. Assuming it is processing pending request.`
+      );
+      // Do NOT set to idle, do NOT assign new job.
+      this.workerStatus.set(id, "busy"); // Ensure it remains busy
+      return;
+    }
+
+    // Worker has confirmed scene is loaded and has no active job. Mark as idle and assign work.
+    this.workerStatus.set(id, "idle");
+    this.assignJob(id);
   }
 
   public onWorkerJoined(id: string) {

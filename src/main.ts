@@ -27,6 +27,14 @@ const signaling = new SignalingClient();
 const dHost = new DistributedHost(signaling, ui);
 const dWorker = new DistributedWorker(signaling, renderer, ui, recorder);
 
+dWorker.onRemoteSceneLoad = async (data, type) => {
+  currentFileData = data;
+  currentFileType = type;
+  // Use "viewer" mode for custom data
+  await loadScene("viewer", false);
+  console.log("[Main] Remote scene loaded via dWorker callback.");
+};
+
 // --- Main Application Loop ---
 let frameCount = 0;
 let totalFrameCount = 0;
@@ -41,13 +49,15 @@ const rebuildPipeline = () => {
 };
 
 const updateResolution = () => {
-  // ★ 追加: 録画中はリサイズ処理（コンテキストの再構成）を行わないようにする
-  if (recorder.recording) {
-    console.warn(
-      "Resize blocked during recording to prevent resource invalidation."
-    );
-    return;
-  }
+  // // ★ 追加: 録画中はリサイズ処理（コンテキストの再構成）を行わないようにする
+  // // ★ 追加: 録画中はリサイズ処理（コンテキストの再構成）を行わないようにする -> 変更: 録画を停止して続行
+  // if (recorder.recording) {
+  //   console.warn(
+  //     "Resize requested during recording. Stopping recording to prevent crash."
+  //   );
+  //   recorder.cancel();
+  //   // return; // REMOVED: Must proceed to update resolution for new scene
+  // }
   const { width, height } = ui.getRenderConfig();
   renderer.updateScreenSize(width, height);
 
@@ -354,6 +364,7 @@ const bindEvents = () => {
       currentRole = null;
       ui.setConnectionState(null);
     } else {
+      recorder.cancel(); // Ensure clean state
       signaling.connect("worker");
       currentRole = "worker";
       ui.setConnectionState("worker");

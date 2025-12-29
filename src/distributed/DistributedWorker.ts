@@ -13,6 +13,9 @@ export class DistributedWorker {
     config: RenderConfig;
   } | null = null;
   public currentWorkerJob: { start: number; count: number } | null = null;
+  public onRemoteSceneLoad:
+    | ((data: string | ArrayBuffer, type: "obj" | "glb") => Promise<void>)
+    | null = null;
 
   private signaling: SignalingClient;
   private renderer: WebGPURenderer;
@@ -181,6 +184,9 @@ export class DistributedWorker {
     config: RenderConfig
   ) {
     console.log("[Worker] Scene received successfully.");
+    // Force stop any rogue recording state to prevent "Resize blocked" or resource errors
+    this.recorder.cancel();
+
     this.isSceneLoading = true;
 
     this.ui.setRenderConfig(config);
@@ -193,7 +199,22 @@ export class DistributedWorker {
       this.renderer.buildPipeline(config.maxDepth, config.shaderSpp);
     }
 
-    // This logic still needs to call loadScene in main.ts
+    // Call main loader logic
+    if (this.onRemoteSceneLoad) {
+      // Cast fileType because config is RenderConfig which has "obj"|"glb"
+      await this.onRemoteSceneLoad(data, config.fileType || "obj");
+    }
+
+    this.isSceneLoading = false;
+    this.isDistributedSceneLoaded = true;
+    this.signaling.sendSceneLoaded();
+
+    // Now that scene is loaded, check for pending jobs
+    if (this.pendingRenderRequest) {
+      console.log("[Worker] Found pending render request. Executing now.");
+      this.handlePendingRenderRequest();
+    }
+
     return { data, config };
   }
 }

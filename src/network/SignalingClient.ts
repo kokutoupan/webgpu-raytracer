@@ -216,12 +216,6 @@ export class SignalingClient {
     }
   }
 
-  public async sendSceneLoaded() {
-    if (this.hostClient) {
-      this.hostClient.sendSceneLoaded();
-    }
-  }
-
   private async handleWorkerMessage(msg: SignalingMessage) {
     switch (msg.type) {
       case "session_info":
@@ -364,5 +358,20 @@ export class SignalingClient {
 
   public sendRenderStop() {
     this.sendSignal({ type: "render_stop" });
+  }
+
+  public sendSceneLoaded() {
+    // Determine which channel to use.
+    // Ideally we use DataChannel (Direct P2P) if available.
+    if (this.hostClient && this.hostClient.isDataChannelOpen()) {
+      console.log("[Signaling] Sending WORKER_READY via DataChannel");
+      this.hostClient.sendWorkerReady();
+    } else {
+      // Fallback to WebSocket if DataChannel isn't ready (though it should be for scene transfer)
+      console.warn(
+        "[Signaling] DataChannel not ready, trying WebSocket for WORKER_READY (Server might not forward)"
+      );
+      this.sendSignal({ type: "WORKER_READY" });
+    }
   }
 }

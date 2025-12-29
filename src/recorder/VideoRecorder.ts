@@ -22,6 +22,15 @@ export class VideoRecorder {
     return this.isRecording;
   }
 
+  public cancel() {
+    if (this.isRecording) {
+      console.warn("[VideoRecorder] Forces cancelling recording state.");
+      this.isRecording = false;
+      // Note: This won't stop the encoder immediately if it's in the middle of a chunk,
+      // but it will stop the loop in recordChunks/renderAndEncode on next iteration.
+    }
+  }
+
   public async record(
     config: { fps: number; duration: number; spp: number; batch: number },
     onProgress: (frame: number, total: number) => void,
