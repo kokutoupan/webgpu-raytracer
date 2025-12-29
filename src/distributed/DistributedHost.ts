@@ -21,6 +21,12 @@ export class DistributedHost {
   >();
   private readonly GRACE_PERIOD_MS = 30000;
 
+  private cachedSceneData: {
+    data: string | ArrayBuffer;
+    type: "obj" | "glb";
+    config: RenderConfig;
+  } | null = null;
+
   constructor(signaling: SignalingClient, ui: UIManager) {
     this.signaling = signaling;
     this.ui = ui;
@@ -55,6 +61,13 @@ export class DistributedHost {
 
     config.sceneName = sceneName;
     config.fileType = fileType;
+
+    // Cache for late-joining workers
+    this.cachedSceneData = {
+      data: fileData,
+      type: fileType,
+      config: { ...config },
+    };
 
     if (workerId) {
       console.log(`[Host] Sending scene to specific worker: ${workerId}`);
@@ -159,6 +172,17 @@ export class DistributedHost {
 
       // Re-send the scene if needed, or just re-assign
       // If the worker joined, it might need the scene again
+    } else {
+      // NEW WORKER: Auto-send scene if we have one cached
+      if (this.cachedSceneData) {
+        console.log(`[Host] Auto-sending cached scene to new worker ${id}`);
+        this.signaling.sendSceneToWorker(
+          id,
+          this.cachedSceneData.data,
+          this.cachedSceneData.type,
+          this.cachedSceneData.config
+        );
+      }
     }
   }
 
@@ -170,12 +194,19 @@ export class DistributedHost {
     console.log(`[Host] Worker ${id} status update: hasScene=${hasScene}`, job);
 
     if (!hasScene) {
+      // Logic relaxed: If worker reports no scene, ALWAYS send it, even if we think we are loading.
+      // This fixes the race condition where onWorkerJoined sets "loading", but the initial send fails
+      // or arrives before the worker is ready, leaving the worker stuck reporting "no scene".
+
+      /*
       if (this.workerStatus.get(id) === "loading") {
         console.log(
           `[Host] Worker ${id} has no scene but is already loading. Skipping redundant send.`
         );
         return;
       }
+      */
+
       if (this.workerStatus.get(id) === "busy") {
         console.warn(
           `[Host] Worker ${id} reports no scene while host thinks it is busy. Re-syncing.`

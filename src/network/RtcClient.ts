@@ -12,8 +12,13 @@ const RTC_CONFIG: RTCConfiguration = {
 export class RtcClient {
   // ... (既存のプロパティ等はそのまま)
   private pc: RTCPeerConnection;
-  private dc: RTCDataChannel | null = null;
+  public dc: RTCDataChannel | null = null;
   public readonly remoteId: string;
+
+  public isDataChannelOpen(): boolean {
+    return this.dc?.readyState === "open";
+  }
+
   private sendSignal: (msg: SignalingMessage) => void;
   private transferLock: Promise<void> = Promise.resolve();
 
@@ -106,6 +111,10 @@ export class RtcClient {
   // ============================================
   //  送信ロジック (Host)
   // ============================================
+  // ============================================
+  //  送信ロジック (Host)
+  // ============================================
+
   public async sendScene(
     fileData: ArrayBuffer | string,
     fileType: "obj" | "glb",

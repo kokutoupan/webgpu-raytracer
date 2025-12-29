@@ -306,6 +306,34 @@ export class SignalingClient {
     config: Omit<RenderConfig, "fileType">
   ) {
     const client = this.workers.get(targetId);
+    if (!client) {
+      console.error(
+        `[Host] Cannot send scene to ${targetId}: Client not found.`
+      );
+      return;
+    }
+
+    // Wait for DataChannel to be open
+    if (!client.isDataChannelOpen()) {
+      console.log(`[Host] DataChannel for ${targetId} not ready, waiting...`);
+      await new Promise<void>((resolve) => {
+        const onOpen = () => {
+          client.dc?.removeEventListener("open", onOpen);
+          resolve();
+        };
+        // If it opens while we wait
+        client.dc?.addEventListener("open", onOpen);
+        // Fallback timeout
+        setTimeout(resolve, 3000);
+      });
+      // Double check active
+      if (!client.isDataChannelOpen()) {
+        console.warn(
+          `[Host] DataChannel for ${targetId} timed out. Attempting Send anyway...`
+        );
+      }
+    }
+
     if (client) {
       await client.sendScene(fileData, fileType, config);
     }
