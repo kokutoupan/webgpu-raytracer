@@ -150,6 +150,9 @@ export class WebGPURenderer {
     });
     this.postprocessBindGroupLayout =
       this.postprocessPipeline.getBindGroupLayout(0);
+
+    // Ensure BindGroups are compatible with the new pipeline layout immediately
+    this.recreateBindGroup();
   }
 
   updateScreenSize(width: number, height: number) {

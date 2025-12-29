@@ -1288,7 +1288,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           module: r,
           entryPoint: "main"
         }
-      }), this.postprocessBindGroupLayout = this.postprocessPipeline.getBindGroupLayout(0);
+      }), this.postprocessBindGroupLayout = this.postprocessPipeline.getBindGroupLayout(0), this.recreateBindGroup();
     }
     updateScreenSize(e, t) {
       this.canvas.width = e, this.canvas.height = t, this.renderTarget && this.renderTarget.destroy(), this.renderTarget = this.device.createTexture({
