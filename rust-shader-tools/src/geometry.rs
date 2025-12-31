@@ -76,7 +76,7 @@ impl Geometry {
         tex_indices: [f32; 4], // base, met_rough, normal, emissive
         occlusion_tex: f32,
     ) {
-        let mat_bits = f32::from_bits(mat_type);
+        let mat_bits = mat_type as f32;
         // Stride 12 (to match 16-word layout with 4 indices)
         // data0: rgba (BaseColor + MatType)
         // data1: metallic, roughness, ior, padding/extra

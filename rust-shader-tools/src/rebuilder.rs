@@ -157,8 +157,8 @@ pub fn build_blas_and_vertices(
 
             // Check for Light (Type = 3)
             // attrs[3] is mat_type (float).
-            let mat_bits = attrs[3].to_bits();
-            if mat_bits == 3 {
+            let mat_val = attrs[3];
+            if (mat_val - 3.0).abs() < 1e-6 {
                 current_emissive.push(current_topology_start + i as u32);
             }
         }

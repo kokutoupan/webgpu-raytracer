@@ -44,7 +44,7 @@ struct MeshTopology {
     v1: u32,
     v2: u32,
     pad: u32,
-    data0: vec4<f32>, // rgb: BaseColor, w: MaterialType (bitcast)
+    data0: vec4<f32>, // rgb: BaseColor, w: MaterialType (cast)
     data1: vec4<f32>, // x: Metallic, y: Roughness, z: IOR, w: 0.0
     data2: vec4<f32>, // x: BaseTex, y: MetRoughTex, z: NormalTex, w: EmissiveTex
     data3: vec4<f32>  // rgb: EmissiveColor, w: OcclusionTex
@@ -129,7 +129,7 @@ struct GIReservoir {
     data0: vec4<f32>, // [dir.x, dir.y, dir.z, dist]
     data1: vec4<f32>, // [radiance.x, radiance.y, radiance.z, w_sum]
     data2: vec4<f32>, // [pos.x, pos.y, pos.z, M]
-    data3: vec4<f32>, // [norm_packed.x, norm_packed.y, W, mat_id (bitcast)]
+    data3: vec4<f32>, // [norm_packed.x, norm_packed.y, W, mat_id (cast)]
 }
 
 fn get_gi_sample_dir(res: GIReservoir) -> vec3<f32> { return res.data0.xyz; }
@@ -140,7 +140,7 @@ fn get_gi_creation_pos(res: GIReservoir) -> vec3<f32> { return res.data2.xyz; }
 fn get_gi_M(res: GIReservoir) -> f32 { return res.data2.w; }
 fn get_gi_creation_normal(res: GIReservoir) -> vec3<f32> { return unpack_normal(res.data3.xy); }
 fn get_gi_W(res: GIReservoir) -> f32 { return res.data3.z; }
-fn get_gi_creation_mat_id(res: GIReservoir) -> u32 { return bitcast<u32>(res.data3.w); }
+fn get_gi_creation_mat_id(res: GIReservoir) -> u32 { return u32(res.data3.w + 0.5); }
 
 fn set_gi_W(res: ptr<function, GIReservoir>, W: f32) { (*res).data3.z = W; }
 fn set_gi_M(res: ptr<function, GIReservoir>, M: f32) { (*res).data2.w = M; }
@@ -356,7 +356,7 @@ fn generate_initial_gi_candidate(
         if b_tri.data2.w > -0.5 { b_em *= textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.w), 0.0).rgb; }
         Li = b_em;
 
-        let b_mat_type = bitcast<u32>(b_tri.data0.w);
+        let b_mat_type = u32(b_tri.data0.w + 0.5);
         if b_mat_type != 3u && b_mat_type != 2u {
             let b_ls = sample_light_source(b_p, rng);
             if b_ls.pdf > 0.0 {
@@ -435,7 +435,7 @@ fn finalize_gi_reservoir(
     (*state).data2 = vec4(hit_p, m);
     let pn = pack_normal(normal);
     (*state).data3.x = pn.x; (*state).data3.y = pn.y;
-    (*state).data3.w = bitcast<f32>(mat_type);
+    (*state).data3.w = f32(mat_type);
     gi_reservoir[curr_res_idx] = *state;
 }
 
@@ -767,7 +767,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         let tri_idx = u32(hit.tri_idx);
         let inst_idx = u32(hit.inst_idx);
         let tri = topology[tri_idx];
-        let mat_type = bitcast<u32>(tri.data0.w);
+        let mat_type = u32(tri.data0.w + 0.5);
         
         // --- Geometry ---
         let inst = instances[inst_idx];
