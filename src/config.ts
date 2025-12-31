@@ -41,5 +41,9 @@ export const Config = {
     btnWorker: "btn-worker",
 
     statusDiv: "status",
+    uiToggleBtn: "ui-toggle-btn",
+    controlsPanel: "controls-panel",
   },
 };
+
+// --- WebGPU / RayTracing Config ---};

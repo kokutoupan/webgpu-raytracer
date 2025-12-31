@@ -25,6 +25,9 @@ export class UIManager {
 
   public statusDiv: HTMLDivElement;
 
+  public btnToggleUI: HTMLButtonElement;
+  public controlsPanel: HTMLDivElement;
+
   public statsDiv: HTMLDivElement;
 
   // Callbacks
@@ -66,6 +69,9 @@ export class UIManager {
     this.btnWorker = this.el<HTMLButtonElement>(Config.ids.btnWorker);
 
     this.statusDiv = this.el<HTMLDivElement>(Config.ids.statusDiv);
+
+    this.btnToggleUI = this.el<HTMLButtonElement>(Config.ids.uiToggleBtn);
+    this.controlsPanel = this.el<HTMLDivElement>(Config.ids.controlsPanel);
 
     this.statsDiv = this.createStatsDiv();
 
@@ -150,6 +156,10 @@ export class UIManager {
 
     this.btnHost.addEventListener("click", () => this.onConnectHost?.());
     this.btnWorker.addEventListener("click", () => this.onConnectWorker?.());
+
+    this.btnToggleUI.addEventListener("click", () => {
+      this.controlsPanel.classList.toggle("collapsed");
+    });
   }
 
   // --- Public API for updates ---

@@ -25,7 +25,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const H = "modulepreload", G = function(o) {
     return "/webgpu-raytracer/" + o;
-  }, P = {}, U = function(e, t, n) {
+  }, W = {}, U = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let d = function(l) {
@@ -41,8 +41,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       document.getElementsByTagName("link");
       const a = document.querySelector("meta[property=csp-nonce]"), c = (a == null ? void 0 : a.nonce) || (a == null ? void 0 : a.getAttribute("nonce"));
       r = d(t.map((l) => {
-        if (l = G(l), l in P) return;
-        P[l] = true;
+        if (l = G(l), l in W) return;
+        W[l] = true;
         const f = l.endsWith(".css"), p = f ? '[rel="stylesheet"]' : "";
         if (document.querySelector(`link[href="${l}"]${p}`)) return;
         const v = document.createElement("link");
@@ -1890,7 +1890,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
   }
-  const g = {
+  const _ = {
     defaultWidth: 720,
     defaultHeight: 480,
     defaultDepth: 10,
@@ -1918,7 +1918,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       recBatch: "rec-batch",
       btnHost: "btn-host",
       btnWorker: "btn-worker",
-      statusDiv: "status"
+      statusDiv: "status",
+      uiToggleBtn: "ui-toggle-btn",
+      controlsPanel: "controls-panel"
     }
   }, J = {
     iceServers: [
@@ -2185,7 +2187,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (this.ws) return;
       this.myRole = e, (_a = this.onStatusChange) == null ? void 0 : _a.call(this, `Connecting as ${e.toUpperCase()}...`);
       const t = "xWUaLfXQQkHZ9VmF";
-      this.ws = new WebSocket(`${g.signalingServerUrl}?token=${t}`), this.ws.onopen = () => {
+      this.ws = new WebSocket(`${_.signalingServerUrl}?token=${t}`), this.ws.onopen = () => {
         var _a2;
         if (console.log("WS Connected"), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, `Waiting for Peer (${e.toUpperCase()})`), e === "worker") {
           const n = sessionStorage.getItem("raytracer_session_id"), r = sessionStorage.getItem("raytracer_session_token");
@@ -2392,6 +2394,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "btnHost");
       __publicField(this, "btnWorker");
       __publicField(this, "statusDiv");
+      __publicField(this, "btnToggleUI");
+      __publicField(this, "controlsPanel");
       __publicField(this, "statsDiv");
       __publicField(this, "onRenderStart", null);
       __publicField(this, "onRenderStop", null);
@@ -2403,7 +2407,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       __publicField(this, "onRecordStart", null);
       __publicField(this, "onConnectHost", null);
       __publicField(this, "onConnectWorker", null);
-      this.canvas = this.el(g.ids.canvas), this.btnRender = this.el(g.ids.renderBtn), this.sceneSelect = this.el(g.ids.sceneSelect), this.inputWidth = this.el(g.ids.resWidth), this.inputHeight = this.el(g.ids.resHeight), this.inputFile = this.setupFileInput(), this.inputDepth = this.el(g.ids.maxDepth), this.inputSPP = this.el(g.ids.sppFrame), this.btnRecompile = this.el(g.ids.recompileBtn), this.inputUpdateInterval = this.el(g.ids.updateInterval), this.animSelect = this.el(g.ids.animSelect), this.btnRecord = this.el(g.ids.recordBtn), this.inputRecFps = this.el(g.ids.recFps), this.inputRecDur = this.el(g.ids.recDuration), this.inputRecSpp = this.el(g.ids.recSpp), this.inputRecBatch = this.el(g.ids.recBatch), this.btnHost = this.el(g.ids.btnHost), this.btnWorker = this.el(g.ids.btnWorker), this.statusDiv = this.el(g.ids.statusDiv), this.statsDiv = this.createStatsDiv(), this.bindEvents();
+      this.canvas = this.el(_.ids.canvas), this.btnRender = this.el(_.ids.renderBtn), this.sceneSelect = this.el(_.ids.sceneSelect), this.inputWidth = this.el(_.ids.resWidth), this.inputHeight = this.el(_.ids.resHeight), this.inputFile = this.setupFileInput(), this.inputDepth = this.el(_.ids.maxDepth), this.inputSPP = this.el(_.ids.sppFrame), this.btnRecompile = this.el(_.ids.recompileBtn), this.inputUpdateInterval = this.el(_.ids.updateInterval), this.animSelect = this.el(_.ids.animSelect), this.btnRecord = this.el(_.ids.recordBtn), this.inputRecFps = this.el(_.ids.recFps), this.inputRecDur = this.el(_.ids.recDuration), this.inputRecSpp = this.el(_.ids.recSpp), this.inputRecBatch = this.el(_.ids.recBatch), this.btnHost = this.el(_.ids.btnHost), this.btnWorker = this.el(_.ids.btnWorker), this.statusDiv = this.el(_.ids.statusDiv), this.btnToggleUI = this.el(_.ids.uiToggleBtn), this.controlsPanel = this.el(_.ids.controlsPanel), this.statsDiv = this.createStatsDiv(), this.bindEvents();
     }
     el(e) {
       const t = document.getElementById(e);
@@ -2411,7 +2415,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       return t;
     }
     setupFileInput() {
-      const e = this.el(g.ids.objFile);
+      const e = this.el(_.ids.objFile);
       return e && (e.accept = ".obj,.glb,.vrm"), e;
     }
     createStatsDiv() {
@@ -2440,7 +2444,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       });
       const e = () => {
         var _a;
-        return (_a = this.onResolutionChange) == null ? void 0 : _a.call(this, parseInt(this.inputWidth.value) || g.defaultWidth, parseInt(this.inputHeight.value) || g.defaultHeight);
+        return (_a = this.onResolutionChange) == null ? void 0 : _a.call(this, parseInt(this.inputWidth.value) || _.defaultWidth, parseInt(this.inputHeight.value) || _.defaultHeight);
       };
       this.inputWidth.addEventListener("change", e), this.inputHeight.addEventListener("change", e), this.btnRecompile.addEventListener("click", () => {
         var _a;
@@ -2462,6 +2466,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }), this.btnWorker.addEventListener("click", () => {
         var _a;
         return (_a = this.onConnectWorker) == null ? void 0 : _a.call(this);
+      }), this.btnToggleUI.addEventListener("click", () => {
+        this.controlsPanel.classList.toggle("collapsed");
       });
     }
     updateRenderButton(e) {
@@ -2492,15 +2498,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     getRenderConfig() {
       return {
-        width: parseInt(this.inputWidth.value, 10) || g.defaultWidth,
-        height: parseInt(this.inputHeight.value, 10) || g.defaultHeight,
+        width: parseInt(this.inputWidth.value, 10) || _.defaultWidth,
+        height: parseInt(this.inputHeight.value, 10) || _.defaultHeight,
         fps: parseInt(this.inputRecFps.value, 10) || 30,
         duration: parseFloat(this.inputRecDur.value) || 3,
         spp: parseInt(this.inputRecSpp.value, 10) || 64,
         batch: parseInt(this.inputRecBatch.value, 10) || 4,
         anim: parseInt(this.animSelect.value, 10) || 0,
-        maxDepth: parseInt(this.inputDepth.value, 10) || g.defaultDepth,
-        shaderSpp: parseInt(this.inputSPP.value, 10) || g.defaultSPP
+        maxDepth: parseInt(this.inputDepth.value, 10) || _.defaultDepth,
+        shaderSpp: parseInt(this.inputSPP.value, 10) || _.defaultSPP
       };
     }
     setRenderConfig(e) {
@@ -2731,33 +2737,33 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   let y = false, w = null, R = null, x = null;
-  const M = 20, u = new X(), _ = new N(u.canvas), h = new q(), B = new j(_, h, u.canvas), b = new V(), m = new Y(b, u), C = new K(b, _, u, B);
+  const M = 20, u = new X(), g = new N(u.canvas), h = new q(), B = new j(g, h, u.canvas), b = new V(), m = new Y(b, u), C = new K(b, g, u, B);
   C.onRemoteSceneLoad = async (o, e) => {
-    w = o, R = e, await T("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
+    w = o, R = e, await D("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
   };
-  let S = 0, A = 0, D = 0, I = performance.now();
+  let S = 0, A = 0, T = 0, I = performance.now();
   const Q = () => {
-    const o = parseInt(u.inputDepth.value, 10) || g.defaultDepth, e = parseInt(u.inputSPP.value, 10) || g.defaultSPP;
-    _.buildPipeline(o, e);
+    const o = parseInt(u.inputDepth.value, 10) || _.defaultDepth, e = parseInt(u.inputSPP.value, 10) || _.defaultSPP;
+    g.buildPipeline(o, e);
   }, E = () => {
     const { width: o, height: e } = u.getRenderConfig();
-    _.updateScreenSize(o, e), h.hasWorld && (h.updateCamera(o, e), _.updateSceneUniforms(h.cameraData, 0, h.lightCount)), _.recreateBindGroup(), _.resetAccumulation(), S = 0, A = 0;
-  }, T = async (o, e = true) => {
+    g.updateScreenSize(o, e), h.hasWorld && (h.updateCamera(o, e), g.updateSceneUniforms(h.cameraData, 0, h.lightCount)), g.recreateBindGroup(), g.resetAccumulation(), S = 0, A = 0;
+  }, D = async (o, e = true) => {
     y = false, console.log(`Loading Scene: ${o}...`);
     let t, n;
-    o === "viewer" && w && (R === "obj" ? t = w : R === "glb" && (n = new Uint8Array(w).slice(0))), await h.loadScene(o, t, n), h.printStats(), await _.loadTexturesFromWorld(h), await Z(), E(), u.updateAnimList(h.getAnimationList()), e && (y = true, u.updateRenderButton(true));
+    o === "viewer" && w && (R === "obj" ? t = w : R === "glb" && (n = new Uint8Array(w).slice(0))), await h.loadScene(o, t, n), h.printStats(), await g.loadTexturesFromWorld(h), await Z(), E(), u.updateAnimList(h.getAnimationList()), e && (y = true, u.updateRenderButton(true));
   }, Z = async () => {
-    _.updateCombinedGeometry(h.vertices, h.normals, h.uvs), _.updateCombinedBVH(h.tlas, h.blas), _.updateBuffer("topology", h.mesh_topology), _.updateBuffer("instance", h.instances), _.updateBuffer("lights", h.lights), _.updateSceneUniforms(h.cameraData, 0, h.lightCount), await _.device.queue.onSubmittedWorkDone();
-  }, W = () => {
-    if (B.recording || (requestAnimationFrame(W), !y || !h.hasWorld)) return;
+    g.updateCombinedGeometry(h.vertices, h.normals, h.uvs), g.updateCombinedBVH(h.tlas, h.blas), g.updateBuffer("topology", h.mesh_topology), g.updateBuffer("instance", h.instances), g.updateBuffer("lights", h.lights), g.updateSceneUniforms(h.cameraData, 0, h.lightCount), await g.device.queue.onSubmittedWorkDone();
+  }, P = () => {
+    if (B.recording || (requestAnimationFrame(P), !y || !h.hasWorld)) return;
     let o = parseInt(u.inputUpdateInterval.value, 10) || 0;
     if (o > 0 && S >= o && h.update(A / (o || 1) / 60), h.hasNewData) {
       let t = false;
-      t || (t = _.updateCombinedBVH(h.tlas, h.blas)), t || (t = _.updateBuffer("instance", h.instances)), h.hasNewGeometry && (t || (t = _.updateCombinedGeometry(h.vertices, h.normals, h.uvs)), t || (t = _.updateBuffer("topology", h.mesh_topology)), t || (t = _.updateBuffer("lights", h.lights)), h.hasNewGeometry = false), h.updateCamera(u.canvas.width, u.canvas.height), _.updateSceneUniforms(h.cameraData, 0, h.lightCount), t && _.recreateBindGroup(), _.resetAccumulation(), S = 0, h.hasNewData = false;
+      t || (t = g.updateCombinedBVH(h.tlas, h.blas)), t || (t = g.updateBuffer("instance", h.instances)), h.hasNewGeometry && (t || (t = g.updateCombinedGeometry(h.vertices, h.normals, h.uvs)), t || (t = g.updateBuffer("topology", h.mesh_topology)), t || (t = g.updateBuffer("lights", h.lights)), h.hasNewGeometry = false), h.updateCamera(u.canvas.width, u.canvas.height), g.updateSceneUniforms(h.cameraData, 0, h.lightCount), t && g.recreateBindGroup(), g.resetAccumulation(), S = 0, h.hasNewData = false;
     }
-    S++, D++, A++, _.compute(S), _.present();
+    S++, T++, A++, g.compute(S), g.present();
     const e = performance.now();
-    e - I >= 1e3 && (u.updateStats(D, 1e3 / D, S), D = 0, I = e);
+    e - I >= 1e3 && (u.updateStats(T, 1e3 / T, S), T = 0, I = e);
   };
   b.onStatusChange = (o) => u.setStatus(`Status: ${o}`);
   b.onWorkerStatus = async (o, e, t) => {
@@ -2774,11 +2780,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       y = true;
     }, u.onRenderStop = () => {
       y = false;
-    }, u.onSceneSelect = (o) => T(o, false), u.onResolutionChange = E, u.onRecompile = (o, e) => {
-      y = false, _.buildPipeline(o, e), _.recreateBindGroup(), _.resetAccumulation(), S = 0, y = true;
+    }, u.onSceneSelect = (o) => D(o, false), u.onResolutionChange = E, u.onRecompile = (o, e) => {
+      y = false, g.buildPipeline(o, e), g.recreateBindGroup(), g.resetAccumulation(), S = 0, y = true;
     }, u.onFileSelect = async (o) => {
       var _a;
-      ((_a = o.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await o.text(), R = "obj") : (w = await o.arrayBuffer(), R = "glb"), u.sceneSelect.value = "viewer", T("viewer", false);
+      ((_a = o.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await o.text(), R = "obj") : (w = await o.arrayBuffer(), R = "glb"), u.sceneSelect.value = "viewer", D("viewer", false);
     }, u.onAnimSelect = (o) => h.setAnimation(o), u.onRecordStart = async () => {
       if (!B.recording) if (x === "host") {
         const o = b.getWorkerIds();
@@ -2807,7 +2813,7 @@ Auto Scene Sync enabled.`)) return;
         } catch {
           alert("Recording failed.");
         } finally {
-          u.setRecordingState(false), y = false, u.updateRenderButton(false), requestAnimationFrame(W);
+          u.setRecordingState(false), y = false, u.updateRenderButton(false), requestAnimationFrame(P);
         }
       }
     }, u.onConnectHost = () => {
@@ -2818,12 +2824,12 @@ Auto Scene Sync enabled.`)) return;
   };
   async function te() {
     try {
-      await _.init(), await h.initWasm();
+      await g.init(), await h.initWasm();
     } catch (o) {
       alert("Init failed: " + o);
       return;
     }
-    ee(), Q(), E(), T("cornell", false), requestAnimationFrame(W);
+    ee(), Q(), E(), D("cornell", false), requestAnimationFrame(P);
   }
   te().catch(console.error);
 })();

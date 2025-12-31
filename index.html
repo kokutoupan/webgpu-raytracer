@@ -19,21 +19,83 @@
         overflow: hidden;
       }
 
-      /* --- 操作パネル --- */
-      .controls {
+      /* --- UI Overlay Container --- */
+      .ui-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* --- ヘッダー (常に表示) --- */
+      .ui-header {
+        width: 100%;
+        height: 40px;
+        background: rgba(34, 34, 34, 0.95);
+        color: #eee;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 10px;
+        box-sizing: border-box;
+        border-bottom: 1px solid #555;
         flex-shrink: 0;
+      }
+
+      .ui-header .title {
+        font-weight: bold;
+        font-size: 1.1rem;
+      }
+
+      /* トグルボタン */
+      #ui-toggle-btn {
+        background: none;
+        border: none;
+        color: #ddd;
+        font-size: 1.5rem;
+        cursor: pointer;
+        padding: 5px;
+        line-height: 1;
+        transition: transform 0.2s;
+      }
+      #ui-toggle-btn:hover {
+        color: #fff;
+      }
+      #ui-toggle-btn.active {
+        transform: rotate(180deg);
+      }
+
+      /* --- 操作パネル本体 (折りたたみ対象) --- */
+      .controls-body {
+        width: 100%;
+        background: rgba(34, 34, 34, 0.9);
+        border-bottom: 1px solid #444;
+        box-sizing: border-box;
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
         justify-content: center;
         padding: 10px;
-        background: #222;
-        border-bottom: 1px solid #444;
-        z-index: 10;
-        box-sizing: border-box;
-        width: 100%;
+        
+        /* 折りたたみアニメーション */
+        overflow: hidden;
+        max-height: 500px; /* 十分な高さ */
+        opacity: 1;
+        transition: max-height 0.3s ease-out, opacity 0.3s ease-out, padding 0.3s ease;
       }
+
+      .controls-body.collapsed {
+        max-height: 0;
+        opacity: 0;
+        padding: 0 10px; /* 横パディング維持、縦0 */
+        border-bottom: none;
+      }
+
+
 
       .group {
         display: flex;
@@ -142,7 +204,13 @@
   </head>
 
   <body>
-    <div class="controls">
+    <div class="ui-overlay">
+      <div class="ui-header">
+        <div class="title">WebGPU Raytracer</div>
+        <button id="ui-toggle-btn" title="Toggle UI">☰</button>
+      </div>
+      
+      <div class="controls-body" id="controls-panel">
       <div class="title">WebGPU Tracer</div>
 
 
@@ -274,7 +342,8 @@
 
 
       <button id="render-btn">Render Start</button>
-    </div>
+      </div> <!-- End controls-body -->
+    </div> <!-- End ui-overlay -->
 
     <div class="canvas-wrapper">
       <canvas id="gpu-canvas" width="720" height="480"></canvas>
