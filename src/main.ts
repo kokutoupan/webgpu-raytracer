@@ -15,7 +15,7 @@ let currentFileType: "obj" | "glb" | null = null;
 let currentRole: "host" | "worker" | null = null;
 
 // --- Worker State ---
-const BATCH_SIZE = 20;
+// const BATCH_SIZE = 20; // Replaced by UI config
 
 // --- Modules ---
 const ui = new UIManager();
@@ -288,8 +288,10 @@ const bindEvents = () => {
       dHost.completedJobs = 0;
       dHost.activeJobs.clear();
 
-      for (let f = 0; f < totalFrames; f += BATCH_SIZE) {
-        const count = Math.min(BATCH_SIZE, totalFrames - f);
+      const batchSize = dHost.distributedConfig.jobBatch || 20;
+
+      for (let f = 0; f < totalFrames; f += batchSize) {
+        const count = Math.min(batchSize, totalFrames - f);
         dHost.jobQueue.push({ start: f, count });
       }
       dHost.totalJobs = dHost.jobQueue.length;

@@ -35,6 +35,7 @@ export const Config = {
     recDuration: "rec-duration",
     recSpp: "rec-spp",
     recBatch: "rec-batch",
+    distJobBatch: "dist-batch",
 
     // Network UI
     btnHost: "btn-host",
