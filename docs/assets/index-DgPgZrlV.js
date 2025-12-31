@@ -1611,7 +1611,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function F(o) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-D4DQfpKg.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-F7UQU8rh.js", {
       name: o == null ? void 0 : o.name
     });
   }
@@ -2732,16 +2732,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let w = false, y = null, x = null, S = null;
   const M = 20, u = new X(), _ = new N(u.canvas), h = new q(), B = new j(_, h, u.canvas), b = new V(), m = new Y(b, u), C = new K(b, _, u, B);
   C.onRemoteSceneLoad = async (o, e) => {
-    y = o, x = e, await D("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
+    y = o, x = e, await T("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
   };
-  let R = 0, A = 0, T = 0, I = performance.now();
+  let R = 0, A = 0, D = 0, I = performance.now();
   const Q = () => {
     const o = parseInt(u.inputDepth.value, 10) || g.defaultDepth, e = parseInt(u.inputSPP.value, 10) || g.defaultSPP;
     _.buildPipeline(o, e);
   }, E = () => {
     const { width: o, height: e } = u.getRenderConfig();
     _.updateScreenSize(o, e), h.hasWorld && (h.updateCamera(o, e), _.updateSceneUniforms(h.cameraData, 0, h.lightCount)), _.recreateBindGroup(), _.resetAccumulation(), R = 0, A = 0;
-  }, D = async (o, e = true) => {
+  }, T = async (o, e = true) => {
     w = false, console.log(`Loading Scene: ${o}...`);
     let t, n;
     o === "viewer" && y && (x === "obj" ? t = y : x === "glb" && (n = new Uint8Array(y).slice(0))), await h.loadScene(o, t, n), h.printStats(), await _.loadTexturesFromWorld(h), await Z(), E(), u.updateAnimList(h.getAnimationList()), e && (w = true, u.updateRenderButton(true));
@@ -2754,9 +2754,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let t = false;
       t || (t = _.updateCombinedBVH(h.tlas, h.blas)), t || (t = _.updateBuffer("instance", h.instances)), h.hasNewGeometry && (t || (t = _.updateCombinedGeometry(h.vertices, h.normals, h.uvs)), t || (t = _.updateBuffer("topology", h.mesh_topology)), t || (t = _.updateBuffer("lights", h.lights)), h.hasNewGeometry = false), h.updateCamera(u.canvas.width, u.canvas.height), _.updateSceneUniforms(h.cameraData, 0, h.lightCount), t && _.recreateBindGroup(), _.resetAccumulation(), R = 0, h.hasNewData = false;
     }
-    R++, T++, A++, _.compute(R), _.present();
+    R++, D++, A++, _.compute(R), _.present();
     const e = performance.now();
-    e - I >= 1e3 && (u.updateStats(T, 1e3 / T, R), T = 0, I = e);
+    e - I >= 1e3 && (u.updateStats(D, 1e3 / D, R), D = 0, I = e);
   };
   b.onStatusChange = (o) => u.setStatus(`Status: ${o}`);
   b.onWorkerStatus = async (o, e, t) => {
@@ -2766,18 +2766,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     await m.onRenderResult(o, e, t) === "ALL_COMPLETE" && (console.log("[Host] All jobs complete. Muxing and downloading..."), u.setStatus("Muxing..."), await m.muxAndDownload());
   };
   b.onSceneReceived = async (o, e) => {
-    console.log("[Worker] Received Scene from Host."), await C.onSceneReceived(o, e), x = e.fileType, e.fileType, y = o, u.sceneSelect.value = e.sceneName || "viewer", await D(e.sceneName || "viewer", false), e.anim !== void 0 && (u.animSelect.value = e.anim.toString(), h.setAnimation(e.anim)), C.isDistributedSceneLoaded = true, C.isSceneLoading = false, console.log("[Worker] Distributed Scene Loaded. Signaling Host."), await b.sendSceneLoaded(), C.handlePendingRenderRequest();
+    console.log("[Worker] Received Scene from Host."), await C.onSceneReceived(o, e), x = e.fileType, e.fileType, y = o, u.sceneSelect.value = e.sceneName || "viewer", await T(e.sceneName || "viewer", false), e.anim !== void 0 && (u.animSelect.value = e.anim.toString(), h.setAnimation(e.anim)), C.isDistributedSceneLoaded = true, C.isSceneLoading = false, console.log("[Worker] Distributed Scene Loaded. Signaling Host."), await b.sendSceneLoaded(), C.handlePendingRenderRequest();
   };
   const ee = () => {
     u.onRenderStart = () => {
       w = true;
     }, u.onRenderStop = () => {
       w = false;
-    }, u.onSceneSelect = (o) => D(o, false), u.onResolutionChange = E, u.onRecompile = (o, e) => {
+    }, u.onSceneSelect = (o) => T(o, false), u.onResolutionChange = E, u.onRecompile = (o, e) => {
       w = false, _.buildPipeline(o, e), _.recreateBindGroup(), _.resetAccumulation(), R = 0, w = true;
     }, u.onFileSelect = async (o) => {
       var _a;
-      ((_a = o.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (y = await o.text(), x = "obj") : (y = await o.arrayBuffer(), x = "glb"), u.sceneSelect.value = "viewer", D("viewer", false);
+      ((_a = o.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (y = await o.text(), x = "obj") : (y = await o.arrayBuffer(), x = "glb"), u.sceneSelect.value = "viewer", T("viewer", false);
     }, u.onAnimSelect = (o) => h.setAnimation(o), u.onRecordStart = async () => {
       if (!B.recording) if (S === "host") {
         const o = b.getWorkerIds();
@@ -2822,7 +2822,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + o);
       return;
     }
-    ee(), Q(), E(), D("cornell", false), requestAnimationFrame(W);
+    ee(), Q(), E(), T("cornell", false), requestAnimationFrame(W);
   }
   te().catch(console.error);
 })();
