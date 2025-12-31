@@ -212,12 +212,9 @@ signaling.onSceneReceived = async (data, config) => {
   console.log("[Worker] Received Scene from Host.");
   await dWorker.onSceneReceived(data, config);
 
-  currentFileType = config.fileType;
-  if (config.fileType === "obj") currentFileData = data as string;
-  else currentFileData = data as ArrayBuffer;
-
   ui.sceneSelect.value = config.sceneName || "viewer";
-  await loadScene(config.sceneName || "viewer", false);
+  // Redundant loadScene removed. Scene is loaded inside dWorker.onSceneReceived via callback.
+  // await loadScene(config.sceneName || "viewer", false);
 
   if (config.anim !== undefined) {
     ui.animSelect.value = config.anim.toString();

@@ -203,6 +203,9 @@ export class DistributedWorker {
     if (this.onRemoteSceneLoad) {
       // Cast fileType because config is RenderConfig which has "obj"|"glb"
       await this.onRemoteSceneLoad(data, config.fileType || "obj");
+
+      // Sync Wait: Prevent "black frame" by giving WASM memory time to settle / message loop to clear
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     this.isSceneLoading = false;
@@ -210,10 +213,14 @@ export class DistributedWorker {
     this.signaling.sendSceneLoaded();
 
     // Now that scene is loaded, check for pending jobs
+    // REMOVED: handlePendingRenderRequest() is called by main.ts AFTER setting animation/camera.
+    // Calling it here causes "First frame default animation" issue because SetAnimation hasn't run yet.
+    /*
     if (this.pendingRenderRequest) {
       console.log("[Worker] Found pending render request. Executing now.");
       this.handlePendingRenderRequest();
     }
+    */
 
     return { data, config };
   }

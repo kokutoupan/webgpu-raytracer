@@ -157,6 +157,18 @@ export class VideoRecorder {
     this.worldBridge.update(startFrame / config.fps);
     await this.worldBridge.waitForNextUpdate();
 
+    // --- Warmup Phase ---
+    // Render Frame 0 multiple times to satisfy TAA history and settle pipeline.
+    // This primes the history buffer with the correct Animated Frame 0, removing ghosting (T-pose) and darkness.
+    await this.updateSceneBuffers();
+    for (let k = 0; k < 5; k++) {
+      this.renderer.compute(k);
+      this.renderer.present(); // Write to History
+      await this.renderer.device.queue.onSubmittedWorkDone();
+      this.renderer.resetAccumulation();
+    }
+    // --------------------
+
     for (let i = 0; i < totalFrames; i++) {
       if (abortSignal?.aborted) throw new Error("Aborted");
       onProgress(i, totalFrames);
