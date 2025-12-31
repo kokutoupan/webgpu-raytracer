@@ -35,11 +35,16 @@ export const Config = {
     recDuration: "rec-duration",
     recSpp: "rec-spp",
     recBatch: "rec-batch",
+    distJobBatch: "dist-batch",
 
     // Network UI
     btnHost: "btn-host",
     btnWorker: "btn-worker",
 
     statusDiv: "status",
+    uiToggleBtn: "ui-toggle-btn",
+    controlsPanel: "controls-panel",
   },
 };
+
+// --- WebGPU / RayTracing Config ---};

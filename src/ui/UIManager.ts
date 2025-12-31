@@ -17,13 +17,17 @@ export class UIManager {
   public btnRecord: HTMLButtonElement;
   public inputRecFps: HTMLInputElement;
   public inputRecDur: HTMLInputElement;
-  public inputRecSpp: HTMLInputElement; // Fixed type name conflict if any
+  public inputRecSpp: HTMLInputElement;
   public inputRecBatch: HTMLInputElement;
+  public inputDistJobBatch: HTMLInputElement;
 
   public btnHost: HTMLButtonElement;
   public btnWorker: HTMLButtonElement;
 
   public statusDiv: HTMLDivElement;
+
+  public btnToggleUI: HTMLButtonElement;
+  public controlsPanel: HTMLDivElement;
 
   public statsDiv: HTMLDivElement;
 
@@ -61,11 +65,15 @@ export class UIManager {
     this.inputRecDur = this.el<HTMLInputElement>(Config.ids.recDuration);
     this.inputRecSpp = this.el<HTMLInputElement>(Config.ids.recSpp);
     this.inputRecBatch = this.el<HTMLInputElement>(Config.ids.recBatch);
+    this.inputDistJobBatch = this.el<HTMLInputElement>(Config.ids.distJobBatch);
 
     this.btnHost = this.el<HTMLButtonElement>(Config.ids.btnHost);
     this.btnWorker = this.el<HTMLButtonElement>(Config.ids.btnWorker);
 
     this.statusDiv = this.el<HTMLDivElement>(Config.ids.statusDiv);
+
+    this.btnToggleUI = this.el<HTMLButtonElement>(Config.ids.uiToggleBtn);
+    this.controlsPanel = this.el<HTMLDivElement>(Config.ids.controlsPanel);
 
     this.statsDiv = this.createStatsDiv();
 
@@ -150,6 +158,10 @@ export class UIManager {
 
     this.btnHost.addEventListener("click", () => this.onConnectHost?.());
     this.btnWorker.addEventListener("click", () => this.onConnectWorker?.());
+
+    this.btnToggleUI.addEventListener("click", () => {
+      this.controlsPanel.classList.toggle("collapsed");
+    });
   }
 
   // --- Public API for updates ---
@@ -231,8 +243,9 @@ export class UIManager {
       height: parseInt(this.inputHeight.value, 10) || Config.defaultHeight,
       fps: parseInt(this.inputRecFps.value, 10) || 30,
       duration: parseFloat(this.inputRecDur.value) || 3.0,
-      spp: parseInt(this.inputRecSpp.value, 10) || 64, // Corrected property name
+      spp: parseInt(this.inputRecSpp.value, 10) || 64,
       batch: parseInt(this.inputRecBatch.value, 10) || 4,
+      jobBatch: parseInt(this.inputDistJobBatch.value, 10) || 20,
       anim: parseInt(this.animSelect.value, 10) || 0,
       maxDepth: parseInt(this.inputDepth.value, 10) || Config.defaultDepth,
       shaderSpp: parseInt(this.inputSPP.value, 10) || Config.defaultSPP,
@@ -246,13 +259,16 @@ export class UIManager {
     duration: number;
     spp: number;
     batch: number;
+    jobBatch?: number;
   }) {
     this.inputWidth.value = config.width.toString();
     this.inputHeight.value = config.height.toString();
     this.inputRecFps.value = config.fps.toString();
     this.inputRecDur.value = config.duration.toString();
-    this.inputRecSpp.value = config.spp.toString(); // Corrected property name
+    this.inputRecSpp.value = config.spp.toString();
     this.inputRecBatch.value = config.batch.toString();
+    if (config.jobBatch !== undefined)
+      this.inputDistJobBatch.value = config.jobBatch.toString();
     if ((config as any).maxDepth !== undefined)
       this.inputDepth.value = (config as any).maxDepth.toString();
     if ((config as any).shaderSpp !== undefined)

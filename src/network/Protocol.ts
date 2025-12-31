@@ -43,6 +43,7 @@ export type RenderConfig = {
   duration: number;
   spp: number; // RecのSPP
   batch: number; // RecのBatch
+  jobBatch?: number; // Distributed Job Size
   fileType: "obj" | "glb"; // ファイル形式
   anim: number; // Animation Index
   sceneName?: string; // For procedural scenes (e.g. "cornell_box")
