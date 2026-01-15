@@ -361,7 +361,7 @@ fn generate_initial_gi_candidate(
             let b_ls = sample_light_source(b_p, rng);
             if b_ls.pdf > 0.0 {
                 let b_sr = Ray(b_p + b_normal * 1e-4, b_ls.dir);
-                if intersect_tlas(b_sr, T_MIN, b_ls.dist - 2e-4).inst_idx == -1 {
+                if !intersect_tlas_shadow(b_sr, T_MIN, b_ls.dist - 2e-4) {
                     var b_alb = b_tri.data0.rgb;
                     if b_tri.data2.x > -0.5 { b_alb *= textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.x), 0.0).rgb; }
                     Li += eval_diffuse(b_alb) * b_ls.L * max(dot(b_normal, b_ls.dir), 0.0) / b_ls.pdf;
@@ -743,6 +743,121 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     return res;
 }
 
+// shadow ray版
+// シャドウレイ用のBLAS交差判定（ヒットしたら即trueを返す）
+fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> bool {
+    let inv_d = 1.0 / r.direction;
+    var stack: array<u32, 32>;
+    var stackptr = 0u;
+
+    // ルートAABB判定（ここは同じ）
+    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r.origin, inv_d, t_min, t_max) < T_MAX {
+        stack[0] = node_start_idx;
+        stackptr = 1u;
+    }
+
+    while stackptr > 0u {
+        stackptr--;
+        let idx = stack[stackptr];
+        let node = nodes[idx];
+        let count = u32(node.max_b.w);
+
+        if count > 0u {
+            // 葉ノード処理
+            let first = u32(node.min_b.w);
+            for (var i = 0u; i < count; i++) {
+                let tri_id = first + i;
+                let tr = topology[tri_id];
+                // 【重要】ヒットしたら即 return true
+                let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, t_max);
+                if t > 0.0 { 
+                    // ※アルファテスト（透過テクスチャ）がある場合はここでテクスチャを参照して
+                    // 透明なら continue する処理が必要ですが、不透明なら即リターンでOK
+                    return true; 
+                }
+            }
+        } else {
+            // 内部ノード処理
+            let l = u32(node.min_b.w) + node_start_idx;
+            let r_idx = l + 1u;
+            
+            // t_max は縮まないので固定値で判定
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, t_max);
+
+            // 近い順にスタックに積む（近い方が早くヒットして早くreturnできる可能性が高いため）
+            if dl < T_MAX && dr < T_MAX {
+                if dl < dr {
+                    stack[stackptr] = r_idx;
+                    stack[stackptr + 1u] = l;
+                } else {
+                    stack[stackptr] = l;
+                    stack[stackptr + 1u] = r_idx;
+                }
+                stackptr += 2u;
+            } else if dl < T_MAX {
+                stack[stackptr] = l;
+                stackptr++;
+            } else if dr < T_MAX {
+                stack[stackptr] = r_idx;
+                stackptr++;
+            }
+        }
+    }
+    return false;
+}
+
+// シャドウレイ用のTLAS交差判定
+fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
+    if scene.blas_base_idx == 0u { return false; }
+
+    let inv_d = 1.0 / r.direction;
+    var stack: array<u32, 16>;
+    var stackptr = 0u;
+
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, t_max) < T_MAX {
+        stack[0] = 0u;
+        stackptr = 1u;
+    }
+
+    while stackptr > 0u {
+        stackptr--;
+        let node = nodes[stack[stackptr]];
+
+        if node.max_b.w > 0.5 { // Leaf (Instance)
+            let inst_idx = u32(node.min_b.w);
+            let inst = instances[inst_idx];
+            
+            // レイをローカル座標へ変換
+            let r_local = Ray(
+                (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
+                (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
+            );
+            
+            // BLASもシャドウ用関数を呼ぶ
+            // 【重要】ここでもBLASがtrueを返したら即 return true
+            if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) {
+                return true;
+            }
+        } else {
+            // 内部ノード処理（通常版とほぼ同じだが、closest_tを使わず固定のt_maxを使う）
+            let l = u32(node.min_b.w);
+            let r_idx = l + 1u;
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, t_max);
+
+            if dl < T_MAX && dr < T_MAX {
+                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } 
+                else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
+                stackptr += 2u;
+            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } 
+            else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
+        }
+    }
+    return false;
+}
+
+
 // =========================================================
 //   Main Path Tracer Loop
 // =========================================================
@@ -848,7 +963,8 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         if !is_specular && mat_type != 2u {
             let light_s = sample_light_source(hit_p, rng);
             if light_s.pdf > 0.0 {
-                if intersect_tlas(Ray(hit_p + normal * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4).inst_idx == -1 {
+                // shadow ray
+                if !intersect_tlas_shadow(Ray(hit_p + normal * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
                     var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
                     if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
                         bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
