@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebGPU Ray Tracing</title>
+    <link rel="icon" href="/assets/favicon-BCbwk0Q3.ico" />
+    <style>
+      /* --- レイアウト全体設定 --- */
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #111;
+        color: #eee;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* --- UI Overlay Container --- */
+      .ui-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* --- ヘッダー (常に表示) --- */
+      .ui-header {
+        width: 100%;
+        height: 40px;
+        background: rgba(34, 34, 34, 0.95);
+        color: #eee;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 10px;
+        box-sizing: border-box;
+        border-bottom: 1px solid #555;
+        flex-shrink: 0;
+      }
+
+      .ui-header .title {
+        font-weight: bold;
+        font-size: 1.1rem;
+      }
+
+      .header-controls {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+      }
+
+      .github-link {
+        color: #ddd;
+        display: flex;
+        align-items: center;
+        transition: color 0.2s;
+        text-decoration: none;
+      }
+      .github-link:hover {
+        color: #fff;
+      }
+      .github-link svg {
+        width: 24px;
+        height: 24px;
+        fill: currentColor;
+      }
+
+      /* トグルボタン */
+      #ui-toggle-btn {
+        background: none;
+        border: none;
+        color: #ddd;
+        font-size: 1.5rem;
+        cursor: pointer;
+        padding: 5px;
+        line-height: 1;
+        transition: transform 0.2s;
+      }
+      #ui-toggle-btn:hover {
+        color: #fff;
+      }
+      #ui-toggle-btn.active {
+        transform: rotate(180deg);
+      }
+
+      /* --- 操作パネル本体 (折りたたみ対象) --- */
+      .controls-body {
+        width: 100%;
+        background: rgba(34, 34, 34, 0.9);
+        border-bottom: 1px solid #444;
+        box-sizing: border-box;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: center;
+        padding: 10px;
+        
+        /* 折りたたみアニメーション */
+        overflow: hidden;
+        max-height: 500px; /* 十分な高さ */
+        opacity: 1;
+        transition: max-height 0.3s ease-out, opacity 0.3s ease-out, padding 0.3s ease;
+      }
+
+      .controls-body.collapsed {
+        max-height: 0;
+        opacity: 0;
+        padding: 0 10px; /* 横パディング維持、縦0 */
+        border-bottom: none;
+      }
+
+
+
+      .group {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 5px;
+        background: #333;
+        padding: 5px 8px;
+        border-radius: 4px;
+        border: 1px solid #555;
+        justify-content: center;
+      }
+
+      button,
+      select,
+      input {
+        padding: 8px 10px;
+        font-size: 0.9rem;
+        border-radius: 4px;
+        border: none;
+        outline: none;
+      }
+
+      button {
+        background: #4caf50;
+        color: white;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      button:hover {
+        background: #45a049;
+      }
+
+      button#recompile-btn {
+        background: #2196f3;
+      }
+
+      button#recompile-btn:hover {
+        background: #1976d2;
+      }
+
+      /* ファイル選択ボタン */
+      .file-btn {
+        display: inline-block;
+        padding: 8px 12px;
+        background: #ff9800;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        white-space: nowrap;
+      }
+
+      .file-btn:hover {
+        background: #f57c00;
+      }
+
+      select,
+      input {
+        background: #444;
+        color: white;
+        border: 1px solid #666;
+      }
+
+      input[type="number"] {
+        width: 55px;
+        text-align: right;
+      }
+
+      .label {
+        color: #aaa;
+        margin-right: 3px;
+        font-size: 0.85rem;
+        white-space: nowrap;
+      }
+
+      .title {
+        font-weight: bold;
+        margin-right: 5px;
+        white-space: nowrap;
+      }
+
+      .canvas-wrapper {
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        position: relative;
+      }
+
+      canvas {
+        display: block;
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        image-rendering: pixelated;
+        box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-B-ae3cct.js"></script>
+  </head>
+
+  <body>
+    <div class="ui-overlay">
+      <div class="ui-header">
+        <div class="title">WebGPU Raytracer</div>
+        <div class="header-controls">
+          <a href="https://github.com/kokutoupan/webgpu-raytracer" target="_blank" class="github-link" title="View on GitHub">
+            <svg viewBox="0 0 98 96" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z"/></svg>
+          </a>
+          <button id="ui-toggle-btn" title="Toggle UI">☰</button>
+        </div>
+      </div>
+      
+      <div class="controls-body" id="controls-panel">
+
+
+      <div>
+        <select id="scene-select">
+          <option value="cornell">Cornell Box</option>
+          <option value="spheres">Random Spheres</option>
+          <option value="mixed">Mixed Scene</option>
+          <option value="special">Special Box</option>
+          <option value="mesh">Mesh Scene</option>
+          <option value="viewer">Obj Viewer Scene</option>
+        </select>
+      </div>
+
+      <div class="group">
+        <label for="obj-file" class="file-btn">📂 Model</label>
+        <input
+          type="file"
+          id="obj-file"
+          accept=".obj,.glb,.vrm"
+          style="display: none"
+        />
+      </div>
+
+      <div class="group">
+        <span class="label">Anim:</span>
+        <select id="anim-select" style="max-width: 120px"></select>
+      </div>
+
+      <div class="group">
+        <span class="label">Res:</span>
+        <input
+          id="res-width"
+          type="number"
+          value="720"
+          step="10"
+          min="10"
+          style="width: 50px"
+        />
+        <span class="label">x</span>
+        <input
+          id="res-height"
+          type="number"
+          value="480"
+          step="10"
+          min="10"
+          style="width: 50px"
+        />
+      </div>
+
+      <div class="group" style="border-color: #2196f3">
+        <span class="label">RT Config:</span>
+        <span class="label">Depth</span>
+        <input
+          id="max-depth"
+          type="number"
+          value="10"
+          min="1"
+          max="50"
+          style="width: 40px"
+        />
+        <span class="label">SPP</span>
+        <input
+          id="spp-frame"
+          type="number"
+          value="1"
+          min="1"
+          max="100"
+          style="width: 40px"
+        />
+        <span class="label">Intv:</span>
+        <input
+          id="update-interval"
+          type="number"
+          value="4"
+          min="0"
+          step="1"
+          style="width: 40px"
+        />
+        <button id="recompile-btn" title="Recompile Shader">Update</button>
+      </div>
+
+      <div class="group" style="border-color: #9c27b0; display: flex; align-items: center;">
+         <button id="btn-host">Host</button>
+         <button id="btn-worker">Worker</button>
+
+         <span id="status" style="font-size: 0.8rem; margin-left: 5px; color: #ccc;">Offline</span>
+      </div>
+
+      <div class="group" style="border-color: #e91e63">
+        <span class="label">Rec:</span>
+        <input
+          id="rec-fps"
+          type="number"
+          value="30"
+          title="FPS"
+          style="width: 40px"
+        />
+        <span class="label">fps</span>
+        <input
+          id="rec-duration"
+          type="number"
+          value="3"
+          step="0.1"
+          title="Duration (sec)"
+          style="width: 40px"
+        />
+        <span class="label">sec</span>
+        <span class="label" style="margin-left: 5px">SPP:</span>
+        <input
+          id="rec-spp"
+          type="number"
+          value="64"
+          title="Samples per Frame"
+          style="width: 45px"
+        />
+        <span class="label">Batch:</span>
+        <input
+          id="rec-batch"
+          type="number"
+          value="4"
+          title="Render Batch Size"
+          style="width: 40px"
+        />
+
+        <span class="label">Job:</span>
+        <input
+          id="dist-batch"
+          type="number"
+          value="20"
+          title="Distributed Job Batch Size"
+          style="width: 40px"
+        />
+
+        <button id="record-btn" style="background: #e91e63">● Rec</button>
+      </div>
+
+
+
+      <button id="render-btn">Render Start</button>
+      </div> <!-- End controls-body -->
+    </div> <!-- End ui-overlay -->
+
+    <div class="canvas-wrapper">
+      <canvas id="gpu-canvas" width="720" height="480"></canvas>
+    </div>
+
+  </body>
+</html>
