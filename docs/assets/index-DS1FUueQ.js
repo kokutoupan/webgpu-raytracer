@@ -24,7 +24,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
   })();
   const U = "modulepreload", H = function(o) {
-    return "/" + o;
+    return "/webgpu-raytracer/" + o;
   }, W = {}, I = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
@@ -1783,7 +1783,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function N(o) {
-    return new Worker("/assets/wasm-worker-BfCnH_f7.js", {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-BDW00Zsd.js", {
       name: o == null ? void 0 : o.name
     });
   }
@@ -2068,6 +2068,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     defaultDepth: 10,
     defaultSPP: 1,
     signalingServerUrl: "ws://localhost:8080",
+    rtcConfig: {
+      iceServers: JSON.parse('[{"urls": "stun:stun.l.google.com:19302"}]')
+    },
     ids: {
       canvas: "gpu-canvas",
       renderBtn: "render-btn",

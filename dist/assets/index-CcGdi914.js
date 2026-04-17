@@ -23,8 +23,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       fetch(r.href, s);
     }
   })();
-  const z = "modulepreload", H = function(o) {
-    return "/webgpu-raytracer/" + o;
+  const U = "modulepreload", H = function(o) {
+    return "/" + o;
   }, W = {}, I = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
@@ -45,9 +45,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         W[l] = true;
         const _ = l.endsWith(".css"), p = _ ? '[rel="stylesheet"]' : "";
         if (document.querySelector(`link[href="${l}"]${p}`)) return;
-        const m = document.createElement("link");
-        if (m.rel = _ ? "stylesheet" : z, _ || (m.as = "script"), m.crossOrigin = "", m.href = l, c && m.setAttribute("nonce", c), document.head.appendChild(m), _) return new Promise((k, U) => {
-          m.addEventListener("load", k), m.addEventListener("error", () => U(new Error(`Unable to preload CSS for ${l}`)));
+        const v = document.createElement("link");
+        if (v.rel = _ ? "stylesheet" : U, _ || (v.as = "script"), v.crossOrigin = "", v.href = l, c && v.setAttribute("nonce", c), document.head.appendChild(v), _) return new Promise((k, z) => {
+          v.addEventListener("load", k), v.addEventListener("error", () => z(new Error(`Unable to preload CSS for ${l}`)));
         });
       }));
     }
@@ -318,11 +318,9 @@ fn get_reservoir_offsets(pixel_idx: u32) -> vec2<u32> {
 
 // \u30BF\u30FC\u30B2\u30C3\u30C8\u95A2\u6570 p_hat (\u8F1D\u5EA6\u30D9\u30FC\u30B9 + BSDF\u8FD1\u4F3C)
 fn evaluate_p_hat(radiance: vec3<f32>, albedo: vec3<f32>, cos_theta: f32) -> f32 {
-    // \u8F1D\u5EA6(Luminance)\u3092\u5B9F\u8CEA\u7684\u306A\u5BC4\u4E0E(radiance * albedo * cos)\u3067\u8A55\u4FA1
-    let contribution = radiance * albedo * cos_theta;
-    
-    // [Firefly\u5BFE\u7B56] \u975E\u5E38\u306B\u9AD8\u3044\u8F1D\u5EA6\u3092\u30AF\u30E9\u30F3\u30D7\u3057\u3066\u3001\u7279\u5B9A\u306E\u30B5\u30F3\u30D7\u30EB\u304C\u30EA\u30B6\u30FC\u30D0\u3092\u652F\u914D\u3057\u7D9A\u3051\u306A\u3044\u3088\u3046\u306B\u3059\u308B
-    let clamped_contribution = min(contribution, vec3(50.0));
+    let brdf = albedo / PI;
+    let contribution = radiance * brdf * cos_theta;
+    let clamped_contribution = contribution;
     return dot(clamped_contribution, vec3(0.2126, 0.7152, 0.0722));
 }
 
@@ -402,6 +400,12 @@ fn generate_initial_gi_candidate(
         let b_pos2 = get_pos(b_tri.v2);
         let b_r_local = Ray((b_inv * vec4(bounce_ray.origin, 1.)).xyz, (b_inv * vec4(bounce_ray.direction, 0.)).xyz);
         let b_e1 = b_pos1 - b_pos0; let b_e2 = b_pos2 - b_pos0;
+        
+        let b_local_geom_n = normalize(cross(b_e1, b_e2));
+        var b_world_geom_n = normalize((vec4(b_local_geom_n, 0.0) * b_inv).xyz);
+        // \u88CF\u9762\u304B\u3089\u5F53\u305F\u3063\u305F\u5834\u5408\u306F\u6CD5\u7DDA\u3092\u53CD\u8EE2
+        b_world_geom_n = select(-b_world_geom_n, b_world_geom_n, dot(bounce_ray.direction, b_world_geom_n) < 0.0);
+
         let b_s = b_r_local.origin - b_pos0;
         let b_h = cross(b_r_local.direction, b_e2);
         let b_f = 1.0 / dot(b_e1, b_h);
@@ -412,7 +416,10 @@ fn generate_initial_gi_candidate(
 
         let b_uv = get_uv(b_tri.v0) * b_w + get_uv(b_tri.v1) * b_u + get_uv(b_tri.v2) * b_v;
         let b_ln = normalize(get_normal(b_tri.v0) * b_w + get_normal(b_tri.v1) * b_u + get_normal(b_tri.v2) * b_v);
-        let b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+        
+        var b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+        b_normal = select(-b_normal, b_normal, dot(bounce_ray.direction, b_normal) < 0.0);
+        
         let b_p = bounce_ray.origin + bounce_ray.direction * bounce_hit.t;
 
         var b_em = b_tri.data3.rgb;
@@ -423,16 +430,32 @@ fn generate_initial_gi_candidate(
         if b_mat_type != 3u && b_mat_type != 2u {
             let b_ls = sample_light_source(b_p, rng);
             if b_ls.pdf > 0.0 {
-                let b_sr = Ray(b_p + b_normal * 1e-4, b_ls.dir);
-                if intersect_tlas(b_sr, T_MIN, b_ls.dist - 2e-4).inst_idx == -1 {
+                let b_sr = Ray(b_p + b_world_geom_n * 1e-4, b_ls.dir);
+                if !intersect_tlas_shadow(b_sr, T_MIN, b_ls.dist - 2e-4) {
                     var b_alb = b_tri.data0.rgb;
                     if b_tri.data2.x > -0.5 { b_alb *= textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.x), 0.0).rgb; }
-                    Li += eval_diffuse(b_alb) * b_ls.L * max(dot(b_normal, b_ls.dir), 0.0) / b_ls.pdf;
+
+                    if b_mat_type == 0u {
+                        Li += eval_diffuse(b_alb) * b_ls.L * max(dot(b_normal, b_ls.dir), 0.0) / b_ls.pdf;
+                    } else if b_mat_type == 1u {
+                        var b_metallic = b_tri.data1.x;
+                        var b_roughness = b_tri.data1.y;
+                        if b_tri.data2.y > -0.5 {
+                            let mr = textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.y), 0.0).rgb;
+                            b_metallic *= mr.b; b_roughness *= mr.g;
+                        }
+                        b_roughness = max(b_roughness, 0.005);
+                        let b_f0 = mix(vec3(0.04), b_alb, b_metallic);
+                        
+                        let b_view = -bounce_ray.direction;
+                        let b_ggx_val = eval_ggx(b_normal, b_view, b_ls.dir, b_roughness, b_f0);
+                        Li += b_ggx_val * b_ls.L * max(dot(b_normal, b_ls.dir), 0.0) / b_ls.pdf;
+                    }
                 }
             }
         }
     }
-    if length(Li) < 1e-4 { Li = albedo * 0.05; }
+
     let ph = evaluate_p_hat(Li, albedo, max(dot(normal, scatter.dir), 0.0));
     update_reservoir(&res, scatter.dir, Li, dist, select(0.0, ph / max(scatter.pdf, 1e-3), scatter.pdf > 1e-8), rng);
     return res;
@@ -494,7 +517,7 @@ fn finalize_gi_reservoir(
     let ph = evaluate_p_hat(get_gi_sample_radiance(*state), albedo, max(dot(normal, get_gi_sample_dir(*state)), 0.0));
     let m = get_gi_M(*state);
     let w = select(0.0, get_gi_w_sum(*state) / (m * ph + 1e-6), ph > 1e-6);
-    set_gi_W(state, min(w, 10.0));
+    set_gi_W(state, w);
     (*state).data2 = vec4(hit_p, m);
     let pn = pack_normal(normal);
     (*state).data3.x = pn.x; (*state).data3.y = pn.y;
@@ -576,9 +599,11 @@ fn sample_ggx(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>, rng: pt
     let f = fresnel_schlick(v_dot_h, f0);
 
     let pdf = (d * n_dot_h) / (4.0 * v_dot_h);
-    let throughput = bsdf_to_throughput(d, g, f, n_dot_v, n_dot_l, n_dot_h, v_dot_h, pdf);
-
-    let treat_as_specular = roughness < 0.4;
+    var throughput = vec3(0.0);
+    if pdf > 1e-6 {
+        throughput = (g * f * v_dot_h) / (n_dot_v * n_dot_h);
+    }
+    let treat_as_specular = roughness < 0.01;
 
     return ScatterResult(l, pdf, throughput, treat_as_specular);
 }
@@ -806,6 +831,121 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     return res;
 }
 
+// shadow ray\u7248
+// \u30B7\u30E3\u30C9\u30A6\u30EC\u30A4\u7528\u306EBLAS\u4EA4\u5DEE\u5224\u5B9A\uFF08\u30D2\u30C3\u30C8\u3057\u305F\u3089\u5373true\u3092\u8FD4\u3059\uFF09
+fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> bool {
+    let inv_d = 1.0 / r.direction;
+    var stack: array<u32, 32>;
+    var stackptr = 0u;
+
+    // \u30EB\u30FC\u30C8AABB\u5224\u5B9A\uFF08\u3053\u3053\u306F\u540C\u3058\uFF09
+    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r.origin, inv_d, t_min, t_max) < T_MAX {
+        stack[0] = node_start_idx;
+        stackptr = 1u;
+    }
+
+    while stackptr > 0u {
+        stackptr--;
+        let idx = stack[stackptr];
+        let node = nodes[idx];
+        let count = u32(node.max_b.w);
+
+        if count > 0u {
+            // \u8449\u30CE\u30FC\u30C9\u51E6\u7406
+            let first = u32(node.min_b.w);
+            for (var i = 0u; i < count; i++) {
+                let tri_id = first + i;
+                let tr = topology[tri_id];
+                // \u3010\u91CD\u8981\u3011\u30D2\u30C3\u30C8\u3057\u305F\u3089\u5373 return true
+                let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, t_max);
+                if t > 0.0 { 
+                    // \u203B\u30A2\u30EB\u30D5\u30A1\u30C6\u30B9\u30C8\uFF08\u900F\u904E\u30C6\u30AF\u30B9\u30C1\u30E3\uFF09\u304C\u3042\u308B\u5834\u5408\u306F\u3053\u3053\u3067\u30C6\u30AF\u30B9\u30C1\u30E3\u3092\u53C2\u7167\u3057\u3066
+                    // \u900F\u660E\u306A\u3089 continue \u3059\u308B\u51E6\u7406\u304C\u5FC5\u8981\u3067\u3059\u304C\u3001\u4E0D\u900F\u660E\u306A\u3089\u5373\u30EA\u30BF\u30FC\u30F3\u3067OK
+                    return true; 
+                }
+            }
+        } else {
+            // \u5185\u90E8\u30CE\u30FC\u30C9\u51E6\u7406
+            let l = u32(node.min_b.w) + node_start_idx;
+            let r_idx = l + 1u;
+            
+            // t_max \u306F\u7E2E\u307E\u306A\u3044\u306E\u3067\u56FA\u5B9A\u5024\u3067\u5224\u5B9A
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, t_max);
+
+            // \u8FD1\u3044\u9806\u306B\u30B9\u30BF\u30C3\u30AF\u306B\u7A4D\u3080\uFF08\u8FD1\u3044\u65B9\u304C\u65E9\u304F\u30D2\u30C3\u30C8\u3057\u3066\u65E9\u304Freturn\u3067\u304D\u308B\u53EF\u80FD\u6027\u304C\u9AD8\u3044\u305F\u3081\uFF09
+            if dl < T_MAX && dr < T_MAX {
+                if dl < dr {
+                    stack[stackptr] = r_idx;
+                    stack[stackptr + 1u] = l;
+                } else {
+                    stack[stackptr] = l;
+                    stack[stackptr + 1u] = r_idx;
+                }
+                stackptr += 2u;
+            } else if dl < T_MAX {
+                stack[stackptr] = l;
+                stackptr++;
+            } else if dr < T_MAX {
+                stack[stackptr] = r_idx;
+                stackptr++;
+            }
+        }
+    }
+    return false;
+}
+
+// \u30B7\u30E3\u30C9\u30A6\u30EC\u30A4\u7528\u306ETLAS\u4EA4\u5DEE\u5224\u5B9A
+fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
+    if scene.blas_base_idx == 0u { return false; }
+
+    let inv_d = 1.0 / r.direction;
+    var stack: array<u32, 16>;
+    var stackptr = 0u;
+
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, t_max) < T_MAX {
+        stack[0] = 0u;
+        stackptr = 1u;
+    }
+
+    while stackptr > 0u {
+        stackptr--;
+        let node = nodes[stack[stackptr]];
+
+        if node.max_b.w > 0.5 { // Leaf (Instance)
+            let inst_idx = u32(node.min_b.w);
+            let inst = instances[inst_idx];
+            
+            // \u30EC\u30A4\u3092\u30ED\u30FC\u30AB\u30EB\u5EA7\u6A19\u3078\u5909\u63DB
+            let r_local = Ray(
+                (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
+                (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
+            );
+            
+            // BLAS\u3082\u30B7\u30E3\u30C9\u30A6\u7528\u95A2\u6570\u3092\u547C\u3076
+            // \u3010\u91CD\u8981\u3011\u3053\u3053\u3067\u3082BLAS\u304Ctrue\u3092\u8FD4\u3057\u305F\u3089\u5373 return true
+            if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) {
+                return true;
+            }
+        } else {
+            // \u5185\u90E8\u30CE\u30FC\u30C9\u51E6\u7406\uFF08\u901A\u5E38\u7248\u3068\u307B\u307C\u540C\u3058\u3060\u304C\u3001closest_t\u3092\u4F7F\u308F\u305A\u56FA\u5B9A\u306Et_max\u3092\u4F7F\u3046\uFF09
+            let l = u32(node.min_b.w);
+            let r_idx = l + 1u;
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, t_max);
+
+            if dl < T_MAX && dr < T_MAX {
+                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } 
+                else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
+                stackptr += 2u;
+            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } 
+            else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
+        }
+    }
+    return false;
+}
+
+
 // =========================================================
 //   Main Path Tracer Loop
 // =========================================================
@@ -822,6 +962,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 
     var prev_bsdf_pdf = 0.0;
     var specular_bounce = true;
+    var restir_succeeded = false;
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
@@ -875,6 +1016,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 
         normal = select(-normal, normal, dot(ray.direction, normal) < 0.0);
 
+        let local_geom_n = normalize(cross(e1, e2));
+        var world_geom_n = normalize((vec4(local_geom_n, 0.0) * inv).xyz);
+        world_geom_n = select(-world_geom_n, world_geom_n, dot(ray.direction, world_geom_n) < 0.0);
+
         var metallic = tri.data1.x;
         var roughness = tri.data1.y;
         if tri.data2.y > -0.5 {
@@ -886,51 +1031,78 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         var emissive = tri.data3.rgb;
         if tri.data2.w > -0.5 { emissive *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.w), 0.0).rgb; }
 
-        if mat_type == 3u || length(emissive) > 1e-4 {
-            let em_val = select(emissive, albedo, mat_type == 3u);
-            if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction)); }
-            if mat_type == 3u { break; }
-        }
-
         let f0 = mix(vec3(0.04), albedo, metallic);
-        let is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1);
-        let is_shiny_metallic = (mat_type == 1u) && (metallic > 0.1) && (roughness < 0.4);
-        let use_restir = (mat_type == 0u) || (!is_shiny_metallic && !is_specular && mat_type != 2u);
+        let is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.01);
+        let use_restir = (mat_type == 0u);
+
+
+        let should_add_light = !(depth == 1u && restir_succeeded);
 
         // ReSTIR GI (Indirect Lighting)
-        if specular_bounce && use_restir {
+        if specular_bounce && use_restir   &&  depth == 0u {
             var state = generate_initial_gi_candidate(hit_p, normal, albedo, rng);
             apply_temporal_reuse_gi(&state, prev_res_idx, normal, albedo, mat_type, rng);
             apply_spatial_reuse_gi(&state, coord, normal, albedo, mat_type, hit_p, rng);
             finalize_gi_reservoir(&state, hit_p, normal, albedo, mat_type, curr_res_idx);
 
-            radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, get_gi_sample_dir(state)), 0.0) * get_gi_W(state);
-        }
-
-        // Direct Light (NEE)
-        if !is_specular && mat_type != 2u {
-            let light_s = sample_light_source(hit_p, rng);
-            if light_s.pdf > 0.0 {
-                if intersect_tlas(Ray(hit_p + normal * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4).inst_idx == -1 {
-                    var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
-                    if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
-                        bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
-                        let H = normalize(-ray.direction + light_s.dir);
-                        bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-ray.direction, H), 0.0));
-                    }
-                    if bsdf_pdf_val > 0.0 { radiance += throughput * bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; }
+            let sample_dir = get_gi_sample_dir(state);
+            let sample_dist = get_gi_sample_dist(state); // state.data0.w
+            
+            if dot(world_geom_n, sample_dir) > 0.0 {
+                if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, sample_dir), T_MIN, sample_dist - 2e-4) {
+                    radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, sample_dir), 0.0) * get_gi_W(state);
+                    restir_succeeded = true;
                 }
             }
         }
 
-        if specular_bounce && use_restir { break; }
+        // --- Emissive / Light ---
+        if should_add_light {
+            if mat_type == 3u || length(emissive) > 1e-4 {
+                let em_val = select(emissive, albedo, mat_type == 3u);
+                if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction)); }
+                if mat_type == 3u { break; }
+            }
+            // Direct Light (NEE)
+            if mat_type != 2u {
+                let light_s = sample_light_source(hit_p, rng);
+                if light_s.pdf > 0.0 {
+                    if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
+                        var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
+                        if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
+                            bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
+                            let H = normalize(-ray.direction + light_s.dir);
+                            bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-ray.direction, H), 0.0));
+                        }
+                        if bsdf_pdf_val > 0.0 { radiance += throughput * bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; }
+                    }
+                }
+            }
+        }
+
+        // if specular_bounce && use_restir { break; }
 
         var scatter: ScatterResult;
-        if mat_type == 0u { scatter = sample_diffuse(normal, albedo, rng); } else if mat_type == 1u { scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng); } else { scatter = sample_dielectric(ray.direction, normal, tri.data1.z, albedo, rng); }
+        if mat_type == 0u { 
+            scatter = sample_diffuse(normal, albedo, rng); 
+        } else if mat_type == 1u { 
+            scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng); 
+        } else { 
+            scatter = sample_dielectric(ray.direction, normal, tri.data1.z, albedo, rng); 
+        }
 
+        if mat_type != 2u && dot(scatter.dir, world_geom_n) <= 0.0 {
+            scatter.pdf = 0.0;
+            scatter.throughput = vec3(0.0);
+        }
+        
         if scatter.pdf <= 0.0 || length(scatter.throughput) <= 0.0 { break; }
+        
         throughput *= scatter.throughput;
-        ray = Ray(hit_p + normal * 1e-4, scatter.dir);
+        
+        let ray_offset_normal = select(-world_geom_n, world_geom_n, dot(scatter.dir, world_geom_n) > 0.0);
+        ray = Ray(hit_p + ray_offset_normal * 1e-4, scatter.dir);
+        
         prev_bsdf_pdf = scatter.pdf;
         specular_bounce = scatter.is_specular;
 
@@ -1537,9 +1709,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!this.bindGroup || !this.postprocessBindGroup) return;
       this.totalFrames++;
       const t = (l, _) => {
-        let p = 1, m = 0;
-        for (; l > 0; ) p = p / _, m = m + p * (l % _), l = Math.floor(l / _);
-        return m;
+        let p = 1, v = 0;
+        for (; l > 0; ) p = p / _, v = v + p * (l % _), l = Math.floor(l / _);
+        return v;
       }, n = t(this.totalFrames % 16 + 1, 2) - 0.5, r = t(this.totalFrames % 16 + 1, 3) - 0.5;
       this.prevJitter.x = this.jitter.x, this.prevJitter.y = this.jitter.y, this.jitter = {
         x: n / this.canvas.width,
@@ -1600,8 +1772,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       const _ = this.readbackResultBuffer;
       if (i === r) _.set(d.subarray(0, l));
       else for (let p = 0; p < t; p++) {
-        const m = p * i, k = p * r;
-        _.set(d.subarray(m, m + r), k);
+        const v = p * i, k = p * r;
+        _.set(d.subarray(v, v + r), k);
       }
       return this.readbackBuffer.unmap(), {
         data: _.buffer,
@@ -1611,7 +1783,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   function N(o) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-F7UQU8rh.js", {
+    return new Worker("/assets/wasm-worker-BfCnH_f7.js", {
       name: o == null ? void 0 : o.name
     });
   }
@@ -1854,10 +2026,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         await this.renderFrame(t.spp), n.encodeQueueSize > 5 && await n.flush();
         try {
-          const { data: l, width: _, height: p } = await this.renderer.captureFrame(), m = "RGBA", k = new VideoFrame(l, {
+          const { data: l, width: _, height: p } = await this.renderer.captureFrame(), v = "RGBA", k = new VideoFrame(l, {
             codedWidth: _,
             codedHeight: p,
-            format: m,
+            format: v,
             timestamp: (s + c) * 1e6 / t.fps,
             duration: 1e6 / t.fps
           });
@@ -1930,7 +2102,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     ]
   };
-  class L {
+  class M {
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -2187,7 +2359,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       var _a;
       if (this.ws) return;
       this.myRole = e, (_a = this.onStatusChange) == null ? void 0 : _a.call(this, `Connecting as ${e.toUpperCase()}...`);
-      const t = "xWUaLfXQQkHZ9VmF";
+      const t = "secretpassword";
       this.ws = new WebSocket(`${f.signalingServerUrl}?token=${t}`), this.ws.onopen = () => {
         var _a2;
         if (console.log("WS Connected"), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, `Waiting for Peer (${e.toUpperCase()})`), e === "worker") {
@@ -2235,7 +2407,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
           const t = (r) => {
-            const s = new L(r, (i) => this.sendSignal(i));
+            const s = new M(r, (i) => this.sendSignal(i));
             return this.workers.set(r, s), s.onDataChannelOpen = () => {
               var _a2;
               console.log(`[Host] Open for ${r}`), s.sendData({
@@ -2300,7 +2472,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         case "offer":
           e.fromId && await ((r) => {
             var _a2, _b;
-            return this.hostClient && this.hostClient.close(), this.hostClient = new L(r, (s) => this.sendSignal(s)), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
+            return this.hostClient && this.hostClient.close(), this.hostClient = new M(r, (s) => this.sendSignal(s)), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
               var _a3, _b2;
               (_a3 = this.hostClient) == null ? void 0 : _a3.sendData({
                 type: "HELLO",
@@ -2739,22 +2911,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       };
     }
   }
-  let y = false, w = null, R = null, x = null;
-  const u = new V(), g = new O(u.canvas), h = new F(), C = new q(g, h, u.canvas), b = new J(), v = new X(b, u), B = new Y(b, g, u, C);
+  let y = false, x = null, R = null, w = null;
+  const u = new V(), g = new O(u.canvas), h = new F(), C = new q(g, h, u.canvas), b = new J(), m = new X(b, u), B = new Y(b, g, u, C);
   B.onRemoteSceneLoad = async (o, e) => {
-    w = o, R = e, await T("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
+    x = o, R = e, await D("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
   };
-  let S = 0, A = 0, D = 0, M = performance.now();
+  let S = 0, A = 0, T = 0, L = performance.now();
   const K = () => {
     const o = parseInt(u.inputDepth.value, 10) || f.defaultDepth, e = parseInt(u.inputSPP.value, 10) || f.defaultSPP;
     g.buildPipeline(o, e);
   }, P = () => {
     const { width: o, height: e } = u.getRenderConfig();
     g.updateScreenSize(o, e), h.hasWorld && (h.updateCamera(o, e), g.updateSceneUniforms(h.cameraData, 0, h.lightCount)), g.recreateBindGroup(), g.resetAccumulation(), S = 0, A = 0;
-  }, T = async (o, e = true) => {
+  }, D = async (o, e = true) => {
     y = false, console.log(`Loading Scene: ${o}...`);
     let t, n;
-    o === "viewer" && w && (R === "obj" ? t = w : R === "glb" && (n = new Uint8Array(w).slice(0))), await h.loadScene(o, t, n), h.printStats(), await g.loadTexturesFromWorld(h), await Q(), P(), u.updateAnimList(h.getAnimationList()), e && (y = true, u.updateRenderButton(true));
+    o === "viewer" && x && (R === "obj" ? t = x : R === "glb" && (n = new Uint8Array(x).slice(0))), await h.loadScene(o, t, n), h.printStats(), await g.loadTexturesFromWorld(h), await Q(), P(), u.updateAnimList(h.getAnimationList()), e && (y = true, u.updateRenderButton(true));
   }, Q = async () => {
     g.updateCombinedGeometry(h.vertices, h.normals, h.uvs), g.updateCombinedBVH(h.tlas, h.blas), g.updateBuffer("topology", h.mesh_topology), g.updateBuffer("instance", h.instances), g.updateBuffer("lights", h.lights), g.updateSceneUniforms(h.cameraData, 0, h.lightCount), await g.device.queue.onSubmittedWorkDone();
   }, E = () => {
@@ -2764,16 +2936,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let t = false;
       t || (t = g.updateCombinedBVH(h.tlas, h.blas)), t || (t = g.updateBuffer("instance", h.instances)), h.hasNewGeometry && (t || (t = g.updateCombinedGeometry(h.vertices, h.normals, h.uvs)), t || (t = g.updateBuffer("topology", h.mesh_topology)), t || (t = g.updateBuffer("lights", h.lights)), h.hasNewGeometry = false), h.updateCamera(u.canvas.width, u.canvas.height), g.updateSceneUniforms(h.cameraData, 0, h.lightCount), t && g.recreateBindGroup(), g.resetAccumulation(), S = 0, h.hasNewData = false;
     }
-    S++, D++, A++, g.compute(S), g.present();
+    S++, T++, A++, g.compute(S), g.present();
     const e = performance.now();
-    e - M >= 1e3 && (u.updateStats(D, 1e3 / D, S), D = 0, M = e);
+    e - L >= 1e3 && (u.updateStats(T, 1e3 / T, S), T = 0, L = e);
   };
   b.onStatusChange = (o) => u.setStatus(`Status: ${o}`);
   b.onWorkerStatus = async (o, e, t) => {
-    await v.onWorkerStatus(o, e, t) === "NEED_SCENE" && (console.log(`[Host] Worker ${o} needs scene. Syncing...`), await v.sendSceneHelper(w, R, o));
+    await m.onWorkerStatus(o, e, t) === "NEED_SCENE" && (console.log(`[Host] Worker ${o} needs scene. Syncing...`), await m.sendSceneHelper(x, R, o));
   };
   b.onRenderResult = async (o, e, t) => {
-    await v.onRenderResult(o, e, t) === "ALL_COMPLETE" && (console.log("[Host] All jobs complete. Muxing and downloading..."), u.setStatus("Muxing..."), await v.muxAndDownload());
+    await m.onRenderResult(o, e, t) === "ALL_COMPLETE" && (console.log("[Host] All jobs complete. Muxing and downloading..."), u.setStatus("Muxing..."), await m.muxAndDownload());
   };
   b.onSceneReceived = async (o, e) => {
     console.log("[Worker] Received Scene from Host."), await B.onSceneReceived(o, e), u.sceneSelect.value = e.sceneName || "viewer", e.anim !== void 0 && (u.animSelect.value = e.anim.toString(), h.setAnimation(e.anim)), B.isDistributedSceneLoaded = true, B.isSceneLoading = false, console.log("[Worker] Distributed Scene Loaded. Signaling Host."), await b.sendSceneLoaded(), B.handlePendingRenderRequest();
@@ -2783,28 +2955,28 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       y = true;
     }, u.onRenderStop = () => {
       y = false;
-    }, u.onSceneSelect = (o) => T(o, false), u.onResolutionChange = P, u.onRecompile = (o, e) => {
+    }, u.onSceneSelect = (o) => D(o, false), u.onResolutionChange = P, u.onRecompile = (o, e) => {
       y = false, g.buildPipeline(o, e), g.recreateBindGroup(), g.resetAccumulation(), S = 0, y = true;
     }, u.onFileSelect = async (o) => {
       var _a;
-      ((_a = o.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (w = await o.text(), R = "obj") : (w = await o.arrayBuffer(), R = "glb"), u.sceneSelect.value = "viewer", T("viewer", false);
+      ((_a = o.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (x = await o.text(), R = "obj") : (x = await o.arrayBuffer(), R = "glb"), u.sceneSelect.value = "viewer", D("viewer", false);
     }, u.onAnimSelect = (o) => h.setAnimation(o), u.onRecordStart = async () => {
-      if (!C.recording) if (x === "host") {
+      if (!C.recording) if (w === "host") {
         const o = b.getWorkerIds();
-        v.distributedConfig = u.getRenderConfig();
-        const e = Math.ceil(v.distributedConfig.fps * v.distributedConfig.duration);
+        m.distributedConfig = u.getRenderConfig();
+        const e = Math.ceil(m.distributedConfig.fps * m.distributedConfig.duration);
         if (!confirm(`Distribute recording? (Workers: ${o.length})
 Auto Scene Sync enabled.`)) return;
-        v.jobQueue = [], v.pendingChunks.clear(), v.completedJobs = 0, v.activeJobs.clear();
-        const t = v.distributedConfig.jobBatch || 20;
+        m.jobQueue = [], m.pendingChunks.clear(), m.completedJobs = 0, m.activeJobs.clear();
+        const t = m.distributedConfig.jobBatch || 20;
         for (let n = 0; n < e; n += t) {
           const r = Math.min(t, e - n);
-          v.jobQueue.push({
+          m.jobQueue.push({
             start: n,
             count: r
           });
         }
-        v.totalJobs = v.jobQueue.length, o.forEach((n) => v.workerStatus.set(n, "idle")), u.setStatus(`Distributed Progress: 0 / ${v.totalJobs} jobs (Waiting for workers...)`), o.length > 0 ? (u.setStatus("Syncing Scene to Workers..."), b.sendRenderStart(), await v.sendSceneHelper(w, R)) : console.log("No workers yet. Waiting...");
+        m.totalJobs = m.jobQueue.length, o.forEach((n) => m.workerStatus.set(n, "idle")), u.setStatus(`Distributed Progress: 0 / ${m.totalJobs} jobs (Waiting for workers...)`), o.length > 0 ? (u.setStatus("Syncing Scene to Workers..."), b.sendRenderStart(), await m.sendSceneHelper(x, R)) : console.log("No workers yet. Waiting...");
       } else {
         y = false, u.setRecordingState(true);
         const o = u.getRenderConfig();
@@ -2821,9 +2993,9 @@ Auto Scene Sync enabled.`)) return;
         }
       }
     }, u.onConnectHost = () => {
-      x === "host" ? (b.disconnect(), x = null, u.setConnectionState(null)) : (b.connect("host"), x = "host", u.setConnectionState("host"));
+      w === "host" ? (b.disconnect(), w = null, u.setConnectionState(null)) : (b.connect("host"), w = "host", u.setConnectionState("host"));
     }, u.onConnectWorker = () => {
-      x === "worker" ? (b.disconnect(), x = null, u.setConnectionState(null)) : (C.cancel(), b.connect("worker"), x = "worker", u.setConnectionState("worker"));
+      w === "worker" ? (b.disconnect(), w = null, u.setConnectionState(null)) : (C.cancel(), b.connect("worker"), w = "worker", u.setConnectionState("worker"));
     }, u.setConnectionState(null);
   };
   async function ee() {
@@ -2833,7 +3005,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + o);
       return;
     }
-    Z(), K(), P(), T("cornell", false), requestAnimationFrame(E);
+    Z(), K(), P(), D("cornell", false), requestAnimationFrame(E);
   }
   ee().catch(console.error);
 })();
