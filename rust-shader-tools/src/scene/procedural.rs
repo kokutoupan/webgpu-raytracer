@@ -637,7 +637,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
     let white = vec3(0.73, 0.73, 0.73);
     let red = vec3(0.65, 0.05, 0.05);
     let green = vec3(0.12, 0.45, 0.15);
-    let light = vec3(15.0, 15.0, 15.0);
+    let light = vec3(10.0, 10.0, 10.0);
 
     let s = 555.0;
     // Map 0..555 to -1..1 (XZ) and 0..2 (Y)
@@ -705,12 +705,12 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
         -1.0,
     );
     // Light
-    helpers::add_quad(
+helpers::add_quad(
         &mut geom_env,
-        v(213., 554., 227.),
-        v(343., 554., 227.),
-        v(343., 554., 332.),
-        v(213., 554., 332.),
+        v(150., 554., 150.),
+        v(405., 554., 150.),
+        v(405., 554., 405.),
+        v(150., 554., 405.),
         light,
         mat_type::LIGHT,
         0.,
@@ -721,7 +721,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
     // geom_env.add_sphere(
     //     vec3(0., 3., -4.5),
     //     1.0,
-    //     vec3(15., 15., 15.),
+    //     vec3(10., 10., 10.),
     //     mat_type::LIGHT,
     //     0.,
     //     -1.0,

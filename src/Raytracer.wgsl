@@ -364,7 +364,23 @@ fn generate_initial_gi_candidate(
                 if !intersect_tlas_shadow(b_sr, T_MIN, b_ls.dist - 2e-4) {
                     var b_alb = b_tri.data0.rgb;
                     if b_tri.data2.x > -0.5 { b_alb *= textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.x), 0.0).rgb; }
-                    Li += eval_diffuse(b_alb) * b_ls.L * max(dot(b_normal, b_ls.dir), 0.0) / b_ls.pdf;
+
+                    if b_mat_type == 0u {
+                        Li += eval_diffuse(b_alb) * b_ls.L * max(dot(b_normal, b_ls.dir), 0.0) / b_ls.pdf;
+                    } else if b_mat_type == 1u {
+                        var b_metallic = b_tri.data1.x;
+                        var b_roughness = b_tri.data1.y;
+                        if b_tri.data2.y > -0.5 {
+                            let mr = textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.y), 0.0).rgb;
+                            b_metallic *= mr.b; b_roughness *= mr.g;
+                        }
+                        b_roughness = max(b_roughness, 0.005);
+                        let b_f0 = mix(vec3(0.04), b_alb, b_metallic);
+                        
+                        let b_view = -bounce_ray.direction;
+                        let b_ggx_val = eval_ggx(b_normal, b_view, b_ls.dir, b_roughness, b_f0);
+                        Li += b_ggx_val * b_ls.L * max(dot(b_normal, b_ls.dir), 0.0) / b_ls.pdf;
+                    }
                 }
             }
         }
@@ -513,9 +529,11 @@ fn sample_ggx(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>, rng: pt
     let f = fresnel_schlick(v_dot_h, f0);
 
     let pdf = (d * n_dot_h) / (4.0 * v_dot_h);
-    let throughput = bsdf_to_throughput(d, g, f, n_dot_v, n_dot_l, n_dot_h, v_dot_h, pdf);
-
-    let treat_as_specular = roughness < 0.4;
+    var throughput = vec3(0.0);
+    if pdf > 1e-6 {
+        throughput = (g * f * v_dot_h) / (n_dot_v * n_dot_h);
+    }
+    let treat_as_specular = roughness < 0.01;
 
     return ScatterResult(l, pdf, throughput, treat_as_specular);
 }
@@ -927,6 +945,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 
         normal = select(-normal, normal, dot(ray.direction, normal) < 0.0);
 
+        let local_geom_n = normalize(cross(e1, e2));
+        var world_geom_n = normalize((vec4(local_geom_n, 0.0) * inv).xyz);
+        world_geom_n = select(-world_geom_n, world_geom_n, dot(ray.direction, world_geom_n) < 0.0);
+
         var metallic = tri.data1.x;
         var roughness = tri.data1.y;
         if tri.data2.y > -0.5 {
@@ -938,52 +960,77 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         var emissive = tri.data3.rgb;
         if tri.data2.w > -0.5 { emissive *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.w), 0.0).rgb; }
 
-        if mat_type == 3u || length(emissive) > 1e-4 {
-            let em_val = select(emissive, albedo, mat_type == 3u);
-            if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction)); }
-            if mat_type == 3u { break; }
-        }
-
         let f0 = mix(vec3(0.04), albedo, metallic);
-        let is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.1);
-        let is_shiny_metallic = (mat_type == 1u) && (metallic > 0.1) && (roughness < 0.4);
-        let use_restir = (mat_type == 0u) || (!is_shiny_metallic && !is_specular && mat_type != 2u);
+        let is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.01);
+        let use_restir = (mat_type == 0u);
+
+        var restir_succeeded = false;
+
+        let should_add_light = !(use_restir && depth == 1u && restir_succeeded);
 
         // ReSTIR GI (Indirect Lighting)
-        if specular_bounce && use_restir {
+        if specular_bounce && use_restir   &&  depth == 0u {
             var state = generate_initial_gi_candidate(hit_p, normal, albedo, rng);
             apply_temporal_reuse_gi(&state, prev_res_idx, normal, albedo, mat_type, rng);
             apply_spatial_reuse_gi(&state, coord, normal, albedo, mat_type, hit_p, rng);
             finalize_gi_reservoir(&state, hit_p, normal, albedo, mat_type, curr_res_idx);
 
-            radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, get_gi_sample_dir(state)), 0.0) * get_gi_W(state);
+            let sample_dir = get_gi_sample_dir(state);
+            let sample_dist = get_gi_sample_dist(state); // state.data0.w
+            
+            if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, sample_dir), T_MIN, sample_dist - 2e-4) {
+                radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, sample_dir), 0.0) * get_gi_W(state);
+                restir_succeeded = true;
+            }
         }
 
-        // Direct Light (NEE)
-        if !is_specular && mat_type != 2u {
-            let light_s = sample_light_source(hit_p, rng);
-            if light_s.pdf > 0.0 {
-                // shadow ray
-                if !intersect_tlas_shadow(Ray(hit_p + normal * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
-                    var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
-                    if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
-                        bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
-                        let H = normalize(-ray.direction + light_s.dir);
-                        bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-ray.direction, H), 0.0));
+        // --- Emissive / Light ---
+        if should_add_light {
+            if mat_type == 3u || length(emissive) > 1e-4 {
+                let em_val = select(emissive, albedo, mat_type == 3u);
+                if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction)); }
+                if mat_type == 3u { break; }
+            }
+            // Direct Light (NEE)
+            if mat_type != 2u {
+                let light_s = sample_light_source(hit_p, rng);
+                if light_s.pdf > 0.0 {
+                    if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
+                        var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
+                        if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
+                            bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
+                            let H = normalize(-ray.direction + light_s.dir);
+                            bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-ray.direction, H), 0.0));
+                        }
+                        if bsdf_pdf_val > 0.0 { radiance += throughput * bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; }
                     }
-                    if bsdf_pdf_val > 0.0 { radiance += throughput * bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; }
                 }
             }
         }
 
-        if specular_bounce && use_restir { break; }
+        // if specular_bounce && use_restir { break; }
 
         var scatter: ScatterResult;
-        if mat_type == 0u { scatter = sample_diffuse(normal, albedo, rng); } else if mat_type == 1u { scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng); } else { scatter = sample_dielectric(ray.direction, normal, tri.data1.z, albedo, rng); }
+        if mat_type == 0u { 
+            scatter = sample_diffuse(normal, albedo, rng); 
+        } else if mat_type == 1u { 
+            scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng); 
+        } else { 
+            scatter = sample_dielectric(ray.direction, normal, tri.data1.z, albedo, rng); 
+        }
 
+        if mat_type != 2u && dot(scatter.dir, world_geom_n) <= 0.0 {
+            scatter.pdf = 0.0;
+            scatter.throughput = vec3(0.0);
+        }
+        
         if scatter.pdf <= 0.0 || length(scatter.throughput) <= 0.0 { break; }
+        
         throughput *= scatter.throughput;
-        ray = Ray(hit_p + normal * 1e-4, scatter.dir);
+        
+        let ray_offset_normal = select(-world_geom_n, world_geom_n, dot(scatter.dir, world_geom_n) > 0.0);
+        ray = Ray(hit_p + ray_offset_normal * 1e-4, scatter.dir);
+        
         prev_bsdf_pdf = scatter.pdf;
         specular_bounce = scatter.is_specular;
 
