@@ -255,11 +255,9 @@ fn get_reservoir_offsets(pixel_idx: u32) -> vec2<u32> {
 
 // ターゲット関数 p_hat (輝度ベース + BSDF近似)
 fn evaluate_p_hat(radiance: vec3<f32>, albedo: vec3<f32>, cos_theta: f32) -> f32 {
-    // 輝度(Luminance)を実質的な寄与(radiance * albedo * cos)で評価
-    let contribution = radiance * albedo * cos_theta;
-    
-    // [Firefly対策] 非常に高い輝度をクランプして、特定のサンプルがリザーバを支配し続けないようにする
-    let clamped_contribution = min(contribution, vec3(50.0));
+    let brdf = albedo / PI;
+    let contribution = radiance * brdf * cos_theta;
+    let clamped_contribution = contribution;
     return dot(clamped_contribution, vec3(0.2126, 0.7152, 0.0722));
 }
 
@@ -339,6 +337,12 @@ fn generate_initial_gi_candidate(
         let b_pos2 = get_pos(b_tri.v2);
         let b_r_local = Ray((b_inv * vec4(bounce_ray.origin, 1.)).xyz, (b_inv * vec4(bounce_ray.direction, 0.)).xyz);
         let b_e1 = b_pos1 - b_pos0; let b_e2 = b_pos2 - b_pos0;
+        
+        let b_local_geom_n = normalize(cross(b_e1, b_e2));
+        var b_world_geom_n = normalize((vec4(b_local_geom_n, 0.0) * b_inv).xyz);
+        // 裏面から当たった場合は法線を反転
+        b_world_geom_n = select(-b_world_geom_n, b_world_geom_n, dot(bounce_ray.direction, b_world_geom_n) < 0.0);
+
         let b_s = b_r_local.origin - b_pos0;
         let b_h = cross(b_r_local.direction, b_e2);
         let b_f = 1.0 / dot(b_e1, b_h);
@@ -349,7 +353,10 @@ fn generate_initial_gi_candidate(
 
         let b_uv = get_uv(b_tri.v0) * b_w + get_uv(b_tri.v1) * b_u + get_uv(b_tri.v2) * b_v;
         let b_ln = normalize(get_normal(b_tri.v0) * b_w + get_normal(b_tri.v1) * b_u + get_normal(b_tri.v2) * b_v);
-        let b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+        
+        var b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+        b_normal = select(-b_normal, b_normal, dot(bounce_ray.direction, b_normal) < 0.0);
+        
         let b_p = bounce_ray.origin + bounce_ray.direction * bounce_hit.t;
 
         var b_em = b_tri.data3.rgb;
@@ -360,7 +367,7 @@ fn generate_initial_gi_candidate(
         if b_mat_type != 3u && b_mat_type != 2u {
             let b_ls = sample_light_source(b_p, rng);
             if b_ls.pdf > 0.0 {
-                let b_sr = Ray(b_p + b_normal * 1e-4, b_ls.dir);
+                let b_sr = Ray(b_p + b_world_geom_n * 1e-4, b_ls.dir);
                 if !intersect_tlas_shadow(b_sr, T_MIN, b_ls.dist - 2e-4) {
                     var b_alb = b_tri.data0.rgb;
                     if b_tri.data2.x > -0.5 { b_alb *= textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.x), 0.0).rgb; }
@@ -385,7 +392,7 @@ fn generate_initial_gi_candidate(
             }
         }
     }
-    if length(Li) < 1e-4 { Li = albedo * 0.05; }
+
     let ph = evaluate_p_hat(Li, albedo, max(dot(normal, scatter.dir), 0.0));
     update_reservoir(&res, scatter.dir, Li, dist, select(0.0, ph / max(scatter.pdf, 1e-3), scatter.pdf > 1e-8), rng);
     return res;
@@ -447,7 +454,7 @@ fn finalize_gi_reservoir(
     let ph = evaluate_p_hat(get_gi_sample_radiance(*state), albedo, max(dot(normal, get_gi_sample_dir(*state)), 0.0));
     let m = get_gi_M(*state);
     let w = select(0.0, get_gi_w_sum(*state) / (m * ph + 1e-6), ph > 1e-6);
-    set_gi_W(state, min(w, 10.0));
+    set_gi_W(state, w);
     (*state).data2 = vec4(hit_p, m);
     let pn = pack_normal(normal);
     (*state).data3.x = pn.x; (*state).data3.y = pn.y;
@@ -892,6 +899,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 
     var prev_bsdf_pdf = 0.0;
     var specular_bounce = true;
+    var restir_succeeded = false;
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
@@ -964,9 +972,8 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         let is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.01);
         let use_restir = (mat_type == 0u);
 
-        var restir_succeeded = false;
 
-        let should_add_light = !(use_restir && depth == 1u && restir_succeeded);
+        let should_add_light = !(depth == 1u && restir_succeeded);
 
         // ReSTIR GI (Indirect Lighting)
         if specular_bounce && use_restir   &&  depth == 0u {
@@ -978,9 +985,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             let sample_dir = get_gi_sample_dir(state);
             let sample_dist = get_gi_sample_dist(state); // state.data0.w
             
-            if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, sample_dir), T_MIN, sample_dist - 2e-4) {
-                radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, sample_dir), 0.0) * get_gi_W(state);
-                restir_succeeded = true;
+            if dot(world_geom_n, sample_dir) > 0.0 {
+                if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, sample_dir), T_MIN, sample_dist - 2e-4) {
+                    radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, sample_dir), 0.0) * get_gi_W(state);
+                    restir_succeeded = true;
+                }
             }
         }
 

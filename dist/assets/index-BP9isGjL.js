@@ -318,11 +318,9 @@ fn get_reservoir_offsets(pixel_idx: u32) -> vec2<u32> {
 
 // \u30BF\u30FC\u30B2\u30C3\u30C8\u95A2\u6570 p_hat (\u8F1D\u5EA6\u30D9\u30FC\u30B9 + BSDF\u8FD1\u4F3C)
 fn evaluate_p_hat(radiance: vec3<f32>, albedo: vec3<f32>, cos_theta: f32) -> f32 {
-    // \u8F1D\u5EA6(Luminance)\u3092\u5B9F\u8CEA\u7684\u306A\u5BC4\u4E0E(radiance * albedo * cos)\u3067\u8A55\u4FA1
-    let contribution = radiance * albedo * cos_theta;
-    
-    // [Firefly\u5BFE\u7B56] \u975E\u5E38\u306B\u9AD8\u3044\u8F1D\u5EA6\u3092\u30AF\u30E9\u30F3\u30D7\u3057\u3066\u3001\u7279\u5B9A\u306E\u30B5\u30F3\u30D7\u30EB\u304C\u30EA\u30B6\u30FC\u30D0\u3092\u652F\u914D\u3057\u7D9A\u3051\u306A\u3044\u3088\u3046\u306B\u3059\u308B
-    let clamped_contribution = min(contribution, vec3(50.0));
+    let brdf = albedo / PI;
+    let contribution = radiance * brdf * cos_theta;
+    let clamped_contribution = contribution;
     return dot(clamped_contribution, vec3(0.2126, 0.7152, 0.0722));
 }
 
@@ -402,6 +400,12 @@ fn generate_initial_gi_candidate(
         let b_pos2 = get_pos(b_tri.v2);
         let b_r_local = Ray((b_inv * vec4(bounce_ray.origin, 1.)).xyz, (b_inv * vec4(bounce_ray.direction, 0.)).xyz);
         let b_e1 = b_pos1 - b_pos0; let b_e2 = b_pos2 - b_pos0;
+        
+        let b_local_geom_n = normalize(cross(b_e1, b_e2));
+        var b_world_geom_n = normalize((vec4(b_local_geom_n, 0.0) * b_inv).xyz);
+        // \u88CF\u9762\u304B\u3089\u5F53\u305F\u3063\u305F\u5834\u5408\u306F\u6CD5\u7DDA\u3092\u53CD\u8EE2
+        b_world_geom_n = select(-b_world_geom_n, b_world_geom_n, dot(bounce_ray.direction, b_world_geom_n) < 0.0);
+
         let b_s = b_r_local.origin - b_pos0;
         let b_h = cross(b_r_local.direction, b_e2);
         let b_f = 1.0 / dot(b_e1, b_h);
@@ -412,7 +416,10 @@ fn generate_initial_gi_candidate(
 
         let b_uv = get_uv(b_tri.v0) * b_w + get_uv(b_tri.v1) * b_u + get_uv(b_tri.v2) * b_v;
         let b_ln = normalize(get_normal(b_tri.v0) * b_w + get_normal(b_tri.v1) * b_u + get_normal(b_tri.v2) * b_v);
-        let b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+        
+        var b_normal = normalize((vec4(b_ln, 0.0) * b_inv).xyz);
+        b_normal = select(-b_normal, b_normal, dot(bounce_ray.direction, b_normal) < 0.0);
+        
         let b_p = bounce_ray.origin + bounce_ray.direction * bounce_hit.t;
 
         var b_em = b_tri.data3.rgb;
@@ -423,7 +430,7 @@ fn generate_initial_gi_candidate(
         if b_mat_type != 3u && b_mat_type != 2u {
             let b_ls = sample_light_source(b_p, rng);
             if b_ls.pdf > 0.0 {
-                let b_sr = Ray(b_p + b_normal * 1e-4, b_ls.dir);
+                let b_sr = Ray(b_p + b_world_geom_n * 1e-4, b_ls.dir);
                 if !intersect_tlas_shadow(b_sr, T_MIN, b_ls.dist - 2e-4) {
                     var b_alb = b_tri.data0.rgb;
                     if b_tri.data2.x > -0.5 { b_alb *= textureSampleLevel(tex, smp, b_uv, i32(b_tri.data2.x), 0.0).rgb; }
@@ -448,7 +455,7 @@ fn generate_initial_gi_candidate(
             }
         }
     }
-    if length(Li) < 1e-4 { Li = albedo * 0.05; }
+
     let ph = evaluate_p_hat(Li, albedo, max(dot(normal, scatter.dir), 0.0));
     update_reservoir(&res, scatter.dir, Li, dist, select(0.0, ph / max(scatter.pdf, 1e-3), scatter.pdf > 1e-8), rng);
     return res;
@@ -510,7 +517,7 @@ fn finalize_gi_reservoir(
     let ph = evaluate_p_hat(get_gi_sample_radiance(*state), albedo, max(dot(normal, get_gi_sample_dir(*state)), 0.0));
     let m = get_gi_M(*state);
     let w = select(0.0, get_gi_w_sum(*state) / (m * ph + 1e-6), ph > 1e-6);
-    set_gi_W(state, min(w, 10.0));
+    set_gi_W(state, w);
     (*state).data2 = vec4(hit_p, m);
     let pn = pack_normal(normal);
     (*state).data3.x = pn.x; (*state).data3.y = pn.y;
@@ -955,6 +962,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
 
     var prev_bsdf_pdf = 0.0;
     var specular_bounce = true;
+    var restir_succeeded = false;
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
         let hit = intersect_tlas(ray, T_MIN, T_MAX);
@@ -1027,9 +1035,8 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         let is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.01);
         let use_restir = (mat_type == 0u);
 
-        var restir_succeeded = false;
 
-        let should_add_light = !(use_restir && depth == 1u && restir_succeeded);
+        let should_add_light = !(depth == 1u && restir_succeeded);
 
         // ReSTIR GI (Indirect Lighting)
         if specular_bounce && use_restir   &&  depth == 0u {
@@ -1041,9 +1048,11 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             let sample_dir = get_gi_sample_dir(state);
             let sample_dist = get_gi_sample_dist(state); // state.data0.w
             
-            if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, sample_dir), T_MIN, sample_dist - 2e-4) {
-                radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, sample_dir), 0.0) * get_gi_W(state);
-                restir_succeeded = true;
+            if dot(world_geom_n, sample_dir) > 0.0 {
+                if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, sample_dir), T_MIN, sample_dist - 2e-4) {
+                    radiance += throughput * get_gi_sample_radiance(state) * eval_diffuse(albedo) * max(dot(normal, sample_dir), 0.0) * get_gi_W(state);
+                    restir_succeeded = true;
+                }
             }
         }
 
@@ -2090,7 +2099,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     ]
   };
-  class L {
+  class M {
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -2395,7 +2404,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
           const t = (r) => {
-            const s = new L(r, (i) => this.sendSignal(i));
+            const s = new M(r, (i) => this.sendSignal(i));
             return this.workers.set(r, s), s.onDataChannelOpen = () => {
               var _a2;
               console.log(`[Host] Open for ${r}`), s.sendData({
@@ -2460,7 +2469,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         case "offer":
           e.fromId && await ((r) => {
             var _a2, _b;
-            return this.hostClient && this.hostClient.close(), this.hostClient = new L(r, (s) => this.sendSignal(s)), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
+            return this.hostClient && this.hostClient.close(), this.hostClient = new M(r, (s) => this.sendSignal(s)), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
               var _a3, _b2;
               (_a3 = this.hostClient) == null ? void 0 : _a3.sendData({
                 type: "HELLO",
@@ -2904,21 +2913,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   B.onRemoteSceneLoad = async (o, e) => {
     x = o, R = e, await D("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
   };
-  let S = 0, A = 0, T = 0, M = performance.now();
+  let S = 0, A = 0, T = 0, L = performance.now();
   const K = () => {
     const o = parseInt(u.inputDepth.value, 10) || f.defaultDepth, e = parseInt(u.inputSPP.value, 10) || f.defaultSPP;
     g.buildPipeline(o, e);
-  }, E = () => {
+  }, P = () => {
     const { width: o, height: e } = u.getRenderConfig();
     g.updateScreenSize(o, e), h.hasWorld && (h.updateCamera(o, e), g.updateSceneUniforms(h.cameraData, 0, h.lightCount)), g.recreateBindGroup(), g.resetAccumulation(), S = 0, A = 0;
   }, D = async (o, e = true) => {
     y = false, console.log(`Loading Scene: ${o}...`);
     let t, n;
-    o === "viewer" && x && (R === "obj" ? t = x : R === "glb" && (n = new Uint8Array(x).slice(0))), await h.loadScene(o, t, n), h.printStats(), await g.loadTexturesFromWorld(h), await Q(), E(), u.updateAnimList(h.getAnimationList()), e && (y = true, u.updateRenderButton(true));
+    o === "viewer" && x && (R === "obj" ? t = x : R === "glb" && (n = new Uint8Array(x).slice(0))), await h.loadScene(o, t, n), h.printStats(), await g.loadTexturesFromWorld(h), await Q(), P(), u.updateAnimList(h.getAnimationList()), e && (y = true, u.updateRenderButton(true));
   }, Q = async () => {
     g.updateCombinedGeometry(h.vertices, h.normals, h.uvs), g.updateCombinedBVH(h.tlas, h.blas), g.updateBuffer("topology", h.mesh_topology), g.updateBuffer("instance", h.instances), g.updateBuffer("lights", h.lights), g.updateSceneUniforms(h.cameraData, 0, h.lightCount), await g.device.queue.onSubmittedWorkDone();
-  }, P = () => {
-    if (C.recording || (requestAnimationFrame(P), !y || !h.hasWorld)) return;
+  }, E = () => {
+    if (C.recording || (requestAnimationFrame(E), !y || !h.hasWorld)) return;
     let o = parseInt(u.inputUpdateInterval.value, 10) || 0;
     if (o > 0 && S >= o && h.update(A / (o || 1) / 60), h.hasNewData) {
       let t = false;
@@ -2926,7 +2935,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     S++, T++, A++, g.compute(S), g.present();
     const e = performance.now();
-    e - M >= 1e3 && (u.updateStats(T, 1e3 / T, S), T = 0, M = e);
+    e - L >= 1e3 && (u.updateStats(T, 1e3 / T, S), T = 0, L = e);
   };
   b.onStatusChange = (o) => u.setStatus(`Status: ${o}`);
   b.onWorkerStatus = async (o, e, t) => {
@@ -2943,7 +2952,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       y = true;
     }, u.onRenderStop = () => {
       y = false;
-    }, u.onSceneSelect = (o) => D(o, false), u.onResolutionChange = E, u.onRecompile = (o, e) => {
+    }, u.onSceneSelect = (o) => D(o, false), u.onResolutionChange = P, u.onRecompile = (o, e) => {
       y = false, g.buildPipeline(o, e), g.recreateBindGroup(), g.resetAccumulation(), S = 0, y = true;
     }, u.onFileSelect = async (o) => {
       var _a;
@@ -2977,7 +2986,7 @@ Auto Scene Sync enabled.`)) return;
         } catch {
           alert("Recording failed.");
         } finally {
-          u.setRecordingState(false), y = false, u.updateRenderButton(false), requestAnimationFrame(P);
+          u.setRecordingState(false), y = false, u.updateRenderButton(false), requestAnimationFrame(E);
         }
       }
     }, u.onConnectHost = () => {
@@ -2993,7 +3002,7 @@ Auto Scene Sync enabled.`)) return;
       alert("Init failed: " + o);
       return;
     }
-    Z(), K(), E(), D("cornell", false), requestAnimationFrame(P);
+    Z(), K(), P(), D("cornell", false), requestAnimationFrame(E);
   }
   ee().catch(console.error);
 })();
