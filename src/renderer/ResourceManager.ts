@@ -17,6 +17,8 @@ export class ResourceManager {
   // Standalone Buffers
   instanceBuffer!: GPUBuffer;
   lightsBuffer!: GPUBuffer;
+  drawCommandBuffer!: GPUBuffer;
+  drawCommandsArray: Uint32Array | null = null;
 
   // Texture Support
   texture!: GPUTexture;
@@ -39,6 +41,7 @@ export class ResourceManager {
   normOffset = 0;
   uvOffset = 0;
   lightCount = 0;
+  instanceCount = 0;
 
   seed = Math.floor(Math.random() * 0xffffff);
 
@@ -204,7 +207,7 @@ export class ResourceManager {
   }
 
   updateBuffer(
-    type: "topology" | "instance" | "lights",
+    type: "topology" | "instance" | "lights" | "draw_commands",
     data: Uint32Array | Float32Array
   ): boolean {
     const byteLen = data.byteLength;
@@ -221,6 +224,7 @@ export class ResourceManager {
       );
       buf = this.topologyBuffer;
     } else if (type === "instance") {
+      this.instanceCount = data.length / 36;
       if (!this.instanceBuffer || this.instanceBuffer.size < byteLen)
         needsRebind = true;
       this.instanceBuffer = this.ensureBuffer(
@@ -229,7 +233,7 @@ export class ResourceManager {
         "InstanceBuffer"
       );
       buf = this.instanceBuffer;
-    } else {
+    } else if (type === "lights") {
       if (!this.lightsBuffer || this.lightsBuffer.size < byteLen)
         needsRebind = true;
       this.lightsBuffer = this.ensureBuffer(
@@ -238,6 +242,20 @@ export class ResourceManager {
         "LightsBuffer"
       );
       buf = this.lightsBuffer;
+    } else {
+      if (type === "draw_commands") {
+        this.drawCommandsArray = data as Uint32Array;
+      }
+      if (!this.drawCommandBuffer || this.drawCommandBuffer.size < byteLen) {
+        if (this.drawCommandBuffer) this.drawCommandBuffer.destroy();
+        this.drawCommandBuffer = this.ctx.device.createBuffer({
+          label: "DrawCommandBuffer",
+          size: Math.max(byteLen, 16),
+          usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
+        });
+        needsRebind = true;
+      }
+      buf = this.drawCommandBuffer;
     }
 
     this.ctx.device.queue.writeBuffer(buf, 0, data as any, 0, data.length);

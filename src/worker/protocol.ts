@@ -23,6 +23,7 @@ export type MainMessage =
       tlas: Float32Array;
       blas: Float32Array;
       instances: Float32Array;
+      draw_commands: Uint32Array;
       camera: Float32Array;
       textureCount: number;
       textures: Uint8Array[];
@@ -34,6 +35,7 @@ export type MainMessage =
       blas: Float32Array;
       instances: Float32Array;
       lights: Uint32Array; // Added
+      draw_commands: Uint32Array;
       camera: Float32Array;
       vertices?: Float32Array;
       normals?: Float32Array;

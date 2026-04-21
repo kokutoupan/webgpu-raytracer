@@ -94,7 +94,7 @@ export class RasterizerPass {
   private depthTextureView!: GPUTextureView;
 
   execute(commandEncoder: GPUCommandEncoder, res: ResourceManager) {
-    if (!this.bindGroup) return;
+    if (!this.bindGroup || !res.drawCommandBuffer) return;
 
     // Create depth texture if needed
     if (!this.depthTexture || this.depthTexture.width !== this.ctx.canvas.width || this.depthTexture.height !== this.ctx.canvas.height) {
@@ -128,12 +128,20 @@ export class RasterizerPass {
     passEncoder.setPipeline(this.pipeline);
     passEncoder.setBindGroup(0, this.bindGroup);
     
-    // Draw all triangles from the topology buffer, per instance
-    // topologyBuffer.size bytes / 112 bytes per MeshTopology = count
-    // 3 vertices per topology
-    const topoCount = Math.floor(res.topologyBuffer.size / 112);
-    const instanceCount = Math.floor(res.instanceBuffer.size / 144);
-    passEncoder.draw(topoCount * 3, instanceCount);
+    // Draw directly using CPU-side commands
+    if (res.drawCommandsArray) {
+      const arr = res.drawCommandsArray;
+      const instanceCount = res.instanceCount;
+      for (let i = 0; i < instanceCount; i++) {
+        const v_count = arr[i * 4 + 0];
+        const i_count = arr[i * 4 + 1];
+        const v_start = arr[i * 4 + 2];
+        const i_start = arr[i * 4 + 3];
+        if (v_count > 0 && i_count > 0) {
+          passEncoder.draw(v_count, i_count, v_start, i_start);
+        }
+      }
+    }
     
     passEncoder.end();
   }

@@ -183,7 +183,7 @@ impl World {
         }
 
         // 3. Rebuild Geometry (Skinning & BLAS)
-        let emissive_map = rebuilder::build_blas_and_vertices(
+        let (emissive_map, geom_ranges) = rebuilder::build_blas_and_vertices(
             &self.scene.geometries,
             &self.scene.skins,
             &globals,
@@ -204,14 +204,6 @@ impl World {
 
             let geom_idx = inst.instance_id as usize;
             if geom_idx < self.blas_root_offsets.len() {
-                // Populate Lights Buffer
-                if let Some(tris) = emissive_map.get(geom_idx) {
-                    for &tri_idx in tris {
-                        self.buffers.lights.push(i as u32); // Instance Index
-                        self.buffers.lights.push(tri_idx);
-                    }
-                }
-
                 inst.blas_node_offset = self.blas_root_offsets[geom_idx];
 
                 let base = inst.blas_node_offset as usize * 8;
@@ -237,6 +229,37 @@ impl World {
         let mut tlas_builder = TLASBuilder::new(&self.raw_instances, &self.instance_blas_aabbs);
         let (tlas_nodes, sorted_insts) = tlas_builder.build();
         self.buffers.tlas_nodes = tlas_nodes;
+
+        self.buffers.draw_commands.clear();
+        self.buffers.lights.clear();
+
+        for (i, inst) in sorted_insts.iter().enumerate() {
+            let geom_idx = inst.instance_id as usize;
+            
+            let mut v_count = 0;
+            let mut v_start = 0;
+
+            if geom_idx < self.blas_root_offsets.len() {
+                if geom_idx < geom_ranges.len() {
+                    let (start, count) = geom_ranges[geom_idx];
+                    v_count = count * 3;
+                    v_start = start * 3;
+                }
+
+                // Populate Lights Buffer using the new correct instance index
+                if let Some(tris) = emissive_map.get(geom_idx) {
+                    for &tri_idx in tris {
+                        self.buffers.lights.push(i as u32);
+                        self.buffers.lights.push(tri_idx);
+                    }
+                }
+            }
+
+            self.buffers.draw_commands.push(v_count);
+            self.buffers.draw_commands.push(1);
+            self.buffers.draw_commands.push(v_start);
+            self.buffers.draw_commands.push(i as u32);
+        }
 
         self.buffers.instances = unsafe {
             let ratio = std::mem::size_of::<Instance>() / std::mem::size_of::<f32>();
@@ -302,6 +325,13 @@ impl World {
     }
     pub fn lights_len(&self) -> usize {
         self.buffers.lights.len()
+    }
+
+    pub fn draw_commands_ptr(&self) -> *const u32 {
+        self.buffers.draw_commands.as_ptr()
+    }
+    pub fn draw_commands_len(&self) -> usize {
+        self.buffers.draw_commands.len()
     }
 
     pub fn camera_ptr(&self) -> *const f32 {

@@ -11,10 +11,11 @@ pub fn build_blas_and_vertices(
     global_transforms: &[Mat4],
     buffers: &mut RenderBuffers,
     blas_root_offsets: &mut Vec<u32>,
-) -> Vec<Vec<u32>> {
+) -> (Vec<Vec<u32>>, Vec<(u32, u32)>) {
     buffers.clear();
     blas_root_offsets.clear();
-    let mut emissive_lists = Vec::new(); // Added
+    let mut emissive_lists = Vec::new();
+    let mut geom_ranges = Vec::new();
 
     let mut current_node_offset = 0;
 
@@ -23,7 +24,8 @@ pub fn build_blas_and_vertices(
         let (use_positions, use_normals) = if geom.base_positions.is_empty() {
             // 頂点がない場合スキップ
             blas_root_offsets.push(0);
-            emissive_lists.push(Vec::new()); // Fix: Maintain index alignment
+            emissive_lists.push(Vec::new());
+            geom_ranges.push((0, 0));
             continue;
         } else {
             (&geom.base_positions, &geom.base_normals)
@@ -174,7 +176,8 @@ pub fn build_blas_and_vertices(
         blas_root_offsets.push(current_node_offset);
         let node_count = (buffers.blas_nodes.len() as u32 - current_node_offset * 8) / 8;
         current_node_offset += node_count;
-        // current_tri_offset removed
+        let current_topology_end = (buffers.mesh_topology.len() / 20) as u32;
+        geom_ranges.push((current_topology_start, current_topology_end - current_topology_start));
     }
-    emissive_lists
+    (emissive_lists, geom_ranges)
 }

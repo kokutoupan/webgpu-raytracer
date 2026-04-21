@@ -53,7 +53,7 @@ export class WebGPURenderer {
   }
 
   updateBuffer(
-    type: "topology" | "instance" | "lights",
+    type: "topology" | "instance" | "lights" | "draw_commands",
     data: Uint32Array | Float32Array
   ): boolean {
     return this.res.updateBuffer(type, data);

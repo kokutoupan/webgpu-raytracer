@@ -73,13 +73,6 @@ fn vs_main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) i
     // Out of bounds safety
     let tri = topology[tri_idx];
     let inst = instances[instance_index];
-    
-    // Check if this triangle belongs to the current instance's geometry
-    if (tri.pad != inst.instance_id) {
-        var out: VertexOutput;
-        out.position = vec4<f32>(0.0);
-        return out;
-    }
 
     var v_idx: u32;
     if (local_idx == 0u) {
@@ -119,11 +112,11 @@ fn vs_main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) i
     let up = normalize(vertical);
 
     let view_dir = pos - eye;
-    let z_view = dot(view_dir, forward);
+    let z_view = dot(view_dir, normalize(center - eye));
     let x_view = dot(view_dir, right);
     let y_view = dot(view_dir, up);
 
-    let z_near = 0.1;
+    let z_near = 0.001;
     let z_far = 1000.0;
     
     // Depth mapping to [0, 1] for WebGPU
@@ -138,11 +131,6 @@ fn vs_main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) i
 
     var out: VertexOutput;
     out.position = proj_pos;
-    
-    // Default fallback if degenerate
-    if (length(pos) < 0.0001) {
-        out.position = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
     
     out.color = tri.data0.rgb; // BaseColor
     out.normal = norm;
