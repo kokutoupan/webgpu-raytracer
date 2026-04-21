@@ -251,6 +251,10 @@ export class VideoRecorder {
       "lights",
       this.worldBridge.lights
     );
+    needsRebind ||= this.renderer.updateBuffer(
+      "draw_commands",
+      this.worldBridge.draw_commands
+    );
 
     this.worldBridge.updateCamera(this.canvas.width, this.canvas.height);
     this.renderer.updateSceneUniforms(
