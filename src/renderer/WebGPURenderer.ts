@@ -104,11 +104,8 @@ export class WebGPURenderer {
   present() {
     const commandEncoder = this.ctx.device.createCommandEncoder();
 
-
-    // 2. Postprocess Pass
     this.postProcessPass.execute(commandEncoder);
 
-    // 3. Copy renderTarget to Canvas (Swapchain)
     try {
       const currentTexture = this.ctx.context.getCurrentTexture();
       commandEncoder.copyTextureToTexture(

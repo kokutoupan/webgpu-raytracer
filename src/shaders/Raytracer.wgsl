@@ -653,17 +653,6 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             let g_normal_val = textureLoad(g_normal, coord, 0);
             tri_idx = bitcast<u32>(g_normal_val.z);
             inst_idx = i32(bitcast<u32>(g_normal_val.w));
-
-            let z_near = 0.001;
-            let z_far = 1000.0;
-            let A = z_far / (z_far - z_near);
-            let B = (z_far * z_near) / (z_far - z_near);
-            let z_view = B / (A - depth_val);
-
-            let eye = scene.camera.origin.xyz;
-            let center = scene.camera.lower_left_corner.xyz + scene.camera.horizontal.xyz * 0.5 + scene.camera.vertical.xyz * 0.5;
-            let forward = normalize(center - eye);
-            hit_t = z_view / dot(ray.direction, forward);
         } else {
             let hit = intersect_tlas(ray, T_MIN, T_MAX);
             if hit.inst_idx < 0 { break; }
@@ -692,6 +681,10 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         let q = cross(s, e1);
         let v_bar = f_val * dot(r_local.direction, q);
         let w_bar = 1.0 - u_bar - v_bar;
+
+        if depth == 0u {
+            hit_t = f_val * dot(e2, q);
+        }
 
         let hit_p = ray.origin + ray.direction * hit_t;
         let uv0 = get_uv(tri.v0);

@@ -130,7 +130,7 @@ fn vs_main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) i
     let y_view = dot(view_dir, up);
 
     let z_near = 0.001;
-    let z_far = 1000.0;
+    let z_far = 10000.0;
     
     // Depth mapping to [0, 1] for WebGPU
     let z_clip = z_view * (z_far / (z_far - z_near)) - (z_far * z_near) / (z_far - z_near);
@@ -145,11 +145,15 @@ fn vs_main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) i
     var out: VertexOutput;
     out.position = proj_pos;
     
+    // Apply jitter in NDC space to exactly match Raytracer's primary ray
+    out.position.x -= scene.jitter.x * 2.0 * out.position.w;
+    out.position.y += scene.jitter.y * 2.0 * out.position.w;
+    
     out.color = tri.data0.rgb; // BaseColor
     out.normal = norm;
     out.uv = local_uv;
     out.tex_id = tri.data2.x; // BaseTex ID
-    out.instance_id = inst.instance_id; // Using actual instance_id from instance struct
+    out.instance_id = instance_index; // Pass array index, not application ID!
     out.tri_idx = tri_idx;
     return out;
 }
