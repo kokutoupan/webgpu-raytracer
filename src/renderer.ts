@@ -1,5 +1,5 @@
-import raytracerCodeRaw from "./Raytracer.wgsl?raw";
-import postprocessCodeRaw from "./PostProcess.wgsl?raw";
+import raytracerCodeRaw from "./shaders/Raytracer.wgsl?raw";
+import postprocessCodeRaw from "./shaders/PostProcess.wgsl?raw";
 
 export class WebGPURenderer {
   device!: GPUDevice;
@@ -412,22 +412,8 @@ export class WebGPURenderer {
     this.lightCount = lightCount;
     if (!this.sceneUniformBuffer) return;
 
-    // Halton jitter for TAA
-    const getHalton = (index: number, base: number) => {
-      let f = 1;
-      let r = 0;
-      while (index > 0) {
-        f = f / base;
-        r = r + f * (index % base);
-        index = Math.floor(index / base);
-      }
-      return r;
-    };
-
-    // Low SPP (1-4) often benefits from jitter.
-    // If SPP is high, jitter might be less critical but still good for temporal stability.
-    const jitterX = getHalton((frameCount % 16) + 1, 2) - 0.5;
-    const jitterY = getHalton((frameCount % 16) + 1, 3) - 0.5;
+    const jitterX = this.getHalton((frameCount % 16) + 1, 2) - 0.5;
+    const jitterY = this.getHalton((frameCount % 16) + 1, 3) - 0.5;
     this.jitter = {
       x: jitterX / this.canvas.width,
       y: jitterY / this.canvas.height,
@@ -544,26 +530,24 @@ export class WebGPURenderer {
 
   private lightCount = 0;
 
-  // ★ 名前を変更: render -> compute
+  private getHalton(index: number, base: number): number {
+    let f = 1;
+    let r = 0;
+    while (index > 0) {
+      f = f / base;
+      r = r + f * (index % base);
+      index = Math.floor(index / base);
+    }
+    return r;
+  }
+
   compute(frameCount: number) {
     if (!this.bindGroup || !this.postprocessBindGroup) return;
 
     this.totalFrames++;
 
-    // Halton jitter for TAA (Persistent counter)
-    const getHalton = (index: number, base: number) => {
-      let f = 1;
-      let r = 0;
-      while (index > 0) {
-        f = f / base;
-        r = r + f * (index % base);
-        index = Math.floor(index / base);
-      }
-      return r;
-    };
-
-    const jitterX = getHalton((this.totalFrames % 16) + 1, 2) - 0.5;
-    const jitterY = getHalton((this.totalFrames % 16) + 1, 3) - 0.5;
+    const jitterX = this.getHalton((this.totalFrames % 16) + 1, 2) - 0.5;
+    const jitterY = this.getHalton((this.totalFrames % 16) + 1, 3) - 0.5;
 
     // Store current as previous
     this.prevJitter.x = this.jitter.x;
@@ -611,7 +595,6 @@ export class WebGPURenderer {
     this.device.queue.submit([commandEncoder.finish()]);
   }
 
-  // ★ 新設: 画面への転送のみを行うメソッド
   present() {
     if (!this.renderTarget || !this.postprocessBindGroup) return;
 
@@ -641,16 +624,6 @@ export class WebGPURenderer {
       );
     } catch (e) {
       console.warn("Skipping present(): Swapchain unavailable or invalid.", e);
-      // Do NOT submit invalid commands for the swapchain, but we can still
-      // submit the post-process pass if we want, or just abort this frame's display.
-      // However, since postPass sends to AccumulateBuffer/RenderTarget (internal),
-      // we SHOULD still ensure that runs if it affects history.
-
-      // Actually, postPass writes to RenderTarget.
-      // CopyTextureToTexture reads from RenderTarget.
-      // IF we fail to get swapchain, we just don't copy to screen.
-      // But we MUST finish the encoder if we started it?
-      // No, we can just use a new encoder or ensure we submit what we have.
     }
 
     this.device.queue.submit([commandEncoder.finish()]);
@@ -660,7 +633,6 @@ export class WebGPURenderer {
     this.recreateBindGroup(); // To update history binding
   }
 
-  // ★ READBACK BUFFER for Robust Recording
   private readbackBuffer: GPUBuffer | null = null;
   private readbackBufferSize = 0;
   private readbackResultBuffer: Uint8Array | null = null;
@@ -707,13 +679,6 @@ export class WebGPURenderer {
 
     await this.readbackBuffer.mapAsync(GPUMapMode.READ);
     const srcArray = new Uint8Array(this.readbackBuffer.getMappedRange());
-
-    // Copy to new buffer to unmap immediately
-    // If paddedBytesPerRow != unpaddedBytesPerRow, we must strip padding?
-    // VideoFrame supports stride? VideoFrame(data, { codedWidth, codedHeight, format: 'BGRA' or 'RGBA' })
-    // It usually expects tightly packed or you can specify layout?
-    // VideoFrame init doesn't support stride directly for BufferSource.
-    // We must repack if padded.
 
     const desiredSize = w * h * 4;
     // Reuse CPU buffer

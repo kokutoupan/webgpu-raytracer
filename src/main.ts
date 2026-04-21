@@ -49,15 +49,6 @@ const rebuildPipeline = () => {
 };
 
 const updateResolution = () => {
-  // // ★ 追加: 録画中はリサイズ処理（コンテキストの再構成）を行わないようにする
-  // // ★ 追加: 録画中はリサイズ処理（コンテキストの再構成）を行わないようにする -> 変更: 録画を停止して続行
-  // if (recorder.recording) {
-  //   console.warn(
-  //     "Resize requested during recording. Stopping recording to prevent crash."
-  //   );
-  //   recorder.cancel();
-  //   // return; // REMOVED: Must proceed to update resolution for new scene
-  // }
   const { width, height } = ui.getRenderConfig();
   renderer.updateScreenSize(width, height);
 
