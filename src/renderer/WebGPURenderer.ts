@@ -93,7 +93,7 @@ export class WebGPURenderer {
     const commandEncoder = this.ctx.device.createCommandEncoder();
 
     // 1. Raytrace Pass
-    this.raytracePass.execute(commandEncoder);
+    // this.raytracePass.execute(commandEncoder);
 
     this.ctx.device.queue.submit([commandEncoder.finish()]);
   }
