@@ -83,6 +83,9 @@ export class RaytracePass {
             size: res.vertexCount * 8,
           },
         },
+        { binding: 13, resource: res.renderTargetView },
+        { binding: 14, resource: res.gBufferNormalView },
+        { binding: 15, resource: res.depthTextureView },
       ],
     });
   }

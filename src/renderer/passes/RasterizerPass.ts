@@ -32,6 +32,9 @@ export class RasterizerPass {
           {
             format: "rgba8unorm",
           },
+          {
+            format: "rgba32float", // G-Buffer normal_and_id
+          },
         ],
       },
       primitive: {
@@ -41,7 +44,7 @@ export class RasterizerPass {
       depthStencil: {
         depthWriteEnabled: true,
         depthCompare: "less",
-        format: "depth24plus",
+        format: "depth32float",
       },
     });
 
@@ -90,22 +93,8 @@ export class RasterizerPass {
     });
   }
 
-  private depthTexture!: GPUTexture;
-  private depthTextureView!: GPUTextureView;
-
   execute(commandEncoder: GPUCommandEncoder, res: ResourceManager) {
-    if (!this.bindGroup || !res.drawCommandBuffer) return;
-
-    // Create depth texture if needed
-    if (!this.depthTexture || this.depthTexture.width !== this.ctx.canvas.width || this.depthTexture.height !== this.ctx.canvas.height) {
-      if (this.depthTexture) this.depthTexture.destroy();
-      this.depthTexture = this.ctx.device.createTexture({
-        size: [this.ctx.canvas.width, this.ctx.canvas.height],
-        format: "depth24plus",
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-      });
-      this.depthTextureView = this.depthTexture.createView();
-    }
+    if (!this.bindGroup || !res.drawCommandBuffer || !res.depthTextureView) return;
 
     const renderPassDescriptor: GPURenderPassDescriptor = {
       colorAttachments: [
@@ -113,11 +102,17 @@ export class RasterizerPass {
           view: res.renderTargetView,
           loadOp: 'clear', 
           storeOp: 'store',
-          clearValue: { r: 0.1, g: 0.1, b: 0.2, a: 1.0 },
+          clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+        },
+        {
+          view: res.gBufferNormalView,
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
         },
       ],
       depthStencilAttachment: {
-        view: this.depthTextureView,
+        view: res.depthTextureView,
         depthClearValue: 1.0,
         depthLoadOp: "clear",
         depthStoreOp: "store",

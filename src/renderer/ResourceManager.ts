@@ -4,6 +4,10 @@ export class ResourceManager {
   // Screen Resources
   renderTarget!: GPUTexture;
   renderTargetView!: GPUTextureView;
+  gBufferNormal!: GPUTexture; // Added for G-Buffer
+  gBufferNormalView!: GPUTextureView; // Added for G-Buffer
+  depthTexture!: GPUTexture; // Added for G-Buffer depth
+  depthTextureView!: GPUTextureView; // Added for G-Buffer depth
   accumulateBuffer!: GPUBuffer;
 
   // Consolidated Uniforms
@@ -97,6 +101,22 @@ export class ResourceManager {
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
     });
     this.renderTargetView = this.renderTarget.createView();
+
+    if (this.gBufferNormal) this.gBufferNormal.destroy();
+    this.gBufferNormal = this.ctx.device.createTexture({
+      size: [width, height],
+      format: "rgba32float",
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.gBufferNormalView = this.gBufferNormal.createView();
+
+    if (this.depthTexture) this.depthTexture.destroy();
+    this.depthTexture = this.ctx.device.createTexture({
+      size: [width, height],
+      format: "depth32float",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.depthTextureView = this.depthTexture.createView();
 
     this.bufferSize = width * height * 16;
     if (this.accumulateBuffer) this.accumulateBuffer.destroy();

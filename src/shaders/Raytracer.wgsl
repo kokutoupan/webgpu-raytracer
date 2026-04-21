@@ -137,6 +137,9 @@ fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
 
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
+@group(0) @binding(13) var g_albedo: texture_2d<f32>;
+@group(0) @binding(14) var g_normal: texture_2d<f32>;
+@group(0) @binding(15) var g_depth: texture_depth_2d;
 // =========================================================
 //   Buffer Accessors
 // =========================================================
@@ -639,11 +642,36 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
     var specular_bounce = true;
 
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
-        let hit = intersect_tlas(ray, T_MIN, T_MAX);
-        if hit.inst_idx < 0 { break; }
+        var hit_t: f32;
+        var tri_idx: u32;
+        var inst_idx: i32;
 
-        let tri_idx = u32(hit.tri_idx);
-        let inst_idx = u32(hit.inst_idx);
+        if depth == 0u {
+            let depth_val = textureLoad(g_depth, coord, 0);
+            if depth_val >= 1.0 { break; }
+
+            let g_normal_val = textureLoad(g_normal, coord, 0);
+            tri_idx = bitcast<u32>(g_normal_val.z);
+            inst_idx = i32(bitcast<u32>(g_normal_val.w));
+
+            let z_near = 0.001;
+            let z_far = 1000.0;
+            let A = z_far / (z_far - z_near);
+            let B = (z_far * z_near) / (z_far - z_near);
+            let z_view = B / (A - depth_val);
+
+            let eye = scene.camera.origin.xyz;
+            let center = scene.camera.lower_left_corner.xyz + scene.camera.horizontal.xyz * 0.5 + scene.camera.vertical.xyz * 0.5;
+            let forward = normalize(center - eye);
+            hit_t = z_view / dot(ray.direction, forward);
+        } else {
+            let hit = intersect_tlas(ray, T_MIN, T_MAX);
+            if hit.inst_idx < 0 { break; }
+            hit_t = hit.t;
+            tri_idx = u32(hit.tri_idx);
+            inst_idx = hit.inst_idx;
+        }
+
         let tri = topology[tri_idx];
         let mat_type = u32(tri.data0.w + 0.5);
         
@@ -665,27 +693,36 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         let v_bar = f_val * dot(r_local.direction, q);
         let w_bar = 1.0 - u_bar - v_bar;
 
-        let hit_p = ray.origin + ray.direction * hit.t;
+        let hit_p = ray.origin + ray.direction * hit_t;
         let uv0 = get_uv(tri.v0);
         let uv1 = get_uv(tri.v1);
         let uv2 = get_uv(tri.v2);
         let tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
 
-        let n0 = get_normal(tri.v0);
-        let n1 = get_normal(tri.v1);
-        let n2 = get_normal(tri.v2);
-        let ln = normalize(n0 * w_bar + n1 * u_bar + n2 * v_bar);
-        var normal = normalize((vec4(ln, 0.0) * inv).xyz);
+        var normal: vec3<f32>;
+        var albedo: vec3<f32>;
 
-        var albedo = tri.data0.rgb;
-        if tri.data2.x > -0.5 { albedo *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.x), 0.0).rgb; }
+        if depth == 0u {
+            let g_normal_val = textureLoad(g_normal, coord, 0);
+            normal = unpack_normal(g_normal_val.xy);
+            albedo = textureLoad(g_albedo, coord, 0).rgb;
+        } else {
+            let n0 = get_normal(tri.v0);
+            let n1 = get_normal(tri.v1);
+            let n2 = get_normal(tri.v2);
+            let ln = normalize(n0 * w_bar + n1 * u_bar + n2 * v_bar);
+            normal = normalize((vec4(ln, 0.0) * inv).xyz);
 
-        if tri.data2.z > -0.5 {
-            let n_map = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.z), 0.0).rgb * 2.0 - 1.0;
-            let T = normalize(e1);
-            let B = normalize(cross(ln, T));
-            let ln_mapped = normalize(T * n_map.x + B * n_map.y + ln * n_map.z);
-            normal = normalize((vec4(ln_mapped, 0.0) * inv).xyz);
+            albedo = tri.data0.rgb;
+            if tri.data2.x > -0.5 { albedo *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.x), 0.0).rgb; }
+
+            if tri.data2.z > -0.5 {
+                let n_map = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.z), 0.0).rgb * 2.0 - 1.0;
+                let T = normalize(e1);
+                let B = normalize(cross(ln, T));
+                let ln_mapped = normalize(T * n_map.x + B * n_map.y + ln * n_map.z);
+                normal = normalize((vec4(ln_mapped, 0.0) * inv).xyz);
+            }
         }
 
         normal = select(-normal, normal, dot(ray.direction, normal) < 0.0);
@@ -711,7 +748,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         // --- Emissive / Light ---
         if mat_type == 3u || length(emissive) > 1e-4 {
             let em_val = select(emissive, albedo, mat_type == 3u);
-            if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction)); }
+            if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, u32(inst_idx), hit_t, ray.direction)); }
             if mat_type == 3u { break; }
         }
 

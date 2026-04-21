@@ -63,6 +63,19 @@ struct VertexOutput {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) tex_id: f32,
+    @location(4) @interpolate(flat) instance_id: u32,
+    @location(5) @interpolate(flat) tri_idx: u32,
+}
+
+// 八面体エンコーディングによる法線圧縮 (vec3 -> vec2)
+fn pack_normal(n: vec3<f32>) -> vec2<f32> {
+    let p = n.xy * (1.0 / (abs(n.x) + abs(n.y) + abs(n.z)));
+    return select(p, (1.0 - abs(p.yx)) * select(vec2(-1.0), vec2(1.0), p.xy >= vec2(0.0)), n.z < 0.0);
+}
+
+struct GBufferOutput {
+    @location(0) albedo: vec4<f32>,
+    @location(1) normal_and_id: vec4<f32>,
 }
 
 @vertex
@@ -136,18 +149,21 @@ fn vs_main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) i
     out.normal = norm;
     out.uv = local_uv;
     out.tex_id = tri.data2.x; // BaseTex ID
+    out.instance_id = inst.instance_id; // Using actual instance_id from instance struct
+    out.tri_idx = tri_idx;
     return out;
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> GBufferOutput {
     var albedo = in.color;
     if (in.tex_id > -0.5) {
         let tex_col = textureSample(tex, smp, in.uv, i32(in.tex_id)).rgb;
         albedo *= tex_col;
     }
 
-    let light_dir = normalize(vec3<f32>(1.0, 1.0, -1.0));
-    let n_dot_l = max(dot(normalize(in.normal), light_dir), 0.2);
-    return vec4<f32>(albedo * (in.normal +1.0)/2.0, 1.0);
+    var out: GBufferOutput;
+    out.albedo = vec4<f32>(albedo, 1.0);
+    out.normal_and_id = vec4<f32>(pack_normal(normalize(in.normal)), bitcast<f32>(in.tri_idx), bitcast<f32>(in.instance_id));
+    return out;
 }

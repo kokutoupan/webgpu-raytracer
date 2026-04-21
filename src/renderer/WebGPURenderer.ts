@@ -92,8 +92,11 @@ export class WebGPURenderer {
 
     const commandEncoder = this.ctx.device.createCommandEncoder();
 
-    // 1. Raytrace Pass
-    // this.raytracePass.execute(commandEncoder);
+    // 1. Rasterizer Pass
+    this.rasterizerPass.execute(commandEncoder, this.res);
+
+    // 2. Raytrace Pass
+    this.raytracePass.execute(commandEncoder);
 
     this.ctx.device.queue.submit([commandEncoder.finish()]);
   }
@@ -101,11 +104,9 @@ export class WebGPURenderer {
   present() {
     const commandEncoder = this.ctx.device.createCommandEncoder();
 
-    // 1. Rasterizer Pass
-    this.rasterizerPass.execute(commandEncoder, this.res);
 
     // 2. Postprocess Pass
-    // this.postProcessPass.execute(commandEncoder);
+    this.postProcessPass.execute(commandEncoder);
 
     // 3. Copy renderTarget to Canvas (Swapchain)
     try {
