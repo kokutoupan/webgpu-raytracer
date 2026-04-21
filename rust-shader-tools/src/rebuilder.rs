@@ -18,7 +18,7 @@ pub fn build_blas_and_vertices(
 
     let mut current_node_offset = 0;
 
-    for geom in geometries {
+    for (geom_idx, geom) in geometries.iter().enumerate() {
         // Base Data
         let (use_positions, use_normals) = if geom.base_positions.is_empty() {
             // 頂点がない場合スキップ
@@ -146,7 +146,7 @@ pub fn build_blas_and_vertices(
             buffers.mesh_topology.push(v0);
             buffers.mesh_topology.push(v1);
             buffers.mesh_topology.push(v2);
-            buffers.mesh_topology.push(0); // Pad
+            buffers.mesh_topology.push(geom_idx as u32); // Pad mapped to geom_idx
 
             // 4..19: Attributes (16 floats total now? Wait, stride in geometry was 16?)
             // Let's re-verify geometry.rs push_attributes.

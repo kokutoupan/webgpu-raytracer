@@ -75,7 +75,7 @@ export class ResourceManager {
     this.defaultTexture = this.ctx.device.createTexture({
       size: [1, 1, 1],
       format: "rgba8unorm",
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     this.ctx.device.queue.writeTexture(
@@ -91,7 +91,7 @@ export class ResourceManager {
     this.renderTarget = this.ctx.device.createTexture({
       size: [width, height],
       format: "rgba8unorm",
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
     });
     this.renderTargetView = this.renderTarget.createView();
 
@@ -111,7 +111,7 @@ export class ResourceManager {
         usage:
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.STORAGE_BINDING |
-          GPUTextureUsage.COPY_DST,
+          GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
       });
       this.historyTextureViews[i] = this.historyTextures[i].createView();
     }
