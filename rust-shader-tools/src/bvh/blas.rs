@@ -1,5 +1,5 @@
 // src/bvh/blas.rs
-use super::BVHNode;
+use super::StacklessBVHNode;
 use crate::primitives::AABB;
 use glam::{vec3, Vec3};
 
@@ -10,7 +10,7 @@ struct Bin {
 }
 
 pub struct BVHBuilder<'a> {
-    pub nodes: Vec<BVHNode>,
+    pub nodes: Vec<StacklessBVHNode>,
     indices: &'a [u32],
     tri_indices: Vec<usize>,
     tri_aabbs: Vec<AABB>,
@@ -68,14 +68,9 @@ impl<'a> BVHBuilder<'a> {
         self.nodes.clear();
         self.tri_indices = (0..self.indices.len() / 3).collect();
 
-        let root = BVHNode {
-            left_first: 0,
-            tri_count: self.tri_indices.len() as u32,
-            ..Default::default()
-        };
-        self.nodes.push(root);
-        self.update_node_bounds(0);
-        self.subdivide(0);
+        if !self.tri_indices.is_empty() {
+            self.subdivide(0, self.tri_indices.len());
+        }
 
         let packed_nodes = self.pack_nodes();
         let mut sorted_indices = Vec::with_capacity(self.indices.len());
@@ -90,34 +85,37 @@ impl<'a> BVHBuilder<'a> {
         (packed_nodes, sorted_indices, self.tri_indices.clone())
     }
 
-    fn update_node_bounds(&mut self, node_idx: usize) {
-        let node = self.nodes[node_idx];
-        let mut aabb = AABB::empty();
-        for i in 0..node.tri_count {
-            let tri_id = self.tri_indices[(node.left_first + i) as usize];
-            aabb = aabb.union(&self.tri_aabbs[tri_id]);
-        }
-        self.nodes[node_idx].aabb = aabb;
-    }
+    fn subdivide(&mut self, first: usize, count: usize) {
+        let node_idx = self.nodes.len();
+        self.nodes.push(StacklessBVHNode::default());
 
-    fn subdivide(&mut self, node_idx: usize) {
-        let node = self.nodes[node_idx];
-        if node.tri_count <= 4 {
+        let mut aabb = AABB::empty();
+        for i in 0..count {
+            aabb = aabb.union(&self.tri_aabbs[self.tri_indices[first + i]]);
+        }
+        self.nodes[node_idx].min_b = aabb.min.to_array();
+        self.nodes[node_idx].max_b = aabb.max.to_array();
+
+        if count <= 4 {
+            self.nodes[node_idx].data = ((first as u32) << 3) | count as u32;
+            self.nodes[node_idx].skip_pointer = self.nodes.len() as u32;
             return;
         }
 
-        let extent = node.aabb.max - node.aabb.min;
+        let extent = aabb.max - aabb.min;
         let axis = if extent.y > extent.x { 1 } else if extent.z > extent.x && extent.z > extent.y { 2 } else { 0 };
 
         let split_len = extent[axis];
-        let split_min = node.aabb.min[axis];
+        let split_min = aabb.min[axis];
 
-        if split_len < 1e-6 { return; }
+        if split_len < 1e-6 {
+            self.nodes[node_idx].data = ((first as u32) << 3) | count as u32;
+            self.nodes[node_idx].skip_pointer = self.nodes.len() as u32;
+            return;
+        }
 
         const BINS: usize = 16;
         let mut bins = [Bin::default(); BINS];
-        let first = node.left_first as usize;
-        let count = node.tri_count as usize;
         let scale = BINS as f32 / split_len;
         
         let get_bin_idx = |val: f32| -> usize {
@@ -166,7 +164,11 @@ impl<'a> BVHBuilder<'a> {
             }
         }
 
-        if best_split == usize::MAX { return; }
+        if best_split == usize::MAX {
+            self.nodes[node_idx].data = ((first as u32) << 3) | count as u32;
+            self.nodes[node_idx].skip_pointer = self.nodes.len() as u32;
+            return;
+        }
 
         let mut i = first;
         let mut j = first + count - 1;
@@ -188,34 +190,45 @@ impl<'a> BVHBuilder<'a> {
             }
         }
 
-        let left_count = i - first;
-        if left_count == 0 || left_count == count { return; }
+        let mut l_count = i - first;
+        let mut r_count = count - l_count;
 
-        let left_child_idx = self.nodes.len();
-        self.nodes.push(BVHNode { left_first: first as u32, tri_count: left_count as u32, ..Default::default() });
-        self.nodes.push(BVHNode { left_first: i as u32, tri_count: (count - left_count) as u32, ..Default::default() });
-        
-        self.nodes[node_idx].left_first = left_child_idx as u32;
-        self.nodes[node_idx].tri_count = 0;
+        if l_count == 0 || l_count == count {
+            self.nodes[node_idx].data = ((first as u32) << 3) | count as u32;
+            self.nodes[node_idx].skip_pointer = self.nodes.len() as u32;
+            return;
+        }
 
-        self.update_node_bounds(left_child_idx);
-        self.update_node_bounds(left_child_idx + 1);
-        self.subdivide(left_child_idx);
-        self.subdivide(left_child_idx + 1);
+        // --- SORT CHILDREN FOR STACKLESS BVH (Static Front-to-Back heuristic) ---
+        let l_cost = left_area[best_split] * l_count as f32;
+        let r_cost = right_area[best_split + 1] * r_count as f32;
+        if r_cost > l_cost {
+            self.tri_indices[first..first + count].rotate_left(l_count);
+            let temp = l_count;
+            l_count = r_count;
+            r_count = temp;
+        }
+
+        self.nodes[node_idx].data = 0;
+
+        self.subdivide(first, l_count);
+        self.subdivide(first + l_count, r_count);
+
+        self.nodes[node_idx].skip_pointer = self.nodes.len() as u32;
     }
 
     fn pack_nodes(&self) -> Vec<f32> {
         let mut data = vec![0.; self.nodes.len() * 8];
         for (i, node) in self.nodes.iter().enumerate() {
             let off = i * 8;
-            data[off + 0] = node.aabb.min.x;
-            data[off + 1] = node.aabb.min.y;
-            data[off + 2] = node.aabb.min.z;
-            data[off + 3] = node.left_first as f32;
-            data[off + 4] = node.aabb.max.x;
-            data[off + 5] = node.aabb.max.y;
-            data[off + 6] = node.aabb.max.z;
-            data[off + 7] = node.tri_count as f32;
+            data[off + 0] = node.min_b[0];
+            data[off + 1] = node.min_b[1];
+            data[off + 2] = node.min_b[2];
+            data[off + 3] = f32::from_bits(node.skip_pointer);
+            data[off + 4] = node.max_b[0];
+            data[off + 5] = node.max_b[1];
+            data[off + 6] = node.max_b[2];
+            data[off + 7] = f32::from_bits(node.data);
         }
         data
     }

@@ -16,6 +16,7 @@ pub mod rebuilder;
 pub mod render_buffers;
 pub mod scene;
 
+
 #[wasm_bindgen(start)]
 pub fn init_panic_hook() {
     console_error_panic_hook::set_once();

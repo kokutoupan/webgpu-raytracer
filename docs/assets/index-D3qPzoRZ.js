@@ -25,29 +25,29 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   })();
   const I = "modulepreload", H = function(o) {
     return "/webgpu-raytracer/" + o;
-  }, W = {}, L = function(e, t, n) {
+  }, U = {}, M = function(e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let l = function(d) {
-        return Promise.all(d.map((g) => Promise.resolve(g).then((m) => ({
+        return Promise.all(d.map((_) => Promise.resolve(_).then((v) => ({
           status: "fulfilled",
-          value: m
-        }), (m) => ({
+          value: v
+        }), (v) => ({
           status: "rejected",
-          reason: m
+          reason: v
         }))));
       };
       var s = l;
       document.getElementsByTagName("link");
       const a = document.querySelector("meta[property=csp-nonce]"), c = (a == null ? void 0 : a.nonce) || (a == null ? void 0 : a.getAttribute("nonce"));
       r = l(t.map((d) => {
-        if (d = H(d), d in W) return;
-        W[d] = true;
-        const g = d.endsWith(".css"), m = g ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${d}"]${m}`)) return;
-        const v = document.createElement("link");
-        if (v.rel = g ? "stylesheet" : I, g || (v.as = "script"), v.crossOrigin = "", v.href = d, c && v.setAttribute("nonce", c), document.head.appendChild(v), g) return new Promise((w, A) => {
-          v.addEventListener("load", w), v.addEventListener("error", () => A(new Error(`Unable to preload CSS for ${d}`)));
+        if (d = H(d), d in U) return;
+        U[d] = true;
+        const _ = d.endsWith(".css"), v = _ ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${d}"]${v}`)) return;
+        const m = document.createElement("link");
+        if (m.rel = _ ? "stylesheet" : I, _ || (m.as = "script"), m.crossOrigin = "", m.href = d, c && m.setAttribute("nonce", c), document.head.appendChild(m), _) return new Promise((w, P) => {
+          m.addEventListener("load", w), m.addEventListener("error", () => P(new Error(`Unable to preload CSS for ${d}`)));
         });
       }));
     }
@@ -109,16 +109,16 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }), this.device.queue.submit([
         l.finish()
       ]), await this.device.queue.onSubmittedWorkDone(), await this.readbackBuffer.mapAsync(GPUMapMode.READ);
-      const d = new Uint8Array(this.readbackBuffer.getMappedRange()), g = t * n * 4;
-      (!this.readbackResultBuffer || this.readbackResultBuffer.byteLength !== g) && (this.readbackResultBuffer = new Uint8Array(g));
-      const m = this.readbackResultBuffer;
-      if (a === i) m.set(d.subarray(0, g));
-      else for (let v = 0; v < n; v++) {
-        const w = v * a, A = v * i;
-        m.set(d.subarray(w, w + i), A);
+      const d = new Uint8Array(this.readbackBuffer.getMappedRange()), _ = t * n * 4;
+      (!this.readbackResultBuffer || this.readbackResultBuffer.byteLength !== _) && (this.readbackResultBuffer = new Uint8Array(_));
+      const v = this.readbackResultBuffer;
+      if (a === i) v.set(d.subarray(0, _));
+      else for (let m = 0; m < n; m++) {
+        const w = m * a, P = m * i;
+        v.set(d.subarray(w, w + i), P);
       }
       return this.readbackBuffer.unmap(), {
-        data: m.buffer,
+        data: v.buffer,
         width: t,
         height: n
       };
@@ -421,8 +421,8 @@ struct LightRef {
 }
 
 struct BVHNode {
-    min_b: vec4<f32>, // w: left_first
-    max_b: vec4<f32>, // w: tri_count
+    min_b: vec4<f32>, // w: skip_pointer
+    max_b: vec4<f32>, // w: data (internal: 0, leaf: (left_first << 3) | tri_count)
 }
 
 struct Instance {
@@ -822,38 +822,39 @@ fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: 
 fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
-    var stack: array<u32, 32>; // Reduced stack size
-    var stackptr = 0u;
-
-    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r, t_min, closest_t) < T_MAX {
-        stack[0] = node_start_idx; stackptr = 1u;
-    }
-
-    while stackptr > 0u {
-        stackptr--;
-        let idx = stack[stackptr];
-        let node = nodes[idx];
-        let count = u32(node.max_b.w);
-
-        if count > 0u {
-            let first = u32(node.min_b.w);
-            for (var i = 0u; i < count; i++) {
-                let tri_id = first + i;
-                let tr = topology[tri_id];
-                let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, closest_t);
-                if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
+    
+    let end_node = node_start_idx + bitcast<u32>(nodes[node_start_idx].min_b.w);
+    var curr = node_start_idx;
+    
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        var hit_t = closest_t;
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, closest_t);
+        
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf node
+                let first = data >> 3u;
+                let count = data & 7u;
+                for (var i = 0u; i < count; i++) {
+                    let tri_id = first + i;
+                    let tr = topology[tri_id];
+                    let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, closest_t);
+                    if t > 0.0 { 
+                        closest_t = t; 
+                        hit_idx = f32(tri_id); 
+                    }
+                }
+                curr = node_start_idx + bitcast<u32>(node.min_b.w);
+            } else {
+                // Internal node
+                curr = curr + 1u;
             }
         } else {
-            let l = u32(node.min_b.w) + node_start_idx;
-            let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, closest_t);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, closest_t);
-
-            if dl < T_MAX && dr < T_MAX {
-                stack[stackptr] = select(l, r_idx, dl < dr);
-                stack[stackptr + 1u] = select(r_idx, l, dl < dr);
-                stackptr += 2u;
-            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
+            // Missed AABB
+            curr = node_start_idx + bitcast<u32>(node.min_b.w);
         }
     }
     return vec2<f32>(closest_t, hit_idx);
@@ -863,32 +864,31 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     var res: HitResult; res.t = t_max; res.tri_idx = -1.0; res.inst_idx = -1;
     if scene.blas_base_idx == 0u { return res; }
 
-    var stack: array<u32, 16>; // TLAS is usually shallow
-    var stackptr = 0u;
+    var curr = 0u;
+    let end_node = bitcast<u32>(nodes[0].min_b.w);
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r, t_min, res.t) < T_MAX {
-        stack[0] = 0u; stackptr = 1u;
-    }
-
-    while stackptr > 0u {
-        stackptr--;
-        let node = nodes[stack[stackptr]];
-
-        if node.max_b.w > 0.5 { // Leaf
-            let inst_idx = u32(node.min_b.w);
-            let inst = instances[inst_idx];
-            let r_local = make_ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
-            let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
-            if blas.y > -0.5 { res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx); }
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        if intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, res.t) < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf
+                let inst_idx = data >> 3u;
+                let inst = instances[inst_idx];
+                let r_local = make_ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
+                let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
+                if blas.y > -0.5 { 
+                    res.t = blas.x; 
+                    res.tri_idx = blas.y; 
+                    res.inst_idx = i32(inst_idx); 
+                }
+                curr = bitcast<u32>(node.min_b.w);
+            } else {
+                curr = curr + 1u;
+            }
         } else {
-            let l = u32(node.min_b.w);
-            let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, res.t);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, res.t);
-            if dl < T_MAX && dr < T_MAX {
-                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
-                stackptr += 2u;
-            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
+            curr = bitcast<u32>(node.min_b.w);
         }
     }
     return res;
@@ -897,57 +897,33 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 // shadow ray\u7248
 // \u30B7\u30E3\u30C9\u30A6\u30EC\u30A4\u7528\u306EBLAS\u4EA4\u5DEE\u5224\u5B9A\uFF08\u30D2\u30C3\u30C8\u3057\u305F\u3089\u5373true\u3092\u8FD4\u3059\uFF09
 fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> bool {
-    var stack: array<u32, 32>;
-    var stackptr = 0u;
-
-    // \u30EB\u30FC\u30C8AABB\u5224\u5B9A\uFF08\u3053\u3053\u306F\u540C\u3058\uFF09
-    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r, t_min, t_max) < T_MAX {
-        stack[0] = node_start_idx;
-        stackptr = 1u;
-    }
-
-    while stackptr > 0u {
-        stackptr--;
-        let idx = stack[stackptr];
-        let node = nodes[idx];
-        let count = u32(node.max_b.w);
-
-        if count > 0u {
-            // \u8449\u30CE\u30FC\u30C9\u51E6\u7406
-            let first = u32(node.min_b.w);
-            for (var i = 0u; i < count; i++) {
-                let tri_id = first + i;
-                let tr = topology[tri_id];
-                // \u30D2\u30C3\u30C8\u3057\u305F\u3089\u5373 true \u3092\u8FD4\u3059
-                let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, t_max);
-                if t > 0.0 { return true; }
+    let end_node = node_start_idx + bitcast<u32>(nodes[node_start_idx].min_b.w);
+    var curr = node_start_idx;
+    
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, t_max);
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf node
+                let first = data >> 3u;
+                let count = data & 7u;
+                for (var i = 0u; i < count; i++) {
+                    let tri_id = first + i;
+                    let tr = topology[tri_id];
+                    let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, t_max);
+                    if t > 0.0 { return true; }
+                }
+                curr = node_start_idx + bitcast<u32>(node.min_b.w);
+            } else {
+                // Internal node
+                curr = curr + 1u;
             }
         } else {
-            // \u5185\u90E8\u30CE\u30FC\u30C9\u51E6\u7406
-            let l = u32(node.min_b.w) + node_start_idx;
-            let r_idx = l + 1u;
-            
-            // t_max \u306F\u7E2E\u307E\u306A\u3044\u306E\u3067\u56FA\u5B9A\u5024\u3067\u5224\u5B9A
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, t_max);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, t_max);
-
-            // \u8FD1\u3044\u9806\u306B\u30B9\u30BF\u30C3\u30AF\u306B\u7A4D\u3080\uFF08\u8FD1\u3044\u65B9\u304C\u65E9\u304F\u30D2\u30C3\u30C8\u3057\u3066\u65E9\u304Freturn\u3067\u304D\u308B\u53EF\u80FD\u6027\u304C\u9AD8\u3044\u305F\u3081\uFF09
-            if dl < T_MAX && dr < T_MAX {
-                if dl < dr {
-                    stack[stackptr] = r_idx;
-                    stack[stackptr + 1u] = l;
-                } else {
-                    stack[stackptr] = l;
-                    stack[stackptr + 1u] = r_idx;
-                }
-                stackptr += 2u;
-            } else if dl < T_MAX {
-                stack[stackptr] = l;
-                stackptr++;
-            } else if dr < T_MAX {
-                stack[stackptr] = r_idx;
-                stackptr++;
-            }
+            // Missed AABB
+            curr = node_start_idx + bitcast<u32>(node.min_b.w);
         }
     }
     return false;
@@ -957,43 +933,34 @@ fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) ->
 fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
     if scene.blas_base_idx == 0u { return false; }
 
-    var stack: array<u32, 16>;
-    var stackptr = 0u;
+    var curr = 0u;
+    let end_node = bitcast<u32>(nodes[0].min_b.w);
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r, t_min, t_max) < T_MAX {
-        stack[0] = 0u;
-        stackptr = 1u;
-    }
-
-    while stackptr > 0u {
-        stackptr--;
-        let node = nodes[stack[stackptr]];
-
-        if node.max_b.w > 0.5 { // Leaf (Instance)
-            let inst_idx = u32(node.min_b.w);
-            let inst = instances[inst_idx];
-            
-            // \u30EC\u30A4\u3092\u30ED\u30FC\u30AB\u30EB\u5EA7\u6A19\u3078\u5909\u63DB
-            let r_local = make_ray(
-                (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
-                (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
-            );
-            
-            if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) {
-                return true;
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, t_max);
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf
+                let inst_idx = data >> 3u;
+                let inst = instances[inst_idx];
+                
+                let r_local = make_ray(
+                    (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
+                    (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
+                );
+                
+                if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) {
+                    return true;
+                }
+                curr = bitcast<u32>(node.min_b.w);
+            } else {
+                curr = curr + 1u;
             }
         } else {
-            let l = u32(node.min_b.w);
-            let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, t_max);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, t_max);
-
-            if dl < T_MAX && dr < T_MAX {
-                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } 
-                else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
-                stackptr += 2u;
-            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } 
-            else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
+            curr = bitcast<u32>(node.min_b.w);
         }
     }
     return false;
@@ -1890,8 +1857,8 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       if (r.setPipeline(this.pipeline), r.setBindGroup(0, this.bindGroup), t.drawCommandsArray) {
         const i = t.drawCommandsArray, s = t.instanceCount;
         for (let a = 0; a < s; a++) {
-          const c = i[a * 4 + 0], l = i[a * 4 + 1], d = i[a * 4 + 2], g = i[a * 4 + 3];
-          c > 0 && l > 0 && r.draw(c, l, d, g);
+          const c = i[a * 4 + 0], l = i[a * 4 + 1], d = i[a * 4 + 2], _ = i[a * 4 + 3];
+          c > 0 && l > 0 && r.draw(c, l, d, _);
         }
       }
       r.end();
@@ -1972,12 +1939,12 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       return this.ctx.captureFrame(this.res.renderTarget);
     }
   }
-  function X(o) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-CaGvNcxT.js", {
+  function Y(o) {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-CM76xITE.js", {
       name: o == null ? void 0 : o.name
     });
   }
-  class Y {
+  class X {
     constructor() {
       __publicField(this, "worker");
       __publicField(this, "resolveReady", null);
@@ -2001,7 +1968,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       __publicField(this, "updateResolvers", []);
       __publicField(this, "lastWidth", -1);
       __publicField(this, "lastHeight", -1);
-      this.worker = new X(), this.worker.onmessage = this.handleMessage.bind(this);
+      this.worker = new Y(), this.worker.onmessage = this.handleMessage.bind(this);
     }
     get lights() {
       return this._lights;
@@ -2136,7 +2103,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
     async record(e, t, n) {
       if (this.isRecording) return;
       this.isRecording = true;
-      const { Muxer: r, ArrayBufferTarget: i } = await L(async () => {
+      const { Muxer: r, ArrayBufferTarget: i } = await M(async () => {
         const { Muxer: l, ArrayBufferTarget: d } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: l,
@@ -2168,8 +2135,8 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
           l
         ], {
           type: "video/webm"
-        }), g = URL.createObjectURL(d);
-        n(g, d);
+        }), _ = URL.createObjectURL(d);
+        n(_, d);
       } catch (l) {
         throw console.error("Recording failed:", l), l;
       } finally {
@@ -2220,10 +2187,10 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
         }
         await this.renderFrame(t.spp), n.encodeQueueSize > 5 && await n.flush();
         try {
-          const { data: d, width: g, height: m } = await this.renderer.captureFrame(), v = "RGBA", w = new VideoFrame(d, {
-            codedWidth: g,
-            codedHeight: m,
-            format: v,
+          const { data: d, width: _, height: v } = await this.renderer.captureFrame(), m = "RGBA", w = new VideoFrame(d, {
+            codedWidth: _,
+            codedHeight: v,
+            format: m,
             timestamp: (i + c) * 1e6 / t.fps,
             duration: 1e6 / t.fps
           });
@@ -2244,15 +2211,15 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       let t = 0, n = performance.now();
       for (; t < e; ) {
         const r = Math.min(this.currentBatchSize, e - t), i = performance.now();
-        for (let m = 0; m < r; m++) this.renderer.compute(t + m);
+        for (let v = 0; v < r; v++) this.renderer.compute(t + v);
         t += r;
         const s = performance.now();
         (t >= e || s - n > 100) && (this.renderer.present(), n = s), await this.renderer.device.queue.onSubmittedWorkDone();
         const l = performance.now() - i;
         let d = l > 0 ? 100 / l : 1.5;
         d = Math.min(d, 1.5);
-        const g = Math.round(this.currentBatchSize * (0.8 + 0.2 * d));
-        this.currentBatchSize = Math.max(1, Math.min(e, Math.min(g, 50)));
+        const _ = Math.round(this.currentBatchSize * (0.8 + 0.2 * d));
+        this.currentBatchSize = Math.max(1, Math.min(e, Math.min(_, 50)));
       }
     }
   }
@@ -2296,7 +2263,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       }
     ]
   };
-  class M {
+  class L {
     constructor(e, t) {
       __publicField(this, "pc");
       __publicField(this, "dc", null);
@@ -2601,7 +2568,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
         case "worker_joined":
           console.log(`Worker joined: ${e.workerId}`);
           const t = (r) => {
-            const i = new M(r, (s) => this.sendSignal(s));
+            const i = new L(r, (s) => this.sendSignal(s));
             return this.workers.set(r, i), i.onDataChannelOpen = () => {
               var _a2;
               console.log(`[Host] Open for ${r}`), i.sendData({
@@ -2666,7 +2633,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
         case "offer":
           e.fromId && await ((r) => {
             var _a2, _b;
-            return this.hostClient && this.hostClient.close(), this.hostClient = new M(r, (i) => this.sendSignal(i)), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
+            return this.hostClient && this.hostClient.close(), this.hostClient = new L(r, (i) => this.sendSignal(i)), (_a2 = this.onStatusChange) == null ? void 0 : _a2.call(this, "Connected to Host!"), (_b = this.onHostConnected) == null ? void 0 : _b.call(this), this.hostClient.onDataChannelOpen = () => {
               var _a3, _b2;
               (_a3 = this.hostClient) == null ? void 0 : _a3.sendData({
                 type: "HELLO",
@@ -2984,7 +2951,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       if (console.log(`[Host] Received ${e.length} chunks for ${t} from ${n}`), this.pendingChunks.set(t, e), this.completedJobs++, this.ui.setStatus(`Distributed Progress: ${this.completedJobs} / ${this.totalJobs} jobs`), this.workerStatus.set(n, "idle"), this.activeJobs.delete(n), await this.assignJob(n), this.completedJobs >= this.totalJobs) return console.log("[Host] All jobs complete. Triggering Muxing Callback."), "ALL_COMPLETE";
     }
     async muxAndDownload() {
-      const e = Array.from(this.pendingChunks.keys()).sort((l, d) => l - d), { Muxer: t, ArrayBufferTarget: n } = await L(async () => {
+      const e = Array.from(this.pendingChunks.keys()).sort((l, d) => l - d), { Muxer: t, ArrayBufferTarget: n } = await M(async () => {
         const { Muxer: l, ArrayBufferTarget: d } = await import("./webm-muxer-MLtUgOCn.js");
         return {
           Muxer: l,
@@ -3001,13 +2968,13 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       });
       for (const l of e) {
         const d = this.pendingChunks.get(l);
-        if (d) for (const g of d) r.addVideoChunk(new EncodedVideoChunk({
-          type: g.type,
-          timestamp: g.timestamp,
-          duration: g.duration,
-          data: g.data
+        if (d) for (const _ of d) r.addVideoChunk(new EncodedVideoChunk({
+          type: _.type,
+          timestamp: _.timestamp,
+          duration: _.duration,
+          data: _.data
         }), {
-          decoderConfig: g.decoderConfig
+          decoderConfig: _.decoderConfig
         });
       }
       r.finalize();
@@ -3105,57 +3072,57 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       };
     }
   }
-  let x = false, y = null, k = null, S = null;
-  const u = new ee(), _ = new V(u.canvas), h = new Y(), C = new K(_, h, u.canvas), b = new Z(), p = new te(b, u), B = new ne(b, _, u, C);
-  B.onRemoteSceneLoad = async (o, e) => {
-    y = o, k = e, await D("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
+  let y = false, x = null, B = null, S = null;
+  const u = new ee(), g = new V(u.canvas), h = new X(), k = new K(g, h, u.canvas), b = new Z(), p = new te(b, u), C = new ne(b, g, u, k);
+  C.onRemoteSceneLoad = async (o, e) => {
+    x = o, B = e, await D("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
   };
-  let R = 0, P = 0, T = 0, U = performance.now();
+  let R = 0, A = 0, T = 0, z = performance.now();
   const re = () => {
     const o = parseInt(u.inputDepth.value, 10) || f.defaultDepth, e = parseInt(u.inputSPP.value, 10) || f.defaultSPP;
-    _.buildPipeline(o, e);
+    g.buildPipeline(o, e);
   }, E = () => {
     const { width: o, height: e } = u.getRenderConfig();
-    _.updateScreenSize(o, e), h.hasWorld && (h.updateCamera(o, e), _.updateSceneUniforms(h.cameraData, 0, h.lightCount)), _.recreateBindGroup(), _.resetAccumulation(), R = 0, P = 0;
+    g.updateScreenSize(o, e), h.hasWorld && (h.updateCamera(o, e), g.updateSceneUniforms(h.cameraData, 0, h.lightCount)), g.recreateBindGroup(), g.resetAccumulation(), R = 0, A = 0;
   }, D = async (o, e = true) => {
-    x = false, console.log(`Loading Scene: ${o}...`);
+    y = false, console.log(`Loading Scene: ${o}...`);
     let t, n;
-    o === "viewer" && y && (k === "obj" ? t = y : k === "glb" && (n = new Uint8Array(y).slice(0))), await h.loadScene(o, t, n), h.printStats(), await _.loadTexturesFromWorld(h), await ie(), E(), u.updateAnimList(h.getAnimationList()), e && (x = true, u.updateRenderButton(true));
+    o === "viewer" && x && (B === "obj" ? t = x : B === "glb" && (n = new Uint8Array(x).slice(0))), await h.loadScene(o, t, n), h.printStats(), await g.loadTexturesFromWorld(h), await ie(), E(), u.updateAnimList(h.getAnimationList()), e && (y = true, u.updateRenderButton(true));
   }, ie = async () => {
-    _.updateCombinedGeometry(h.vertices, h.normals, h.uvs), _.updateCombinedBVH(h.tlas, h.blas), _.updateBuffer("topology", h.mesh_topology), _.updateBuffer("instance", h.instances), _.updateBuffer("lights", h.lights), _.updateBuffer("draw_commands", h.draw_commands), _.updateSceneUniforms(h.cameraData, 0, h.lightCount), await _.device.queue.onSubmittedWorkDone();
-  }, z = () => {
-    if (C.recording || (requestAnimationFrame(z), !x || !h.hasWorld)) return;
+    g.updateCombinedGeometry(h.vertices, h.normals, h.uvs), g.updateCombinedBVH(h.tlas, h.blas), g.updateBuffer("topology", h.mesh_topology), g.updateBuffer("instance", h.instances), g.updateBuffer("lights", h.lights), g.updateBuffer("draw_commands", h.draw_commands), g.updateSceneUniforms(h.cameraData, 0, h.lightCount), await g.device.queue.onSubmittedWorkDone();
+  }, W = () => {
+    if (k.recording || (requestAnimationFrame(W), !y || !h.hasWorld)) return;
     let o = parseInt(u.inputUpdateInterval.value, 10) || 0;
-    if (o > 0 && R >= o && h.update(P / (o || 1) / 60), h.hasNewData) {
+    if (o > 0 && R >= o && h.update(A / (o || 1) / 60), h.hasNewData) {
       let t = false;
-      t || (t = _.updateCombinedBVH(h.tlas, h.blas)), t || (t = _.updateBuffer("instance", h.instances)), t || (t = _.updateBuffer("draw_commands", h.draw_commands)), h.hasNewGeometry && (t || (t = _.updateCombinedGeometry(h.vertices, h.normals, h.uvs)), t || (t = _.updateBuffer("topology", h.mesh_topology)), t || (t = _.updateBuffer("lights", h.lights)), h.hasNewGeometry = false), h.updateCamera(u.canvas.width, u.canvas.height), _.updateSceneUniforms(h.cameraData, 0, h.lightCount), t && _.recreateBindGroup(), _.resetAccumulation(), R = 0, h.hasNewData = false;
+      t || (t = g.updateCombinedBVH(h.tlas, h.blas)), t || (t = g.updateBuffer("instance", h.instances)), t || (t = g.updateBuffer("draw_commands", h.draw_commands)), h.hasNewGeometry && (t || (t = g.updateCombinedGeometry(h.vertices, h.normals, h.uvs)), t || (t = g.updateBuffer("topology", h.mesh_topology)), t || (t = g.updateBuffer("lights", h.lights)), h.hasNewGeometry = false), h.updateCamera(u.canvas.width, u.canvas.height), g.updateSceneUniforms(h.cameraData, 0, h.lightCount), t && g.recreateBindGroup(), g.resetAccumulation(), R = 0, h.hasNewData = false;
     }
-    R++, T++, P++, _.compute(R), _.present();
+    R++, T++, A++, g.compute(R), g.present();
     const e = performance.now();
-    e - U >= 1e3 && (u.updateStats(T, 1e3 / T, R), T = 0, U = e);
+    e - z >= 1e3 && (u.updateStats(T, 1e3 / T, R), T = 0, z = e);
   };
   b.onStatusChange = (o) => u.setStatus(`Status: ${o}`);
   b.onWorkerStatus = async (o, e, t) => {
-    await p.onWorkerStatus(o, e, t) === "NEED_SCENE" && (console.log(`[Host] Worker ${o} needs scene. Syncing...`), await p.sendSceneHelper(y, k, o));
+    await p.onWorkerStatus(o, e, t) === "NEED_SCENE" && (console.log(`[Host] Worker ${o} needs scene. Syncing...`), await p.sendSceneHelper(x, B, o));
   };
   b.onRenderResult = async (o, e, t) => {
     await p.onRenderResult(o, e, t) === "ALL_COMPLETE" && (console.log("[Host] All jobs complete. Muxing and downloading..."), u.setStatus("Muxing..."), await p.muxAndDownload());
   };
   b.onSceneReceived = async (o, e) => {
-    console.log("[Worker] Received Scene from Host."), await B.onSceneReceived(o, e), u.sceneSelect.value = e.sceneName || "viewer", e.anim !== void 0 && (u.animSelect.value = e.anim.toString(), h.setAnimation(e.anim)), B.isDistributedSceneLoaded = true, B.isSceneLoading = false, console.log("[Worker] Distributed Scene Loaded. Signaling Host."), await b.sendSceneLoaded(), B.handlePendingRenderRequest();
+    console.log("[Worker] Received Scene from Host."), await C.onSceneReceived(o, e), u.sceneSelect.value = e.sceneName || "viewer", e.anim !== void 0 && (u.animSelect.value = e.anim.toString(), h.setAnimation(e.anim)), C.isDistributedSceneLoaded = true, C.isSceneLoading = false, console.log("[Worker] Distributed Scene Loaded. Signaling Host."), await b.sendSceneLoaded(), C.handlePendingRenderRequest();
   };
   const se = () => {
     u.onRenderStart = () => {
-      x = true;
+      y = true;
     }, u.onRenderStop = () => {
-      x = false;
+      y = false;
     }, u.onSceneSelect = (o) => D(o, false), u.onResolutionChange = E, u.onRecompile = (o, e) => {
-      x = false, _.buildPipeline(o, e), _.recreateBindGroup(), _.resetAccumulation(), R = 0, x = true;
+      y = false, g.buildPipeline(o, e), g.recreateBindGroup(), g.resetAccumulation(), R = 0, y = true;
     }, u.onFileSelect = async (o) => {
       var _a;
-      ((_a = o.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (y = await o.text(), k = "obj") : (y = await o.arrayBuffer(), k = "glb"), u.sceneSelect.value = "viewer", D("viewer", false);
+      ((_a = o.name.split(".").pop()) == null ? void 0 : _a.toLowerCase()) === "obj" ? (x = await o.text(), B = "obj") : (x = await o.arrayBuffer(), B = "glb"), u.sceneSelect.value = "viewer", D("viewer", false);
     }, u.onAnimSelect = (o) => h.setAnimation(o), u.onRecordStart = async () => {
-      if (!C.recording) if (S === "host") {
+      if (!k.recording) if (S === "host") {
         const o = b.getWorkerIds();
         p.distributedConfig = u.getRenderConfig();
         const e = Math.ceil(p.distributedConfig.fps * p.distributedConfig.duration);
@@ -3170,36 +3137,36 @@ Auto Scene Sync enabled.`)) return;
             count: r
           });
         }
-        p.totalJobs = p.jobQueue.length, o.forEach((n) => p.workerStatus.set(n, "idle")), u.setStatus(`Distributed Progress: 0 / ${p.totalJobs} jobs (Waiting for workers...)`), o.length > 0 ? (u.setStatus("Syncing Scene to Workers..."), b.sendRenderStart(), await p.sendSceneHelper(y, k)) : console.log("No workers yet. Waiting...");
+        p.totalJobs = p.jobQueue.length, o.forEach((n) => p.workerStatus.set(n, "idle")), u.setStatus(`Distributed Progress: 0 / ${p.totalJobs} jobs (Waiting for workers...)`), o.length > 0 ? (u.setStatus("Syncing Scene to Workers..."), b.sendRenderStart(), await p.sendSceneHelper(x, B)) : console.log("No workers yet. Waiting...");
       } else {
-        x = false, u.setRecordingState(true);
+        y = false, u.setRecordingState(true);
         const o = u.getRenderConfig();
         try {
           const e = performance.now();
-          await C.record(o, (t, n) => u.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
+          await k.record(o, (t, n) => u.setRecordingState(true, `Rec: ${t}/${n} (${Math.round(t / n * 100)}%)`), (t) => {
             const n = document.createElement("a");
             n.href = t, n.download = `raytrace_${Date.now()}.webm`, n.click(), URL.revokeObjectURL(t);
           }), console.log(`Recording took ${performance.now() - e}[ms]`);
         } catch {
           alert("Recording failed.");
         } finally {
-          u.setRecordingState(false), x = false, u.updateRenderButton(false), requestAnimationFrame(z);
+          u.setRecordingState(false), y = false, u.updateRenderButton(false), requestAnimationFrame(W);
         }
       }
     }, u.onConnectHost = () => {
       S === "host" ? (b.disconnect(), S = null, u.setConnectionState(null)) : (b.connect("host"), S = "host", u.setConnectionState("host"));
     }, u.onConnectWorker = () => {
-      S === "worker" ? (b.disconnect(), S = null, u.setConnectionState(null)) : (C.cancel(), b.connect("worker"), S = "worker", u.setConnectionState("worker"));
+      S === "worker" ? (b.disconnect(), S = null, u.setConnectionState(null)) : (k.cancel(), b.connect("worker"), S = "worker", u.setConnectionState("worker"));
     }, u.setConnectionState(null);
   };
   async function ae() {
     try {
-      await _.init(), await h.initWasm();
+      await g.init(), await h.initWasm();
     } catch (o) {
       alert("Init failed: " + o);
       return;
     }
-    se(), re(), E(), D("cornell", false), requestAnimationFrame(z);
+    se(), re(), E(), D("cornell", false), requestAnimationFrame(W);
   }
   ae().catch(console.error);
 })();

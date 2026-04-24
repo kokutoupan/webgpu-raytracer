@@ -2,16 +2,17 @@
 pub mod blas;
 pub mod tlas;
 
-use crate::primitives::AABB;
 use glam::Mat4;
 
 // --- Common Structures ---
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
-pub struct BVHNode {
-    pub aabb: AABB,
-    pub left_first: u32, // BLAS: Tri Index, TLAS: Child/Instance Index
-    pub tri_count: u32,  // BLAS: Count,    TLAS: Leaf Flag (0 or 1)
+pub struct StacklessBVHNode {
+    pub min_b: [f32; 3],
+    pub skip_pointer: u32,
+    pub max_b: [f32; 3],
+    pub data: u32,
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -54,8 +54,8 @@ struct LightRef {
 }
 
 struct BVHNode {
-    min_b: vec4<f32>, // w: left_first
-    max_b: vec4<f32>, // w: tri_count
+    min_b: vec4<f32>, // w: skip_pointer
+    max_b: vec4<f32>, // w: data (internal: 0, leaf: (left_first << 3) | tri_count)
 }
 
 struct Instance {
@@ -455,38 +455,39 @@ fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: 
 fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
-    var stack: array<u32, 32>; // Reduced stack size
-    var stackptr = 0u;
-
-    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r, t_min, closest_t) < T_MAX {
-        stack[0] = node_start_idx; stackptr = 1u;
-    }
-
-    while stackptr > 0u {
-        stackptr--;
-        let idx = stack[stackptr];
-        let node = nodes[idx];
-        let count = u32(node.max_b.w);
-
-        if count > 0u {
-            let first = u32(node.min_b.w);
-            for (var i = 0u; i < count; i++) {
-                let tri_id = first + i;
-                let tr = topology[tri_id];
-                let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, closest_t);
-                if t > 0.0 { closest_t = t; hit_idx = f32(tri_id); }
+    
+    let end_node = node_start_idx + bitcast<u32>(nodes[node_start_idx].min_b.w);
+    var curr = node_start_idx;
+    
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        var hit_t = closest_t;
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, closest_t);
+        
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf node
+                let first = data >> 3u;
+                let count = data & 7u;
+                for (var i = 0u; i < count; i++) {
+                    let tri_id = first + i;
+                    let tr = topology[tri_id];
+                    let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, closest_t);
+                    if t > 0.0 { 
+                        closest_t = t; 
+                        hit_idx = f32(tri_id); 
+                    }
+                }
+                curr = node_start_idx + bitcast<u32>(node.min_b.w);
+            } else {
+                // Internal node
+                curr = curr + 1u;
             }
         } else {
-            let l = u32(node.min_b.w) + node_start_idx;
-            let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, closest_t);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, closest_t);
-
-            if dl < T_MAX && dr < T_MAX {
-                stack[stackptr] = select(l, r_idx, dl < dr);
-                stack[stackptr + 1u] = select(r_idx, l, dl < dr);
-                stackptr += 2u;
-            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
+            // Missed AABB
+            curr = node_start_idx + bitcast<u32>(node.min_b.w);
         }
     }
     return vec2<f32>(closest_t, hit_idx);
@@ -496,32 +497,31 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     var res: HitResult; res.t = t_max; res.tri_idx = -1.0; res.inst_idx = -1;
     if scene.blas_base_idx == 0u { return res; }
 
-    var stack: array<u32, 16>; // TLAS is usually shallow
-    var stackptr = 0u;
+    var curr = 0u;
+    let end_node = bitcast<u32>(nodes[0].min_b.w);
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r, t_min, res.t) < T_MAX {
-        stack[0] = 0u; stackptr = 1u;
-    }
-
-    while stackptr > 0u {
-        stackptr--;
-        let node = nodes[stack[stackptr]];
-
-        if node.max_b.w > 0.5 { // Leaf
-            let inst_idx = u32(node.min_b.w);
-            let inst = instances[inst_idx];
-            let r_local = make_ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
-            let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
-            if blas.y > -0.5 { res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx); }
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        if intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, res.t) < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf
+                let inst_idx = data >> 3u;
+                let inst = instances[inst_idx];
+                let r_local = make_ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
+                let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
+                if blas.y > -0.5 { 
+                    res.t = blas.x; 
+                    res.tri_idx = blas.y; 
+                    res.inst_idx = i32(inst_idx); 
+                }
+                curr = bitcast<u32>(node.min_b.w);
+            } else {
+                curr = curr + 1u;
+            }
         } else {
-            let l = u32(node.min_b.w);
-            let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, res.t);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, res.t);
-            if dl < T_MAX && dr < T_MAX {
-                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
-                stackptr += 2u;
-            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
+            curr = bitcast<u32>(node.min_b.w);
         }
     }
     return res;
@@ -530,57 +530,33 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 // shadow ray版
 // シャドウレイ用のBLAS交差判定（ヒットしたら即trueを返す）
 fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> bool {
-    var stack: array<u32, 32>;
-    var stackptr = 0u;
-
-    // ルートAABB判定（ここは同じ）
-    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r, t_min, t_max) < T_MAX {
-        stack[0] = node_start_idx;
-        stackptr = 1u;
-    }
-
-    while stackptr > 0u {
-        stackptr--;
-        let idx = stack[stackptr];
-        let node = nodes[idx];
-        let count = u32(node.max_b.w);
-
-        if count > 0u {
-            // 葉ノード処理
-            let first = u32(node.min_b.w);
-            for (var i = 0u; i < count; i++) {
-                let tri_id = first + i;
-                let tr = topology[tri_id];
-                // ヒットしたら即 true を返す
-                let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, t_max);
-                if t > 0.0 { return true; }
+    let end_node = node_start_idx + bitcast<u32>(nodes[node_start_idx].min_b.w);
+    var curr = node_start_idx;
+    
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, t_max);
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf node
+                let first = data >> 3u;
+                let count = data & 7u;
+                for (var i = 0u; i < count; i++) {
+                    let tri_id = first + i;
+                    let tr = topology[tri_id];
+                    let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, t_max);
+                    if t > 0.0 { return true; }
+                }
+                curr = node_start_idx + bitcast<u32>(node.min_b.w);
+            } else {
+                // Internal node
+                curr = curr + 1u;
             }
         } else {
-            // 内部ノード処理
-            let l = u32(node.min_b.w) + node_start_idx;
-            let r_idx = l + 1u;
-            
-            // t_max は縮まないので固定値で判定
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, t_max);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, t_max);
-
-            // 近い順にスタックに積む（近い方が早くヒットして早くreturnできる可能性が高いため）
-            if dl < T_MAX && dr < T_MAX {
-                if dl < dr {
-                    stack[stackptr] = r_idx;
-                    stack[stackptr + 1u] = l;
-                } else {
-                    stack[stackptr] = l;
-                    stack[stackptr + 1u] = r_idx;
-                }
-                stackptr += 2u;
-            } else if dl < T_MAX {
-                stack[stackptr] = l;
-                stackptr++;
-            } else if dr < T_MAX {
-                stack[stackptr] = r_idx;
-                stackptr++;
-            }
+            // Missed AABB
+            curr = node_start_idx + bitcast<u32>(node.min_b.w);
         }
     }
     return false;
@@ -590,43 +566,34 @@ fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) ->
 fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
     if scene.blas_base_idx == 0u { return false; }
 
-    var stack: array<u32, 16>;
-    var stackptr = 0u;
+    var curr = 0u;
+    let end_node = bitcast<u32>(nodes[0].min_b.w);
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r, t_min, t_max) < T_MAX {
-        stack[0] = 0u;
-        stackptr = 1u;
-    }
-
-    while stackptr > 0u {
-        stackptr--;
-        let node = nodes[stack[stackptr]];
-
-        if node.max_b.w > 0.5 { // Leaf (Instance)
-            let inst_idx = u32(node.min_b.w);
-            let inst = instances[inst_idx];
-            
-            // レイをローカル座標へ変換
-            let r_local = make_ray(
-                (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
-                (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
-            );
-            
-            if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) {
-                return true;
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, t_max);
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf
+                let inst_idx = data >> 3u;
+                let inst = instances[inst_idx];
+                
+                let r_local = make_ray(
+                    (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
+                    (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
+                );
+                
+                if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) {
+                    return true;
+                }
+                curr = bitcast<u32>(node.min_b.w);
+            } else {
+                curr = curr + 1u;
             }
         } else {
-            let l = u32(node.min_b.w);
-            let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, t_max);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, t_max);
-
-            if dl < T_MAX && dr < T_MAX {
-                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } 
-                else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
-                stackptr += 2u;
-            } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } 
-            else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
+            curr = bitcast<u32>(node.min_b.w);
         }
     }
     return false;

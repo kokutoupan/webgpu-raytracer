@@ -121,12 +121,15 @@ pub fn build_blas_and_vertices(
         let current_topology_start = (buffers.mesh_topology.len() / 20) as u32;
 
         for i in 0..(nodes.len() / 8) {
-            if nodes[i * 8 + 7] > 0. {
+            let data_bits = nodes[i * 8 + 7].to_bits();
+            if data_bits != 0 {
                 // is_leaf
-                let lf = nodes[i * 8 + 3] as u32;
-                // lf is the index in the *local* sorted_indices (chunks of 3).
-                // We want global index in mesh_topology.
-                nodes[i * 8 + 3] = (lf + current_topology_start) as f32;
+                let lf = data_bits >> 3;
+                let tri_count = data_bits & 7;
+                
+                let new_lf = lf + current_topology_start;
+                let new_data = (new_lf << 3) | tri_count;
+                nodes[i * 8 + 7] = f32::from_bits(new_data);
             }
         }
 

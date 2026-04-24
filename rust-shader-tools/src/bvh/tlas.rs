@@ -1,10 +1,10 @@
 // src/bvh/tlas.rs
-use super::{BVHNode, Instance};
+use super::{Instance, StacklessBVHNode};
 use crate::primitives::AABB;
 use glam::Vec3;
 use std::cmp::Ordering;
 
-pub type TLASNode = BVHNode;
+pub type TLASNode = StacklessBVHNode;
 
 pub struct TLASBuilder<'a> {
     pub nodes: Vec<TLASNode>,
@@ -43,20 +43,7 @@ impl<'a> TLASBuilder<'a> {
             return (vec![], vec![]);
         }
 
-        let root = TLASNode {
-            left_first: 0,
-            tri_count: self.instances.len() as u32,
-            ..Default::default()
-        };
-        self.nodes.push(root);
-
-        let mut root_aabb = AABB::empty();
-        for aabb in &self.instance_aabbs {
-            root_aabb = root_aabb.union(aabb);
-        }
-        self.nodes[0].aabb = root_aabb;
-
-        self.subdivide(0);
+        self.subdivide(0, self.instances.len());
 
         let packed = self.pack_nodes();
 
@@ -68,18 +55,24 @@ impl<'a> TLASBuilder<'a> {
         (packed, sorted_instances)
     }
 
-    fn subdivide(&mut self, node_idx: usize) {
-        let node = self.nodes[node_idx];
-        let count = node.tri_count as usize;
-        let first = node.left_first as usize;
+    fn subdivide(&mut self, first: usize, count: usize) {
+        let node_idx = self.nodes.len();
+        self.nodes.push(TLASNode::default());
+
+        let mut aabb = AABB::empty();
+        for i in 0..count {
+            aabb = aabb.union(&self.instance_aabbs[self.instance_indices[first + i]]);
+        }
+        self.nodes[node_idx].min_b = aabb.min.to_array();
+        self.nodes[node_idx].max_b = aabb.max.to_array();
 
         if count == 1 {
-            self.nodes[node_idx].tri_count = 1;
-            self.nodes[node_idx].left_first = first as u32;
+            self.nodes[node_idx].data = ((first as u32) << 3) | 1;
+            self.nodes[node_idx].skip_pointer = self.nodes.len() as u32;
             return;
         }
 
-        let extent = node.aabb.max - node.aabb.min;
+        let extent = aabb.max - aabb.min;
         let axis = if extent.y > extent.x { 1 } else if extent.z > extent.x && extent.z > extent.y { 2 } else { 0 };
 
         let slice = &mut self.instance_indices[first..first + count];
@@ -90,48 +83,45 @@ impl<'a> TLASBuilder<'a> {
         });
 
         let mid = count / 2;
-        let left_count = mid;
-        let right_count = count - mid;
+        let mut l_count = mid;
+        let mut r_count = count - mid;
 
-        let left_child_idx = self.nodes.len();
-        self.nodes.push(Default::default());
-        self.nodes.push(Default::default());
-
-        self.nodes[node_idx].tri_count = 0;
-        self.nodes[node_idx].left_first = left_child_idx as u32;
-
-        let mut left_aabb = AABB::empty();
-        for i in 0..left_count {
-            left_aabb = left_aabb.union(&self.instance_aabbs[self.instance_indices[first + i]]);
+        let mut l_aabb = AABB::empty();
+        for i in 0..l_count {
+            l_aabb = l_aabb.union(&self.instance_aabbs[self.instance_indices[first + i]]);
         }
-        self.nodes[left_child_idx].aabb = left_aabb;
-        self.nodes[left_child_idx].left_first = first as u32;
-        self.nodes[left_child_idx].tri_count = left_count as u32;
-
-        let mut right_aabb = AABB::empty();
-        for i in 0..right_count {
-            right_aabb = right_aabb.union(&self.instance_aabbs[self.instance_indices[first + mid + i]]);
+        let mut r_aabb = AABB::empty();
+        for i in 0..r_count {
+            r_aabb = r_aabb.union(&self.instance_aabbs[self.instance_indices[first + mid + i]]);
         }
-        self.nodes[left_child_idx + 1].aabb = right_aabb;
-        self.nodes[left_child_idx + 1].left_first = (first + mid) as u32;
-        self.nodes[left_child_idx + 1].tri_count = right_count as u32;
 
-        self.subdivide(left_child_idx);
-        self.subdivide(left_child_idx + 1);
+        if r_aabb.area() * r_count as f32 > l_aabb.area() * l_count as f32 {
+            self.instance_indices[first..first + count].rotate_left(l_count);
+            let temp = l_count;
+            l_count = r_count;
+            r_count = temp;
+        }
+
+        self.nodes[node_idx].data = 0; // internal
+
+        self.subdivide(first, l_count);
+        self.subdivide(first + l_count, r_count);
+
+        self.nodes[node_idx].skip_pointer = self.nodes.len() as u32;
     }
 
     fn pack_nodes(&self) -> Vec<f32> {
         let mut data = vec![0.; self.nodes.len() * 8];
         for (i, node) in self.nodes.iter().enumerate() {
             let off = i * 8;
-            data[off + 0] = node.aabb.min.x;
-            data[off + 1] = node.aabb.min.y;
-            data[off + 2] = node.aabb.min.z;
-            data[off + 3] = node.left_first as f32;
-            data[off + 4] = node.aabb.max.x;
-            data[off + 5] = node.aabb.max.y;
-            data[off + 6] = node.aabb.max.z;
-            data[off + 7] = node.tri_count as f32;
+            data[off + 0] = node.min_b[0];
+            data[off + 1] = node.min_b[1];
+            data[off + 2] = node.min_b[2];
+            data[off + 3] = f32::from_bits(node.skip_pointer);
+            data[off + 4] = node.max_b[0];
+            data[off + 5] = node.max_b[1];
+            data[off + 6] = node.max_b[2];
+            data[off + 7] = f32::from_bits(node.data);
         }
         data
     }
