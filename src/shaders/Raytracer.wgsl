@@ -137,6 +137,9 @@ fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
 
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
+@group(0) @binding(13) var g_albedo: texture_2d<f32>;
+@group(0) @binding(14) var g_normal: texture_2d<f32>;
+@group(0) @binding(15) var g_depth: texture_depth_2d;
 // =========================================================
 //   Buffer Accessors
 // =========================================================
@@ -600,13 +603,10 @@ fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
                 (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
             );
             
-            // BLASもシャドウ用関数を呼ぶ
-            // 【重要】ここでもBLASがtrueを返したら即 return true
             if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) {
                 return true;
             }
         } else {
-            // 内部ノード処理（通常版とほぼ同じだが、closest_tを使わず固定のt_maxを使う）
             let l = u32(node.min_b.w);
             let r_idx = l + 1u;
             let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
@@ -638,60 +638,50 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
     var prev_bsdf_pdf = 0.0;
     var specular_bounce = true;
 
+    // --- Depth 0: G-Buffer Read ---
+    let depth_val = textureLoad(g_depth, coord, 0);
+    if depth_val >= 1.0 { return radiance; }
+
+    let g_normal_val = textureLoad(g_normal, coord, 0);
+    var tri_idx: u32 = bitcast<u32>(g_normal_val.z);
+    var inst_idx: i32 = i32(bitcast<u32>(g_normal_val.w));
+
+    var tri = topology[tri_idx];
+    var inst = instances[inst_idx];
+    var inv = get_inv_transform(inst);
+    var v0_pos = get_pos(tri.v0);
+    var v1_pos = get_pos(tri.v1);
+    var v2_pos = get_pos(tri.v2);
+
+    var r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
+    var s = r_local.origin - v0_pos;
+    var e1 = v1_pos - v0_pos;
+    var e2 = v2_pos - v0_pos;
+    var h_val = cross(r_local.direction, e2);
+    var f_val = 1.0 / dot(e1, h_val);
+    var u_bar = f_val * dot(s, h_val);
+    var q = cross(s, e1);
+    var v_bar = f_val * dot(r_local.direction, q);
+    var w_bar = 1.0 - u_bar - v_bar;
+
+    var hit_t = f_val * dot(e2, q);
+
+    var uv0 = get_uv(tri.v0);
+    var uv1 = get_uv(tri.v1);
+    var uv2 = get_uv(tri.v2);
+    var tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
+
+    var normal = unpack_normal(g_normal_val.xy);
+    var albedo = textureLoad(g_albedo, coord, 0).rgb;
+
+    var local_geom_n = normalize(cross(e1, e2));
+    var world_geom_n = normalize((vec4(local_geom_n, 0.0) * inv).xyz);
+
     for (var depth = 0u; depth < MAX_DEPTH; depth++) {
-        let hit = intersect_tlas(ray, T_MIN, T_MAX);
-        if hit.inst_idx < 0 { break; }
-
-        let tri_idx = u32(hit.tri_idx);
-        let inst_idx = u32(hit.inst_idx);
-        let tri = topology[tri_idx];
         let mat_type = u32(tri.data0.w + 0.5);
-        
-        // --- Geometry ---
-        let inst = instances[inst_idx];
-        let inv = get_inv_transform(inst);
-        let v0_pos = get_pos(tri.v0);
-        let v1_pos = get_pos(tri.v1);
-        let v2_pos = get_pos(tri.v2);
-
-        let r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
-        let s = r_local.origin - v0_pos;
-        let e1 = v1_pos - v0_pos;
-        let e2 = v2_pos - v0_pos;
-        let h_val = cross(r_local.direction, e2);
-        let f_val = 1.0 / dot(e1, h_val);
-        let u_bar = f_val * dot(s, h_val);
-        let q = cross(s, e1);
-        let v_bar = f_val * dot(r_local.direction, q);
-        let w_bar = 1.0 - u_bar - v_bar;
-
-        let hit_p = ray.origin + ray.direction * hit.t;
-        let uv0 = get_uv(tri.v0);
-        let uv1 = get_uv(tri.v1);
-        let uv2 = get_uv(tri.v2);
-        let tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
-
-        let n0 = get_normal(tri.v0);
-        let n1 = get_normal(tri.v1);
-        let n2 = get_normal(tri.v2);
-        let ln = normalize(n0 * w_bar + n1 * u_bar + n2 * v_bar);
-        var normal = normalize((vec4(ln, 0.0) * inv).xyz);
-
-        var albedo = tri.data0.rgb;
-        if tri.data2.x > -0.5 { albedo *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.x), 0.0).rgb; }
-
-        if tri.data2.z > -0.5 {
-            let n_map = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.z), 0.0).rgb * 2.0 - 1.0;
-            let T = normalize(e1);
-            let B = normalize(cross(ln, T));
-            let ln_mapped = normalize(T * n_map.x + B * n_map.y + ln * n_map.z);
-            normal = normalize((vec4(ln_mapped, 0.0) * inv).xyz);
-        }
+        let hit_p = ray.origin + ray.direction * hit_t;
 
         normal = select(-normal, normal, dot(ray.direction, normal) < 0.0);
-
-        let local_geom_n = normalize(cross(e1, e2));
-        var world_geom_n = normalize((vec4(local_geom_n, 0.0) * inv).xyz);
         world_geom_n = select(-world_geom_n, world_geom_n, dot(ray.direction, world_geom_n) < 0.0);
 
         var metallic = tri.data1.x;
@@ -711,7 +701,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         // --- Emissive / Light ---
         if mat_type == 3u || length(emissive) > 1e-4 {
             let em_val = select(emissive, albedo, mat_type == 3u);
-            if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, inst_idx, hit.t, ray.direction)); }
+            if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, u32(inst_idx), hit_t, ray.direction)); }
             if mat_type == 3u { break; }
         }
 
@@ -759,6 +749,58 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             let p = max(throughput.r, max(throughput.g, throughput.b));
             if rand_pcg(rng) > p { break; }
             throughput /= p;
+        }
+
+        // --- Next Intersection ---
+        if depth < MAX_DEPTH - 1u {
+            let hit = intersect_tlas(ray, T_MIN, T_MAX);
+            if hit.inst_idx < 0 { break; }
+            hit_t = hit.t;
+            tri_idx = u32(hit.tri_idx);
+            inst_idx = hit.inst_idx;
+
+            tri = topology[tri_idx];
+            inst = instances[inst_idx];
+            inv = get_inv_transform(inst);
+            v0_pos = get_pos(tri.v0);
+            v1_pos = get_pos(tri.v1);
+            v2_pos = get_pos(tri.v2);
+
+            r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
+            s = r_local.origin - v0_pos;
+            e1 = v1_pos - v0_pos;
+            e2 = v2_pos - v0_pos;
+            h_val = cross(r_local.direction, e2);
+            f_val = 1.0 / dot(e1, h_val);
+            u_bar = f_val * dot(s, h_val);
+            q = cross(s, e1);
+            v_bar = f_val * dot(r_local.direction, q);
+            w_bar = 1.0 - u_bar - v_bar;
+
+            uv0 = get_uv(tri.v0);
+            uv1 = get_uv(tri.v1);
+            uv2 = get_uv(tri.v2);
+            tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
+
+            let n0 = get_normal(tri.v0);
+            let n1 = get_normal(tri.v1);
+            let n2 = get_normal(tri.v2);
+            let ln = normalize(n0 * w_bar + n1 * u_bar + n2 * v_bar);
+            normal = normalize((vec4(ln, 0.0) * inv).xyz);
+
+            albedo = tri.data0.rgb;
+            if tri.data2.x > -0.5 { albedo *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.x), 0.0).rgb; }
+
+            if tri.data2.z > -0.5 {
+                let n_map = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.z), 0.0).rgb * 2.0 - 1.0;
+                let T = normalize(e1);
+                let B = normalize(cross(ln, T));
+                let ln_mapped = normalize(T * n_map.x + B * n_map.y + ln * n_map.z);
+                normal = normalize((vec4(ln_mapped, 0.0) * inv).xyz);
+            }
+
+            local_geom_n = normalize(cross(e1, e2));
+            world_geom_n = normalize((vec4(local_geom_n, 0.0) * inv).xyz);
         }
     }
     return radiance;

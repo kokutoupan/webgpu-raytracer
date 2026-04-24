@@ -13,6 +13,7 @@ pub struct RenderBuffers {
     pub(crate) instances: Vec<f32>,
     pub(crate) lights: Vec<u32>, // [inst_idx, tri_idx, ...]
     pub(crate) camera_data: Vec<f32>,
+    pub(crate) draw_commands: Vec<u32>,
 }
 
 impl RenderBuffers {
@@ -27,6 +28,7 @@ impl RenderBuffers {
             instances: Vec::new(),
             lights: Vec::new(),
             camera_data: Vec::new(),
+            draw_commands: Vec::new(),
         }
     }
 
@@ -37,5 +39,6 @@ impl RenderBuffers {
         self.mesh_topology.clear();
         self.blas_nodes.clear();
         self.lights.clear();
+        self.draw_commands.clear();
     }
 }

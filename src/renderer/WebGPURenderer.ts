@@ -53,7 +53,7 @@ export class WebGPURenderer {
   }
 
   updateBuffer(
-    type: "topology" | "instance" | "lights",
+    type: "topology" | "instance" | "lights" | "draw_commands",
     data: Uint32Array | Float32Array
   ): boolean {
     return this.res.updateBuffer(type, data);
@@ -92,7 +92,10 @@ export class WebGPURenderer {
 
     const commandEncoder = this.ctx.device.createCommandEncoder();
 
-    // 1. Raytrace Pass
+    // 1. Rasterizer Pass
+    this.rasterizerPass.execute(commandEncoder, this.res);
+
+    // 2. Raytrace Pass
     this.raytracePass.execute(commandEncoder);
 
     this.ctx.device.queue.submit([commandEncoder.finish()]);
@@ -101,10 +104,8 @@ export class WebGPURenderer {
   present() {
     const commandEncoder = this.ctx.device.createCommandEncoder();
 
-    // 1. Postprocess Pass (Normalizes and tone maps accumulateBuffer into renderTarget)
     this.postProcessPass.execute(commandEncoder);
 
-    // 2. Copy renderTarget to Canvas (Swapchain)
     try {
       const currentTexture = this.ctx.context.getCurrentTexture();
       commandEncoder.copyTextureToTexture(

@@ -35,6 +35,7 @@ const sendSceneData = () => {
   const tlas = getF32(world.tlas_ptr(), world.tlas_len());
   const blas = getF32(world.blas_ptr(), world.blas_len());
   const instances = getF32(world.instances_ptr(), world.instances_len());
+  const draw_commands = getU32(world.draw_commands_ptr(), world.draw_commands_len());
   const camera = getF32(world.camera_ptr(), 24);
 
   // Textures
@@ -66,6 +67,7 @@ const sendSceneData = () => {
     tlas,
     blas,
     instances,
+    draw_commands,
     camera,
     textureCount,
     textures,
@@ -82,6 +84,7 @@ const sendSceneData = () => {
     tlas.buffer,
     blas.buffer,
     instances.buffer,
+    draw_commands.buffer,
     camera.buffer,
     ...transerableTextures,
   ] as any);
@@ -94,6 +97,7 @@ const sendUpdateResult = (includeGeometry = true) => {
   const blas = getF32(world.blas_ptr(), world.blas_len());
   const instances = getF32(world.instances_ptr(), world.instances_len());
   const lights = getU32(world.lights_ptr(), world.lights_len()); // Added
+  const draw_commands = getU32(world.draw_commands_ptr(), world.draw_commands_len());
   const camera = getF32(world.camera_ptr(), 24);
 
   let vertices, normals, uvs, mesh_topology;
@@ -101,6 +105,7 @@ const sendUpdateResult = (includeGeometry = true) => {
     tlas.buffer,
     blas.buffer,
     instances.buffer,
+    draw_commands.buffer,
     camera.buffer,
   ];
 
@@ -127,6 +132,7 @@ const sendUpdateResult = (includeGeometry = true) => {
     blas,
     instances,
     lights, // Added
+    draw_commands,
     camera,
     vertices,
     normals,

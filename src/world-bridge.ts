@@ -11,6 +11,7 @@ export class WorldBridge {
   private _uvs = new Float32Array(0);
   private _mesh_topology = new Uint32Array(0); // Renamed
   private _lights = new Uint32Array(0); // Added
+  private _draw_commands = new Uint32Array(0);
 
   get lights() {
     return this._lights;
@@ -61,6 +62,7 @@ export class WorldBridge {
         this._tlas = msg.tlas as any;
         this._blas = msg.blas as any;
         this._instances = msg.instances as any;
+        this._draw_commands = msg.draw_commands as any;
         this._cameraData = msg.camera as any;
         this._textureCount = msg.textureCount;
         this._textures = msg.textures || [];
@@ -76,6 +78,7 @@ export class WorldBridge {
         this._blas = msg.blas as any;
         this._instances = msg.instances as any;
         this._lights = msg.lights as any; // Added
+        this._draw_commands = msg.draw_commands as any;
         this._cameraData = msg.camera as any;
         if (msg.vertices) {
           this._vertices = msg.vertices as any;
@@ -187,6 +190,9 @@ export class WorldBridge {
   }
   get instances() {
     return this._instances;
+  }
+  get draw_commands() {
+    return this._draw_commands;
   }
   get cameraData() {
     return this._cameraData;
