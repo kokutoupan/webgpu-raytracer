@@ -162,7 +162,7 @@ fn vs_main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) i
 fn fs_main(in: VertexOutput) -> GBufferOutput {
     var albedo = in.color;
     if (in.tex_id > -0.5) {
-        let tex_col = textureSample(tex, smp, in.uv, i32(in.tex_id)).rgb;
+        let tex_col = textureSampleLevel(tex, smp, in.uv, i32(in.tex_id), 0.0).rgb;
         albedo *= tex_col;
     }
 
