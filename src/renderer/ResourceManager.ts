@@ -34,8 +34,9 @@ export class ResourceManager {
   historyTextureViews: GPUTextureView[] = [];
   historyIndex = 0;
   prevCameraData: Float32Array = new Float32Array(24);
+  accumulatedJitter = { x: 0, y: 0 };
   jitter = { x: 0, y: 0 };
-  prevJitter = { x: 0, y: 0 };
+  averageJitter = { x: 0, y: 0 };
 
   private bufferSize = 0;
 
@@ -382,9 +383,22 @@ export class ResourceManager {
     this.uniformMixedData[6] = this.ctx.canvas.height;
     this.uniformMixedData[7] = 0; // Padding
 
+    if (frameCount === 1) {
+      this.accumulatedJitter.x = this.jitter.x;
+      this.accumulatedJitter.y = this.jitter.y;
+    } else {
+      this.accumulatedJitter.x += this.jitter.x;
+      this.accumulatedJitter.y += this.jitter.y;
+    }
+    
+    this.averageJitter.x = this.accumulatedJitter.x / frameCount;
+    this.averageJitter.y = this.accumulatedJitter.y / frameCount;
+
     const floatView = new Float32Array(this.uniformMixedData.buffer);
     floatView[8] = this.jitter.x;
     floatView[9] = this.jitter.y;
+    floatView[10] = this.averageJitter.x;
+    floatView[11] = this.averageJitter.y;
 
     this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData as any);
     this.prevCameraData.set(cameraData);
@@ -394,13 +408,21 @@ export class ResourceManager {
     const jitterX = this.getHalton((totalFrames % 16) + 1, 2) - 0.5;
     const jitterY = this.getHalton((totalFrames % 16) + 1, 3) - 0.5;
 
-    this.prevJitter.x = this.jitter.x;
-    this.prevJitter.y = this.jitter.y;
-
     this.jitter = {
       x: jitterX / this.ctx.canvas.width,
       y: jitterY / this.ctx.canvas.height,
     };
+
+    if (frameCount === 1) {
+      this.accumulatedJitter.x = this.jitter.x;
+      this.accumulatedJitter.y = this.jitter.y;
+    } else {
+      this.accumulatedJitter.x += this.jitter.x;
+      this.accumulatedJitter.y += this.jitter.y;
+    }
+
+    this.averageJitter.x = this.accumulatedJitter.x / frameCount;
+    this.averageJitter.y = this.accumulatedJitter.y / frameCount;
 
     this.uniformMixedData[0] = frameCount;
     this.uniformMixedData[1] = this.blasOffset;
@@ -414,8 +436,8 @@ export class ResourceManager {
     const floatView = new Float32Array(this.uniformMixedData.buffer);
     floatView[8] = this.jitter.x;
     floatView[9] = this.jitter.y;
-    floatView[10] = this.prevJitter.x;
-    floatView[11] = this.prevJitter.y;
+    floatView[10] = this.averageJitter.x;
+    floatView[11] = this.averageJitter.y;
 
     this.ctx.device.queue.writeBuffer(
       this.sceneUniformBuffer,

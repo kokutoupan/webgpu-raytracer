@@ -23,7 +23,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    prev_jitter: vec2<f32>
+    average_jitter: vec2<f32>
 }
 
 @group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
@@ -82,9 +82,10 @@ fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
-// ★ Enhanced un-jittering: only fully active when frame_count is low.
-// As accumulation progresses, the buffer naturally centers itself.
+// ★ Enhanced un-jittering: un-jitter using the average jitter of all accumulated frames
+// This perfectly stabilizes the image during the first few frames of accumulation.
 fn get_radiance_nearest(coord: vec2<i32>) -> vec3<f32> {
+    // If accumulated enough frames, average jitter is basically 0, skip bilinear filtering to guarantee sharpness.
     if scene.frame_count > 16u {
         return get_radiance_clean(coord);
     }
@@ -92,9 +93,7 @@ fn get_radiance_nearest(coord: vec2<i32>) -> vec3<f32> {
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
     let uv = (vec2<f32>(f32(coord.x), f32(coord.y)) + vec2<f32>(0.5)) / dims;
     
-    // Fade out un-jittering as accumulation averages out the jitter
-    let weight = clamp(1.0 - f32(scene.frame_count - 1u) / 15.0, 0.0, 1.0);
-    return get_radiance_bilinear(uv - scene.jitter * weight);
+    return get_radiance_bilinear(uv - scene.average_jitter);
 }
 
 fn luminance(c: vec3<f32>) -> f32 {

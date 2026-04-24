@@ -19,7 +19,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    prev_jitter: vec2<f32>
+    average_jitter: vec2<f32>
 }
 
 struct MeshTopology {

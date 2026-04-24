@@ -34,7 +34,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    prev_jitter: vec2<f32>
+    average_jitter: vec2<f32>
 }
 
 struct MeshTopology {
@@ -75,7 +75,14 @@ struct Instance {
 
 struct Ray {
     origin: vec3<f32>,
-    direction: vec3<f32>
+    direction: vec3<f32>,
+    inv_d: vec3<f32>,
+    origin_inv_d: vec3<f32>
+}
+
+fn make_ray(origin: vec3<f32>, direction: vec3<f32>) -> Ray {
+    let inv_d = 1.0 / direction;
+    return Ray(origin, direction, inv_d, origin * inv_d);
 }
 
 struct HitResult {
@@ -237,8 +244,13 @@ fn ggx_g(n_dot_v: f32, n_dot_l: f32, a2: f32) -> f32 {
     return g1_v * g1_l;
 }
 
+fn pow5(x: f32) -> f32 {
+    let x2 = x * x;
+    return x2 * x2 * x;
+}
+
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
-    return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+    return f0 + (1.0 - f0) * pow5(clamp(1.0 - cos_theta, 0.0, 1.0));
 }
 
 fn eval_ggx(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
@@ -302,7 +314,7 @@ fn bsdf_to_throughput(d: f32, g: f32, f: vec3<f32>, n_dot_v: f32, n_dot_l: f32, 
 fn reflectance_dielectric(cosine: f32, ref_idx: f32) -> f32 {
     var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
     r0 = r0 * r0;
-    return r0 + (1.0 - r0) * pow(1.0 - cosine, 5.0);
+    return r0 + (1.0 - r0) * pow5(1.0 - cosine);
 }
 
 fn sample_dielectric(dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
@@ -418,9 +430,9 @@ fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
 //   Intersection Functions
 // =========================================================
 
-fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
-    let t1 = (min_b - origin) * inv_d;
-    let t2 = (max_b - origin) * inv_d;
+fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let t1 = min_b * r.inv_d - r.origin_inv_d;
+    let t2 = max_b * r.inv_d - r.origin_inv_d;
     let t_near = min(t1, t2);
     let t_far = max(t1, t2);
     let tm_near = max(t_min, max(t_near.x, max(t_near.y, t_near.z)));
@@ -443,11 +455,10 @@ fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: 
 fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
-    let inv_d = 1.0 / r.direction;
     var stack: array<u32, 32>; // Reduced stack size
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r.origin, inv_d, t_min, closest_t) < T_MAX {
+    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r, t_min, closest_t) < T_MAX {
         stack[0] = node_start_idx; stackptr = 1u;
     }
 
@@ -468,11 +479,12 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
         } else {
             let l = u32(node.min_b.w) + node_start_idx;
             let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, closest_t);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, closest_t);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, closest_t);
 
             if dl < T_MAX && dr < T_MAX {
-                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
+                stack[stackptr] = select(l, r_idx, dl < dr);
+                stack[stackptr + 1u] = select(r_idx, l, dl < dr);
                 stackptr += 2u;
             } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
         }
@@ -484,11 +496,10 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     var res: HitResult; res.t = t_max; res.tri_idx = -1.0; res.inst_idx = -1;
     if scene.blas_base_idx == 0u { return res; }
 
-    let inv_d = 1.0 / r.direction;
     var stack: array<u32, 16>; // TLAS is usually shallow
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < T_MAX {
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r, t_min, res.t) < T_MAX {
         stack[0] = 0u; stackptr = 1u;
     }
 
@@ -499,14 +510,14 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
         if node.max_b.w > 0.5 { // Leaf
             let inst_idx = u32(node.min_b.w);
             let inst = instances[inst_idx];
-            let r_local = Ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
+            let r_local = make_ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
             let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
             if blas.y > -0.5 { res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx); }
         } else {
             let l = u32(node.min_b.w);
             let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, res.t);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, res.t);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, res.t);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, res.t);
             if dl < T_MAX && dr < T_MAX {
                 if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
                 stackptr += 2u;
@@ -519,12 +530,11 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 // shadow ray版
 // シャドウレイ用のBLAS交差判定（ヒットしたら即trueを返す）
 fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> bool {
-    let inv_d = 1.0 / r.direction;
     var stack: array<u32, 32>;
     var stackptr = 0u;
 
     // ルートAABB判定（ここは同じ）
-    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r.origin, inv_d, t_min, t_max) < T_MAX {
+    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r, t_min, t_max) < T_MAX {
         stack[0] = node_start_idx;
         stackptr = 1u;
     }
@@ -551,8 +561,8 @@ fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) ->
             let r_idx = l + 1u;
             
             // t_max は縮まないので固定値で判定
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, t_max);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, t_max);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, t_max);
 
             // 近い順にスタックに積む（近い方が早くヒットして早くreturnできる可能性が高いため）
             if dl < T_MAX && dr < T_MAX {
@@ -580,11 +590,10 @@ fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) ->
 fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
     if scene.blas_base_idx == 0u { return false; }
 
-    let inv_d = 1.0 / r.direction;
     var stack: array<u32, 16>;
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, t_max) < T_MAX {
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r, t_min, t_max) < T_MAX {
         stack[0] = 0u;
         stackptr = 1u;
     }
@@ -598,7 +607,7 @@ fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
             let inst = instances[inst_idx];
             
             // レイをローカル座標へ変換
-            let r_local = Ray(
+            let r_local = make_ray(
                 (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
                 (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
             );
@@ -609,8 +618,8 @@ fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
         } else {
             let l = u32(node.min_b.w);
             let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, t_max);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, t_max);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, t_max);
 
             if dl < T_MAX && dr < T_MAX {
                 if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } 
@@ -653,7 +662,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
     var v1_pos = get_pos(tri.v1);
     var v2_pos = get_pos(tri.v2);
 
-    var r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
+    var r_local = make_ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
     var s = r_local.origin - v0_pos;
     var e1 = v1_pos - v0_pos;
     var e2 = v2_pos - v0_pos;
@@ -709,7 +718,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         if mat_type != 2u {
             let light_s = sample_light_source(hit_p, rng);
             if light_s.pdf > 0.0 {
-                if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
+                if !intersect_tlas_shadow(make_ray(hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
                     var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
                     if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
                         bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
@@ -740,7 +749,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         throughput *= scatter.throughput;
         
         let ray_offset_normal = select(-world_geom_n, world_geom_n, dot(scatter.dir, world_geom_n) > 0.0);
-        ray = Ray(hit_p + ray_offset_normal * 1e-4, scatter.dir);
+        ray = make_ray(hit_p + ray_offset_normal * 1e-4, scatter.dir);
         
         prev_bsdf_pdf = scatter.pdf;
         specular_bounce = scatter.is_specular;
@@ -766,7 +775,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             v1_pos = get_pos(tri.v1);
             v2_pos = get_pos(tri.v2);
 
-            r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
+            r_local = make_ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
             s = r_local.origin - v0_pos;
             e1 = v1_pos - v0_pos;
             e2 = v2_pos - v0_pos;
@@ -830,7 +839,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng, id.xy);
+        col += ray_color(make_ray(scene.camera.origin.xyz + off, d), &rng, id.xy);
     }
     col /= f32(SPP);
     

@@ -29,12 +29,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let l = function(d) {
-        return Promise.all(d.map((p) => Promise.resolve(p).then((v) => ({
+        return Promise.all(d.map((g) => Promise.resolve(g).then((m) => ({
           status: "fulfilled",
-          value: v
-        }), (v) => ({
+          value: m
+        }), (m) => ({
           status: "rejected",
-          reason: v
+          reason: m
         }))));
       };
       var s = l;
@@ -43,11 +43,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       r = l(t.map((d) => {
         if (d = H(d), d in W) return;
         W[d] = true;
-        const p = d.endsWith(".css"), v = p ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${d}"]${v}`)) return;
-        const m = document.createElement("link");
-        if (m.rel = p ? "stylesheet" : I, p || (m.as = "script"), m.crossOrigin = "", m.href = d, c && m.setAttribute("nonce", c), document.head.appendChild(m), p) return new Promise((w, A) => {
-          m.addEventListener("load", w), m.addEventListener("error", () => A(new Error(`Unable to preload CSS for ${d}`)));
+        const g = d.endsWith(".css"), m = g ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${d}"]${m}`)) return;
+        const v = document.createElement("link");
+        if (v.rel = g ? "stylesheet" : I, g || (v.as = "script"), v.crossOrigin = "", v.href = d, c && v.setAttribute("nonce", c), document.head.appendChild(v), g) return new Promise((w, A) => {
+          v.addEventListener("load", w), v.addEventListener("error", () => A(new Error(`Unable to preload CSS for ${d}`)));
         });
       }));
     }
@@ -109,16 +109,16 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }), this.device.queue.submit([
         l.finish()
       ]), await this.device.queue.onSubmittedWorkDone(), await this.readbackBuffer.mapAsync(GPUMapMode.READ);
-      const d = new Uint8Array(this.readbackBuffer.getMappedRange()), p = t * n * 4;
-      (!this.readbackResultBuffer || this.readbackResultBuffer.byteLength !== p) && (this.readbackResultBuffer = new Uint8Array(p));
-      const v = this.readbackResultBuffer;
-      if (a === i) v.set(d.subarray(0, p));
-      else for (let m = 0; m < n; m++) {
-        const w = m * a, A = m * i;
-        v.set(d.subarray(w, w + i), A);
+      const d = new Uint8Array(this.readbackBuffer.getMappedRange()), g = t * n * 4;
+      (!this.readbackResultBuffer || this.readbackResultBuffer.byteLength !== g) && (this.readbackResultBuffer = new Uint8Array(g));
+      const m = this.readbackResultBuffer;
+      if (a === i) m.set(d.subarray(0, g));
+      else for (let v = 0; v < n; v++) {
+        const w = v * a, A = v * i;
+        m.set(d.subarray(w, w + i), A);
       }
       return this.readbackBuffer.unmap(), {
-        data: v.buffer,
+        data: m.buffer,
         width: t,
         height: n
       };
@@ -148,11 +148,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       __publicField(this, "historyTextureViews", []);
       __publicField(this, "historyIndex", 0);
       __publicField(this, "prevCameraData", new Float32Array(24));
+      __publicField(this, "accumulatedJitter", {
+        x: 0,
+        y: 0
+      });
       __publicField(this, "jitter", {
         x: 0,
         y: 0
       });
-      __publicField(this, "prevJitter", {
+      __publicField(this, "averageJitter", {
         x: 0,
         y: 0
       });
@@ -347,18 +351,18 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       this.jitter = {
         x: r / this.ctx.canvas.width,
         y: i / this.ctx.canvas.height
-      }, this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.prevCameraData), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = this.seed, this.uniformMixedData[4] = n, this.uniformMixedData[5] = this.ctx.canvas.width, this.uniformMixedData[6] = this.ctx.canvas.height, this.uniformMixedData[7] = 0;
+      }, this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 0, e), this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 96, this.prevCameraData), this.uniformMixedData[0] = t, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = this.seed, this.uniformMixedData[4] = n, this.uniformMixedData[5] = this.ctx.canvas.width, this.uniformMixedData[6] = this.ctx.canvas.height, this.uniformMixedData[7] = 0, t === 1 ? (this.accumulatedJitter.x = this.jitter.x, this.accumulatedJitter.y = this.jitter.y) : (this.accumulatedJitter.x += this.jitter.x, this.accumulatedJitter.y += this.jitter.y), this.averageJitter.x = this.accumulatedJitter.x / t, this.averageJitter.y = this.accumulatedJitter.y / t;
       const s = new Float32Array(this.uniformMixedData.buffer);
-      s[8] = this.jitter.x, s[9] = this.jitter.y, this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData), this.prevCameraData.set(e);
+      s[8] = this.jitter.x, s[9] = this.jitter.y, s[10] = this.averageJitter.x, s[11] = this.averageJitter.y, this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData), this.prevCameraData.set(e);
     }
     updateFrameUniforms(e, t) {
       const n = this.getHalton(t % 16 + 1, 2) - 0.5, r = this.getHalton(t % 16 + 1, 3) - 0.5;
-      this.prevJitter.x = this.jitter.x, this.prevJitter.y = this.jitter.y, this.jitter = {
+      this.jitter = {
         x: n / this.ctx.canvas.width,
         y: r / this.ctx.canvas.height
-      }, this.uniformMixedData[0] = e, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = this.seed, this.uniformMixedData[4] = this.lightCount, this.uniformMixedData[5] = this.ctx.canvas.width, this.uniformMixedData[6] = this.ctx.canvas.height, this.uniformMixedData[7] = 0;
+      }, e === 1 ? (this.accumulatedJitter.x = this.jitter.x, this.accumulatedJitter.y = this.jitter.y) : (this.accumulatedJitter.x += this.jitter.x, this.accumulatedJitter.y += this.jitter.y), this.averageJitter.x = this.accumulatedJitter.x / e, this.averageJitter.y = this.accumulatedJitter.y / e, this.uniformMixedData[0] = e, this.uniformMixedData[1] = this.blasOffset, this.uniformMixedData[2] = this.vertexCount, this.uniformMixedData[3] = this.seed, this.uniformMixedData[4] = this.lightCount, this.uniformMixedData[5] = this.ctx.canvas.width, this.uniformMixedData[6] = this.ctx.canvas.height, this.uniformMixedData[7] = 0;
       const i = new Float32Array(this.uniformMixedData.buffer);
-      i[8] = this.jitter.x, i[9] = this.jitter.y, i[10] = this.prevJitter.x, i[11] = this.prevJitter.y, this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData);
+      i[8] = this.jitter.x, i[9] = this.jitter.y, i[10] = this.averageJitter.x, i[11] = this.averageJitter.y, this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData);
     }
   }
   const O = `// =========================================================
@@ -397,7 +401,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    prev_jitter: vec2<f32>
+    average_jitter: vec2<f32>
 }
 
 struct MeshTopology {
@@ -438,7 +442,14 @@ struct Instance {
 
 struct Ray {
     origin: vec3<f32>,
-    direction: vec3<f32>
+    direction: vec3<f32>,
+    inv_d: vec3<f32>,
+    origin_inv_d: vec3<f32>
+}
+
+fn make_ray(origin: vec3<f32>, direction: vec3<f32>) -> Ray {
+    let inv_d = 1.0 / direction;
+    return Ray(origin, direction, inv_d, origin * inv_d);
 }
 
 struct HitResult {
@@ -600,8 +611,13 @@ fn ggx_g(n_dot_v: f32, n_dot_l: f32, a2: f32) -> f32 {
     return g1_v * g1_l;
 }
 
+fn pow5(x: f32) -> f32 {
+    let x2 = x * x;
+    return x2 * x2 * x;
+}
+
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
-    return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+    return f0 + (1.0 - f0) * pow5(clamp(1.0 - cos_theta, 0.0, 1.0));
 }
 
 fn eval_ggx(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
@@ -665,7 +681,7 @@ fn bsdf_to_throughput(d: f32, g: f32, f: vec3<f32>, n_dot_v: f32, n_dot_l: f32, 
 fn reflectance_dielectric(cosine: f32, ref_idx: f32) -> f32 {
     var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
     r0 = r0 * r0;
-    return r0 + (1.0 - r0) * pow(1.0 - cosine, 5.0);
+    return r0 + (1.0 - r0) * pow5(1.0 - cosine);
 }
 
 fn sample_dielectric(dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
@@ -781,9 +797,9 @@ fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
 //   Intersection Functions
 // =========================================================
 
-fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, origin: vec3<f32>, inv_d: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
-    let t1 = (min_b - origin) * inv_d;
-    let t2 = (max_b - origin) * inv_d;
+fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let t1 = min_b * r.inv_d - r.origin_inv_d;
+    let t2 = max_b * r.inv_d - r.origin_inv_d;
     let t_near = min(t1, t2);
     let t_far = max(t1, t2);
     let tm_near = max(t_min, max(t_near.x, max(t_near.y, t_near.z)));
@@ -806,11 +822,10 @@ fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: 
 fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f32> {
     var closest_t = t_max;
     var hit_idx = -1.0;
-    let inv_d = 1.0 / r.direction;
     var stack: array<u32, 32>; // Reduced stack size
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r.origin, inv_d, t_min, closest_t) < T_MAX {
+    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r, t_min, closest_t) < T_MAX {
         stack[0] = node_start_idx; stackptr = 1u;
     }
 
@@ -831,11 +846,12 @@ fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f
         } else {
             let l = u32(node.min_b.w) + node_start_idx;
             let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, closest_t);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, closest_t);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, closest_t);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, closest_t);
 
             if dl < T_MAX && dr < T_MAX {
-                if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
+                stack[stackptr] = select(l, r_idx, dl < dr);
+                stack[stackptr + 1u] = select(r_idx, l, dl < dr);
                 stackptr += 2u;
             } else if dl < T_MAX { stack[stackptr] = l; stackptr++; } else if dr < T_MAX { stack[stackptr] = r_idx; stackptr++; }
         }
@@ -847,11 +863,10 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
     var res: HitResult; res.t = t_max; res.tri_idx = -1.0; res.inst_idx = -1;
     if scene.blas_base_idx == 0u { return res; }
 
-    let inv_d = 1.0 / r.direction;
     var stack: array<u32, 16>; // TLAS is usually shallow
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, res.t) < T_MAX {
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r, t_min, res.t) < T_MAX {
         stack[0] = 0u; stackptr = 1u;
     }
 
@@ -862,14 +877,14 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
         if node.max_b.w > 0.5 { // Leaf
             let inst_idx = u32(node.min_b.w);
             let inst = instances[inst_idx];
-            let r_local = Ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
+            let r_local = make_ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
             let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
             if blas.y > -0.5 { res.t = blas.x; res.tri_idx = blas.y; res.inst_idx = i32(inst_idx); }
         } else {
             let l = u32(node.min_b.w);
             let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, res.t);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, res.t);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, res.t);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, res.t);
             if dl < T_MAX && dr < T_MAX {
                 if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } else { stack[stackptr] = l; stack[stackptr + 1u] = r_idx; }
                 stackptr += 2u;
@@ -882,12 +897,11 @@ fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
 // shadow ray\u7248
 // \u30B7\u30E3\u30C9\u30A6\u30EC\u30A4\u7528\u306EBLAS\u4EA4\u5DEE\u5224\u5B9A\uFF08\u30D2\u30C3\u30C8\u3057\u305F\u3089\u5373true\u3092\u8FD4\u3059\uFF09
 fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> bool {
-    let inv_d = 1.0 / r.direction;
     var stack: array<u32, 32>;
     var stackptr = 0u;
 
     // \u30EB\u30FC\u30C8AABB\u5224\u5B9A\uFF08\u3053\u3053\u306F\u540C\u3058\uFF09
-    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r.origin, inv_d, t_min, t_max) < T_MAX {
+    if intersect_aabb(nodes[node_start_idx].min_b.xyz, nodes[node_start_idx].max_b.xyz, r, t_min, t_max) < T_MAX {
         stack[0] = node_start_idx;
         stackptr = 1u;
     }
@@ -914,8 +928,8 @@ fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) ->
             let r_idx = l + 1u;
             
             // t_max \u306F\u7E2E\u307E\u306A\u3044\u306E\u3067\u56FA\u5B9A\u5024\u3067\u5224\u5B9A
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, t_max);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, t_max);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, t_max);
 
             // \u8FD1\u3044\u9806\u306B\u30B9\u30BF\u30C3\u30AF\u306B\u7A4D\u3080\uFF08\u8FD1\u3044\u65B9\u304C\u65E9\u304F\u30D2\u30C3\u30C8\u3057\u3066\u65E9\u304Freturn\u3067\u304D\u308B\u53EF\u80FD\u6027\u304C\u9AD8\u3044\u305F\u3081\uFF09
             if dl < T_MAX && dr < T_MAX {
@@ -943,11 +957,10 @@ fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) ->
 fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
     if scene.blas_base_idx == 0u { return false; }
 
-    let inv_d = 1.0 / r.direction;
     var stack: array<u32, 16>;
     var stackptr = 0u;
 
-    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r.origin, inv_d, t_min, t_max) < T_MAX {
+    if intersect_aabb(nodes[0].min_b.xyz, nodes[0].max_b.xyz, r, t_min, t_max) < T_MAX {
         stack[0] = 0u;
         stackptr = 1u;
     }
@@ -961,7 +974,7 @@ fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
             let inst = instances[inst_idx];
             
             // \u30EC\u30A4\u3092\u30ED\u30FC\u30AB\u30EB\u5EA7\u6A19\u3078\u5909\u63DB
-            let r_local = Ray(
+            let r_local = make_ray(
                 (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
                 (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
             );
@@ -972,8 +985,8 @@ fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
         } else {
             let l = u32(node.min_b.w);
             let r_idx = l + 1u;
-            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r.origin, inv_d, t_min, t_max);
-            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r.origin, inv_d, t_min, t_max);
+            let dl = intersect_aabb(nodes[l].min_b.xyz, nodes[l].max_b.xyz, r, t_min, t_max);
+            let dr = intersect_aabb(nodes[r_idx].min_b.xyz, nodes[r_idx].max_b.xyz, r, t_min, t_max);
 
             if dl < T_MAX && dr < T_MAX {
                 if dl < dr { stack[stackptr] = r_idx; stack[stackptr + 1u] = l; } 
@@ -1016,7 +1029,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
     var v1_pos = get_pos(tri.v1);
     var v2_pos = get_pos(tri.v2);
 
-    var r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
+    var r_local = make_ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
     var s = r_local.origin - v0_pos;
     var e1 = v1_pos - v0_pos;
     var e2 = v2_pos - v0_pos;
@@ -1072,7 +1085,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         if mat_type != 2u {
             let light_s = sample_light_source(hit_p, rng);
             if light_s.pdf > 0.0 {
-                if !intersect_tlas_shadow(Ray(hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
+                if !intersect_tlas_shadow(make_ray(hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
                     var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
                     if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
                         bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
@@ -1103,7 +1116,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
         throughput *= scatter.throughput;
         
         let ray_offset_normal = select(-world_geom_n, world_geom_n, dot(scatter.dir, world_geom_n) > 0.0);
-        ray = Ray(hit_p + ray_offset_normal * 1e-4, scatter.dir);
+        ray = make_ray(hit_p + ray_offset_normal * 1e-4, scatter.dir);
         
         prev_bsdf_pdf = scatter.pdf;
         specular_bounce = scatter.is_specular;
@@ -1129,7 +1142,7 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
             v1_pos = get_pos(tri.v1);
             v2_pos = get_pos(tri.v2);
 
-            r_local = Ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
+            r_local = make_ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
             s = r_local.origin - v0_pos;
             e1 = v1_pos - v0_pos;
             e2 = v2_pos - v0_pos;
@@ -1193,7 +1206,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
         let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
         let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-        col += ray_color(Ray(scene.camera.origin.xyz + off, d), &rng, id.xy);
+        col += ray_color(make_ray(scene.camera.origin.xyz + off, d), &rng, id.xy);
     }
     col /= f32(SPP);
     
@@ -1351,7 +1364,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    prev_jitter: vec2<f32>
+    average_jitter: vec2<f32>
 }
 
 @group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;
@@ -1410,9 +1423,10 @@ fn get_radiance_bilinear(uv: vec2<f32>) -> vec3<f32> {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
-// \u2605 Enhanced un-jittering: only fully active when frame_count is low.
-// As accumulation progresses, the buffer naturally centers itself.
+// \u2605 Enhanced un-jittering: un-jitter using the average jitter of all accumulated frames
+// This perfectly stabilizes the image during the first few frames of accumulation.
 fn get_radiance_nearest(coord: vec2<i32>) -> vec3<f32> {
+    // If accumulated enough frames, average jitter is basically 0, skip bilinear filtering to guarantee sharpness.
     if scene.frame_count > 16u {
         return get_radiance_clean(coord);
     }
@@ -1420,9 +1434,7 @@ fn get_radiance_nearest(coord: vec2<i32>) -> vec3<f32> {
     let dims = vec2<f32>(f32(scene.width), f32(scene.height));
     let uv = (vec2<f32>(f32(coord.x), f32(coord.y)) + vec2<f32>(0.5)) / dims;
     
-    // Fade out un-jittering as accumulation averages out the jitter
-    let weight = clamp(1.0 - f32(scene.frame_count - 1u) / 15.0, 0.0, 1.0);
-    return get_radiance_bilinear(uv - scene.jitter * weight);
+    return get_radiance_bilinear(uv - scene.average_jitter);
 }
 
 fn luminance(c: vec3<f32>) -> f32 {
@@ -1503,7 +1515,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let ldr_out = pow(clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
     textureStore(outputTex, vec2<i32>(i32(id.x), i32(id.y)), vec4<f32>(ldr_out, 1.0));
 }`;
-  class q {
+  class j {
     constructor(e) {
       __publicField(this, "pipeline");
       __publicField(this, "bindGroupLayout");
@@ -1566,7 +1578,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       r.setPipeline(this.pipeline), r.setBindGroup(0, this.bindGroup), r.dispatchWorkgroups(t, n), r.end();
     }
   }
-  const j = `struct Camera {
+  const q = `struct Camera {
     origin: vec4<f32>,
     lower_left_corner: vec4<f32>,
     horizontal: vec4<f32>,
@@ -1587,7 +1599,7 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    prev_jitter: vec2<f32>
+    average_jitter: vec2<f32>
 }
 
 struct MeshTopology {
@@ -1739,7 +1751,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
     out.normal_and_id = vec4<f32>(pack_normal(normalize(in.normal)), bitcast<f32>(in.tri_idx), bitcast<f32>(in.instance_id));
     return out;
 }`;
-  class V {
+  class J {
     constructor(e) {
       __publicField(this, "pipeline");
       __publicField(this, "bindGroupLayout");
@@ -1750,7 +1762,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
     buildPipeline() {
       const e = this.ctx.device.createShaderModule({
         label: "Rasterizer Shader",
-        code: j
+        code: q
       });
       this.pipeline = this.ctx.device.createRenderPipeline({
         label: "Rasterizer Pipeline",
@@ -1878,14 +1890,14 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       if (r.setPipeline(this.pipeline), r.setBindGroup(0, this.bindGroup), t.drawCommandsArray) {
         const i = t.drawCommandsArray, s = t.instanceCount;
         for (let a = 0; a < s; a++) {
-          const c = i[a * 4 + 0], l = i[a * 4 + 1], d = i[a * 4 + 2], p = i[a * 4 + 3];
-          c > 0 && l > 0 && r.draw(c, l, d, p);
+          const c = i[a * 4 + 0], l = i[a * 4 + 1], d = i[a * 4 + 2], g = i[a * 4 + 3];
+          c > 0 && l > 0 && r.draw(c, l, d, g);
         }
       }
       r.end();
     }
   }
-  class J {
+  class V {
     constructor(e) {
       __publicField(this, "ctx");
       __publicField(this, "res");
@@ -1893,7 +1905,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       __publicField(this, "postProcessPass");
       __publicField(this, "rasterizerPass");
       __publicField(this, "totalFrames", 0);
-      this.ctx = new N(e), this.res = new G(this.ctx), this.raytracePass = new $(this.ctx), this.postProcessPass = new q(this.ctx), this.rasterizerPass = new V(this.ctx);
+      this.ctx = new N(e), this.res = new G(this.ctx), this.raytracePass = new $(this.ctx), this.postProcessPass = new j(this.ctx), this.rasterizerPass = new J(this.ctx);
     }
     get device() {
       return this.ctx.device;
@@ -2156,8 +2168,8 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
           l
         ], {
           type: "video/webm"
-        }), p = URL.createObjectURL(d);
-        n(p, d);
+        }), g = URL.createObjectURL(d);
+        n(g, d);
       } catch (l) {
         throw console.error("Recording failed:", l), l;
       } finally {
@@ -2208,10 +2220,10 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
         }
         await this.renderFrame(t.spp), n.encodeQueueSize > 5 && await n.flush();
         try {
-          const { data: d, width: p, height: v } = await this.renderer.captureFrame(), m = "RGBA", w = new VideoFrame(d, {
-            codedWidth: p,
-            codedHeight: v,
-            format: m,
+          const { data: d, width: g, height: m } = await this.renderer.captureFrame(), v = "RGBA", w = new VideoFrame(d, {
+            codedWidth: g,
+            codedHeight: m,
+            format: v,
             timestamp: (i + c) * 1e6 / t.fps,
             duration: 1e6 / t.fps
           });
@@ -2232,15 +2244,15 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       let t = 0, n = performance.now();
       for (; t < e; ) {
         const r = Math.min(this.currentBatchSize, e - t), i = performance.now();
-        for (let v = 0; v < r; v++) this.renderer.compute(t + v);
+        for (let m = 0; m < r; m++) this.renderer.compute(t + m);
         t += r;
         const s = performance.now();
         (t >= e || s - n > 100) && (this.renderer.present(), n = s), await this.renderer.device.queue.onSubmittedWorkDone();
         const l = performance.now() - i;
         let d = l > 0 ? 100 / l : 1.5;
         d = Math.min(d, 1.5);
-        const p = Math.round(this.currentBatchSize * (0.8 + 0.2 * d));
-        this.currentBatchSize = Math.max(1, Math.min(e, Math.min(p, 50)));
+        const g = Math.round(this.currentBatchSize * (0.8 + 0.2 * d));
+        this.currentBatchSize = Math.max(1, Math.min(e, Math.min(g, 50)));
       }
     }
   }
@@ -2989,13 +3001,13 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       });
       for (const l of e) {
         const d = this.pendingChunks.get(l);
-        if (d) for (const p of d) r.addVideoChunk(new EncodedVideoChunk({
-          type: p.type,
-          timestamp: p.timestamp,
-          duration: p.duration,
-          data: p.data
+        if (d) for (const g of d) r.addVideoChunk(new EncodedVideoChunk({
+          type: g.type,
+          timestamp: g.timestamp,
+          duration: g.duration,
+          data: g.data
         }), {
-          decoderConfig: p.decoderConfig
+          decoderConfig: g.decoderConfig
         });
       }
       r.finalize();
@@ -3094,7 +3106,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
     }
   }
   let x = false, y = null, k = null, S = null;
-  const u = new ee(), _ = new J(u.canvas), h = new Y(), C = new K(_, h, u.canvas), b = new Z(), g = new te(b, u), B = new ne(b, _, u, C);
+  const u = new ee(), _ = new V(u.canvas), h = new Y(), C = new K(_, h, u.canvas), b = new Z(), p = new te(b, u), B = new ne(b, _, u, C);
   B.onRemoteSceneLoad = async (o, e) => {
     y = o, k = e, await D("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
   };
@@ -3124,10 +3136,10 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
   };
   b.onStatusChange = (o) => u.setStatus(`Status: ${o}`);
   b.onWorkerStatus = async (o, e, t) => {
-    await g.onWorkerStatus(o, e, t) === "NEED_SCENE" && (console.log(`[Host] Worker ${o} needs scene. Syncing...`), await g.sendSceneHelper(y, k, o));
+    await p.onWorkerStatus(o, e, t) === "NEED_SCENE" && (console.log(`[Host] Worker ${o} needs scene. Syncing...`), await p.sendSceneHelper(y, k, o));
   };
   b.onRenderResult = async (o, e, t) => {
-    await g.onRenderResult(o, e, t) === "ALL_COMPLETE" && (console.log("[Host] All jobs complete. Muxing and downloading..."), u.setStatus("Muxing..."), await g.muxAndDownload());
+    await p.onRenderResult(o, e, t) === "ALL_COMPLETE" && (console.log("[Host] All jobs complete. Muxing and downloading..."), u.setStatus("Muxing..."), await p.muxAndDownload());
   };
   b.onSceneReceived = async (o, e) => {
     console.log("[Worker] Received Scene from Host."), await B.onSceneReceived(o, e), u.sceneSelect.value = e.sceneName || "viewer", e.anim !== void 0 && (u.animSelect.value = e.anim.toString(), h.setAnimation(e.anim)), B.isDistributedSceneLoaded = true, B.isSceneLoading = false, console.log("[Worker] Distributed Scene Loaded. Signaling Host."), await b.sendSceneLoaded(), B.handlePendingRenderRequest();
@@ -3145,20 +3157,20 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
     }, u.onAnimSelect = (o) => h.setAnimation(o), u.onRecordStart = async () => {
       if (!C.recording) if (S === "host") {
         const o = b.getWorkerIds();
-        g.distributedConfig = u.getRenderConfig();
-        const e = Math.ceil(g.distributedConfig.fps * g.distributedConfig.duration);
+        p.distributedConfig = u.getRenderConfig();
+        const e = Math.ceil(p.distributedConfig.fps * p.distributedConfig.duration);
         if (!confirm(`Distribute recording? (Workers: ${o.length})
 Auto Scene Sync enabled.`)) return;
-        g.jobQueue = [], g.pendingChunks.clear(), g.completedJobs = 0, g.activeJobs.clear();
-        const t = g.distributedConfig.jobBatch || 20;
+        p.jobQueue = [], p.pendingChunks.clear(), p.completedJobs = 0, p.activeJobs.clear();
+        const t = p.distributedConfig.jobBatch || 20;
         for (let n = 0; n < e; n += t) {
           const r = Math.min(t, e - n);
-          g.jobQueue.push({
+          p.jobQueue.push({
             start: n,
             count: r
           });
         }
-        g.totalJobs = g.jobQueue.length, o.forEach((n) => g.workerStatus.set(n, "idle")), u.setStatus(`Distributed Progress: 0 / ${g.totalJobs} jobs (Waiting for workers...)`), o.length > 0 ? (u.setStatus("Syncing Scene to Workers..."), b.sendRenderStart(), await g.sendSceneHelper(y, k)) : console.log("No workers yet. Waiting...");
+        p.totalJobs = p.jobQueue.length, o.forEach((n) => p.workerStatus.set(n, "idle")), u.setStatus(`Distributed Progress: 0 / ${p.totalJobs} jobs (Waiting for workers...)`), o.length > 0 ? (u.setStatus("Syncing Scene to Workers..."), b.sendRenderStart(), await p.sendSceneHelper(y, k)) : console.log("No workers yet. Waiting...");
       } else {
         x = false, u.setRecordingState(true);
         const o = u.getRenderConfig();
