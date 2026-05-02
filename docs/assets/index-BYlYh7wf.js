@@ -1939,12 +1939,12 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       return this.ctx.captureFrame(this.res.renderTarget);
     }
   }
-  function Y(o) {
-    return new Worker("/webgpu-raytracer/assets/wasm-worker-CM76xITE.js", {
+  function X(o) {
+    return new Worker("/webgpu-raytracer/assets/wasm-worker-BkIi53X6.js", {
       name: o == null ? void 0 : o.name
     });
   }
-  class X {
+  class Y {
     constructor() {
       __publicField(this, "worker");
       __publicField(this, "resolveReady", null);
@@ -1968,7 +1968,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
       __publicField(this, "updateResolvers", []);
       __publicField(this, "lastWidth", -1);
       __publicField(this, "lastHeight", -1);
-      this.worker = new Y(), this.worker.onmessage = this.handleMessage.bind(this);
+      this.worker = new X(), this.worker.onmessage = this.handleMessage.bind(this);
     }
     get lights() {
       return this._lights;
@@ -3073,7 +3073,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
     }
   }
   let y = false, x = null, B = null, S = null;
-  const u = new ee(), g = new V(u.canvas), h = new X(), k = new K(g, h, u.canvas), b = new Z(), p = new te(b, u), C = new ne(b, g, u, k);
+  const u = new ee(), g = new V(u.canvas), h = new Y(), k = new K(g, h, u.canvas), b = new Z(), p = new te(b, u), C = new ne(b, g, u, k);
   C.onRemoteSceneLoad = async (o, e) => {
     x = o, B = e, await D("viewer", false), console.log("[Main] Remote scene loaded via dWorker callback.");
   };
