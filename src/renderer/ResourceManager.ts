@@ -9,6 +9,7 @@ export class ResourceManager {
   depthTexture!: GPUTexture; // Added for G-Buffer depth
   depthTextureView!: GPUTextureView; // Added for G-Buffer depth
   accumulateBuffer!: GPUBuffer;
+  samplesBuffer!: GPUBuffer;
 
   // Consolidated Uniforms
   sceneUniformBuffer!: GPUBuffer;
@@ -123,6 +124,13 @@ export class ResourceManager {
     if (this.accumulateBuffer) this.accumulateBuffer.destroy();
     this.accumulateBuffer = this.ctx.device.createBuffer({
       size: this.bufferSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    const samplesBufferSize = width * height * 48; // 3x vec4<f32> per Sample
+    if (this.samplesBuffer) this.samplesBuffer.destroy();
+    this.samplesBuffer = this.ctx.device.createBuffer({
+      size: samplesBufferSize,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 

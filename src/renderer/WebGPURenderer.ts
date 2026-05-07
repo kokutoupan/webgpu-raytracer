@@ -31,8 +31,8 @@ export class WebGPURenderer {
     this.res.init();
   }
 
-  buildPipeline(depth: number, spp: number) {
-    this.raytracePass.buildPipeline(depth, spp);
+  buildPipeline(depth: number) {
+    this.raytracePass.buildPipeline(depth);
     this.postProcessPass.buildPipeline();
     this.rasterizerPass.buildPipeline();
     this.recreateBindGroup();
