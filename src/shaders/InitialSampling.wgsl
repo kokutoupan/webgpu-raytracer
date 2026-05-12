@@ -17,6 +17,15 @@ struct Sample {
     radiance: vec4<f32>, // xyz: L_i, w: scatter.dir.z
 }
 
+struct Reservoir {
+    sample: Sample,
+    w_sum: f32,
+    W: f32,
+    M: u32,
+    padding: f32,
+}
+
+
 struct Camera {
     origin: vec4<f32>, // w: lens_radius
     lower_left_corner: vec4<f32>,
@@ -149,7 +158,7 @@ fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
 @group(0) @binding(13) var g_albedo: texture_2d<f32>;
 @group(0) @binding(14) var g_normal: texture_2d<f32>;
 @group(0) @binding(15) var g_depth: texture_depth_2d;
-@group(0) @binding(16) var<storage, read_write> samplesBuffer: array<Sample>;
+@group(0) @binding(16) var<storage, read_write> reservoirsBuffer: array<Reservoir>;
 
 // =========================================================
 //   Buffer Accessors
@@ -623,6 +632,28 @@ fn get_throughput(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u
     }
 }
 
+fn eval_brdf_cos(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u32, roughness: f32, f0: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
+    let n_dot_l = max(dot(normal, w_i), 1e-4);
+
+    if mat_type == 0u {
+        return (albedo / PI) * n_dot_l;
+    } else if mat_type == 1u {
+        let h = normalize(w_o + w_i);
+        let n_dot_v = max(dot(normal, w_o), 1e-4);
+        let n_dot_h = max(dot(normal, h), 1e-4);
+        let v_dot_h = max(dot(w_o, h), 1e-4);
+        let a2 = roughness * roughness;
+        let d = ggx_d(n_dot_h, a2);
+        let g = ggx_g(n_dot_v, n_dot_l, a2);
+        let f = fresnel_schlick(v_dot_h, f0);
+        return (d * g * f) / (4.0 * n_dot_v);
+    } else { 
+        return vec3<f32>(0.0);
+    }
+}
+
+
+
 @compute @workgroup_size(8, 8)
 fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
@@ -631,7 +662,12 @@ fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let depth_val = textureLoad(g_depth, id.xy, 0);
     if depth_val >= 1.0 { 
-        samplesBuffer[p_idx] = Sample(vec4(0.0), vec4(0.0), vec4(0.0));
+        var r: Reservoir;
+        r.sample = Sample(vec4(0.0), vec4(0.0), vec4(0.0));
+        r.M = 1u;
+        r.w_sum = length(r.sample.radiance.xyz);
+        r.W = 0.0;
+        reservoirsBuffer[p_idx] = r;
         return; 
     }
 
@@ -700,7 +736,12 @@ fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
     let f0 = mix(vec3(0.04), albedo, metallic);
     
     if mat_type == 3u || length(emissive) > 1e-4 {
-        samplesBuffer[p_idx] = Sample(vec4(primary_hit_p, 1.0), vec4(normal, 0.0), vec4(0.0));
+        var r: Reservoir;
+        r.sample = Sample(vec4(primary_hit_p, 1.0), vec4(normal, 0.0), vec4(0.0));
+        r.M = 1u;
+        r.w_sum = length(r.sample.radiance.xyz);
+        r.W = 0.0;
+        reservoirsBuffer[p_idx] = r;
         return;
     }
 
@@ -714,12 +755,22 @@ fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     if mat_type != 2u && dot(scatter.dir, world_geom_n) <= 0.0 {
-        samplesBuffer[p_idx] = Sample(vec4(primary_hit_p, 1.0), vec4(normal, 0.0), vec4(0.0));
+        var r: Reservoir;
+        r.sample = Sample(vec4(primary_hit_p, 1.0), vec4(normal, 0.0), vec4(0.0));
+        r.M = 1u;
+        r.w_sum = length(r.sample.radiance.xyz);
+        r.W = 0.0;
+        reservoirsBuffer[p_idx] = r;
         return;
     }
 
     if scatter.pdf <= 0.0 || length(scatter.throughput) <= 0.0 {
-        samplesBuffer[p_idx] = Sample(vec4(primary_hit_p, 1.0), vec4(normal, 0.0), vec4(0.0));
+        var r: Reservoir;
+        r.sample = Sample(vec4(primary_hit_p, 1.0), vec4(normal, 0.0), vec4(0.0));
+        r.M = 1u;
+        r.w_sum = length(r.sample.radiance.xyz);
+        r.W = 0.0;
+        reservoirsBuffer[p_idx] = r;
         return;
     }
 
@@ -873,9 +924,17 @@ fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
+    var out_sample: Sample;
     if sec_hit_valid {
-        samplesBuffer[p_idx] = Sample(vec4(sec_hit_p, scatter.dir.x), vec4(sec_normal, scatter.dir.y), vec4(radiance, scatter.dir.z));
+        out_sample = Sample(vec4(sec_hit_p, scatter.dir.x), vec4(sec_normal, scatter.dir.y), vec4(radiance, scatter.dir.z));
     } else {
-        samplesBuffer[p_idx] = Sample(vec4(primary_hit_p + scatter.dir * 1000.0, scatter.dir.x), vec4(vec3(0.0), scatter.dir.y), vec4(vec3(0.0), scatter.dir.z));
+        out_sample = Sample(vec4(primary_hit_p + scatter.dir * 1000.0, scatter.dir.x), vec4(vec3(0.0), scatter.dir.y), vec4(vec3(0.0), scatter.dir.z));
     }
+    var r: Reservoir;
+    r.sample = out_sample;
+    r.M = 1u;
+    let p_hat = length(radiance);
+    r.w_sum = p_hat / scatter.pdf;
+    r.W = 0.0;
+    reservoirsBuffer[p_idx] = r;
 }

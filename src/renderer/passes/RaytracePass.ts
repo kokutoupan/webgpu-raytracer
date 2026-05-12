@@ -1,14 +1,18 @@
 import { WebGPUContext } from "../WebGPUContext";
 import { ResourceManager } from "../ResourceManager";
 import initialSamplingCodeRaw from "../../shaders/InitialSampling.wgsl?raw";
+import temporalReuseCodeRaw from "../../shaders/TemporalReuse.wgsl?raw";
 import finalShadingCodeRaw from "../../shaders/FinalShading.wgsl?raw";
 
 export class RaytracePass {
   initialSamplingPipeline!: GPUComputePipeline;
+  temporalReusePipeline!: GPUComputePipeline;
   finalShadingPipeline!: GPUComputePipeline;
   initialBindGroupLayout!: GPUBindGroupLayout;
+  temporalBindGroupLayout!: GPUBindGroupLayout;
   finalBindGroupLayout!: GPUBindGroupLayout;
   initialBindGroup!: GPUBindGroup;
+  temporalBindGroup!: GPUBindGroup;
   finalBindGroup!: GPUBindGroup;
 
   ctx: WebGPUContext;
@@ -23,6 +27,11 @@ export class RaytracePass {
       code: initialSamplingCodeRaw,
     });
 
+    const temporalModule = this.ctx.device.createShaderModule({
+      label: "Temporal Reuse Shader",
+      code: temporalReuseCodeRaw,
+    });
+
     const finalModule = this.ctx.device.createShaderModule({
       label: "Final Shading Shader",
       code: finalShadingCodeRaw,
@@ -34,9 +43,17 @@ export class RaytracePass {
       compute: {
         module: initialModule,
         entryPoint: "initial_sampling",
-        constants: {
-          MAX_DEPTH: depth,
-        },
+        constants: { MAX_DEPTH: depth },
+      },
+    });
+
+    this.temporalReusePipeline = this.ctx.device.createComputePipeline({
+      label: "Temporal Reuse Pipeline",
+      layout: "auto",
+      compute: {
+        module: temporalModule,
+        entryPoint: "temporal_reuse",
+        constants: { MAX_DEPTH: depth },
       },
     });
 
@@ -46,19 +63,18 @@ export class RaytracePass {
       compute: {
         module: finalModule,
         entryPoint: "final_shading",
-        constants: {
-          MAX_DEPTH: depth,
-        },
+        constants: { MAX_DEPTH: depth },
       },
     });
     this.initialBindGroupLayout = this.initialSamplingPipeline.getBindGroupLayout(0);
+    this.temporalBindGroupLayout = this.temporalReusePipeline.getBindGroupLayout(0);
     this.finalBindGroupLayout = this.finalShadingPipeline.getBindGroupLayout(0);
   }
 
   updateBindGroup(res: ResourceManager) {
     if (
       !res.accumulateBuffer ||
-      !res.samplesBuffer ||
+      !res.reservoirsBuffer ||
       !res.geometryBuffer ||
       !res.nodesBuffer ||
       !res.sceneUniformBuffer ||
@@ -105,12 +121,17 @@ export class RaytracePass {
       { binding: 13, resource: res.renderTargetView },
       { binding: 14, resource: res.gBufferNormalView },
       { binding: 15, resource: res.depthTextureView },
-      { binding: 16, resource: { buffer: res.samplesBuffer } },
+      { binding: 16, resource: { buffer: res.reservoirsBuffer } },
     ];
 
     this.initialBindGroup = this.ctx.device.createBindGroup({
       layout: this.initialBindGroupLayout,
       entries: commonEntries,
+    });
+
+    this.temporalBindGroup = this.ctx.device.createBindGroup({
+      layout: this.temporalBindGroupLayout,
+      entries: commonEntries.filter(e => e.binding === 2 || e.binding === 16),
     });
 
     this.finalBindGroup = this.ctx.device.createBindGroup({
@@ -123,7 +144,7 @@ export class RaytracePass {
   }
 
   execute(commandEncoder: GPUCommandEncoder) {
-    if (!this.initialBindGroup || !this.finalBindGroup) return;
+    if (!this.initialBindGroup || !this.temporalBindGroup || !this.finalBindGroup) return;
 
     const dispatchX = Math.ceil(this.ctx.canvas.width / 8);
     const dispatchY = Math.ceil(this.ctx.canvas.height / 8);
@@ -134,6 +155,13 @@ export class RaytracePass {
     initialPass.setBindGroup(0, this.initialBindGroup);
     initialPass.dispatchWorkgroups(dispatchX, dispatchY);
     initialPass.end();
+
+    // Temporal Reuse Pass
+    const temporalPass = commandEncoder.beginComputePass();
+    temporalPass.setPipeline(this.temporalReusePipeline);
+    temporalPass.setBindGroup(0, this.temporalBindGroup);
+    temporalPass.dispatchWorkgroups(dispatchX, dispatchY);
+    temporalPass.end();
 
     // Final Shading Pass
     const finalPass = commandEncoder.beginComputePass();

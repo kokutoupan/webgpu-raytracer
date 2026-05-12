@@ -655,132 +655,19 @@ fn eval_brdf_cos(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u3
 
 
 @compute @workgroup_size(8, 8)
-fn final_shading(@builtin(global_invocation_id) id: vec3<u32>) {
+fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
     let p_idx = id.y * scene.width + id.x;
-    var rng = init_rng(p_idx, scene.frame_count);
 
-    var off = vec3(0.);
-    if scene.camera.origin.w > 0. {
-        let rd = scene.camera.origin.w * random_in_unit_disk(&rng);
-        off = scene.camera.u.xyz * rd.x + scene.camera.v.xyz * rd.y;
-    }
+    var r = reservoirsBuffer[p_idx];
 
-    let depth_val = textureLoad(g_depth, id.xy, 0);
-    if depth_val >= 1.0 { 
-        var acc_val = vec4(0.0, 0.0, 0.0, 1.0);
-        if scene.frame_count > 1u { acc_val = accumulateBuffer[p_idx]; }
-        accumulateBuffer[p_idx] = acc_val;
-        return; 
-    }
-
-    let r = reservoirsBuffer[p_idx];
-    let sample = r.sample;
-    let W = r.W;
-
-    let g_normal_val = textureLoad(g_normal, id.xy, 0);
-    var tri_idx: u32 = bitcast<u32>(g_normal_val.z);
-    var inst_idx: i32 = i32(bitcast<u32>(g_normal_val.w));
-
-    var tri = topology[tri_idx];
-    var inst = instances[inst_idx];
-    var inv = get_inv_transform(inst);
-    var v0_pos = get_pos(tri.v0);
-    var v1_pos = get_pos(tri.v1);
-    var v2_pos = get_pos(tri.v2);
-
-    let u_cam = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
-    let v_cam = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
-    let dir = scene.camera.lower_left_corner.xyz + u_cam * scene.camera.horizontal.xyz + v_cam * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-    var r_in = make_ray(scene.camera.origin.xyz + off, dir);
-
-    var r_local = make_ray((inv * vec4(r_in.origin, 1.)).xyz, (inv * vec4(r_in.direction, 0.)).xyz);
-    var s = r_local.origin - v0_pos;
-    var e1 = v1_pos - v0_pos;
-    var e2 = v2_pos - v0_pos;
-    var h_val = cross(r_local.direction, e2);
-    var f_val = 1.0 / dot(e1, h_val);
-    var u_bar = f_val * dot(s, h_val);
-    var q = cross(s, e1);
-    var v_bar = f_val * dot(r_local.direction, q);
-    var w_bar = 1.0 - u_bar - v_bar;
-    var hit_t = f_val * dot(e2, q);
+    let p_hat = length(r.sample.radiance.xyz);
     
-    var uv0 = get_uv(tri.v0);
-    var uv1 = get_uv(tri.v1);
-    var uv2 = get_uv(tri.v2);
-    var tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
-
-    var normal = unpack_normal(g_normal_val.xy);
-    var albedo = textureLoad(g_albedo, id.xy, 0).rgb;
-
-    var local_geom_n = normalize(cross(e1, e2));
-    var world_geom_n = normalize((vec4(local_geom_n, 0.0) * inv).xyz);
-
-    let mat_type = u32(tri.data0.w + 0.5);
-    let primary_hit_p = r_in.origin + r_in.direction * hit_t;
-
-    normal = select(-normal, normal, dot(r_in.direction, normal) < 0.0);
-    world_geom_n = select(-world_geom_n, world_geom_n, dot(r_in.direction, world_geom_n) < 0.0);
-
-    var metallic = tri.data1.x;
-    var roughness = tri.data1.y;
-    if tri.data2.y > -0.5 {
-        let mr = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.y), 0.0).rgb;
-        metallic *= mr.b; roughness *= mr.g;
-    }
-    roughness = max(roughness, 0.005);
-
-    var emissive = tri.data3.rgb;
-    if tri.data2.w > -0.5 { emissive *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.w), 0.0).rgb; }
-
-    let f0 = mix(vec3(0.04), albedo, metallic);
-
-    var final_radiance = vec3(0.0);
-
-    // 1. Emissive contribution
-    if mat_type == 3u || length(emissive) > 1e-4 {
-        let em_val = select(emissive, albedo, mat_type == 3u);
-        final_radiance += em_val;
+    if p_hat > 1e-4 {
+        r.W = r.w_sum / (f32(r.M) * p_hat);
+    } else {
+        r.W = 0.0;
     }
 
-    // 2. Direct Lighting (NEE)
-    if mat_type != 2u && mat_type != 3u {
-        let light_s = sample_light_source(primary_hit_p, &rng);
-        if light_s.pdf > 0.0 {
-            if !intersect_tlas_shadow(make_ray(primary_hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
-                var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
-                if mat_type == 0u { 
-                    bsdf_val = eval_diffuse(albedo); 
-                    bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; 
-                } else if mat_type == 1u {
-                    bsdf_val = eval_ggx(normal, -r_in.direction, light_s.dir, roughness, f0);
-                    let H = normalize(-r_in.direction + light_s.dir);
-                    bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-r_in.direction, H), 0.0));
-                }
-                if bsdf_pdf_val > 0.0 { 
-                    final_radiance += bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; 
-                }
-            }
-        }
-    }
-
-    // 3. Indirect Lighting (from sample)
-    if length(sample.radiance.xyz) > 0.0 && mat_type != 3u {
-        let is_delta = (mat_type == 2u) || (mat_type == 1u && metallic > 0.9 && roughness < 0.01);
-        if is_delta {
-            final_radiance += sample.radiance.xyz * W;
-        } else {
-            let w_i = vec3(sample.hit_p.w, sample.normal.w, sample.radiance.w);
-            let w_o = -r_in.direction;
-            let tp = eval_brdf_cos(w_o, w_i, normal, mat_type, roughness, f0, albedo);
-            final_radiance += tp * sample.radiance.xyz * W;
-        }
-    }
-
-    var acc_val = vec4<f32>(final_radiance, 1.0);
-    if scene.frame_count > 1u {
-        acc_val = accumulateBuffer[p_idx] + vec4<f32>(final_radiance, 1.0);
-    }
-    accumulateBuffer[p_idx] = acc_val;
+    reservoirsBuffer[p_idx] = r;
 }
