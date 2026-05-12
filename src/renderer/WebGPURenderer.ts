@@ -96,7 +96,7 @@ export class WebGPURenderer {
     this.rasterizerPass.execute(commandEncoder, this.res);
 
     // 2. Raytrace Pass
-    this.raytracePass.execute(commandEncoder);
+    this.raytracePass.execute(commandEncoder, frameCount);
 
     this.ctx.device.queue.submit([commandEncoder.finish()]);
   }

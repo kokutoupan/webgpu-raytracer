@@ -11,9 +11,9 @@ export class RaytracePass {
   initialBindGroupLayout!: GPUBindGroupLayout;
   temporalBindGroupLayout!: GPUBindGroupLayout;
   finalBindGroupLayout!: GPUBindGroupLayout;
-  initialBindGroup!: GPUBindGroup;
-  temporalBindGroup!: GPUBindGroup;
-  finalBindGroup!: GPUBindGroup;
+  initialBindGroups: GPUBindGroup[] = [];
+  temporalBindGroups: GPUBindGroup[] = [];
+  finalBindGroups: GPUBindGroup[] = [];
 
   ctx: WebGPUContext;
 
@@ -74,7 +74,8 @@ export class RaytracePass {
   updateBindGroup(res: ResourceManager) {
     if (
       !res.accumulateBuffer ||
-      !res.reservoirsBuffer ||
+      !res.reservoirsBufferA ||
+      !res.reservoirsBufferB ||
       !res.geometryBuffer ||
       !res.nodesBuffer ||
       !res.sceneUniformBuffer ||
@@ -121,30 +122,46 @@ export class RaytracePass {
       { binding: 13, resource: res.renderTargetView },
       { binding: 14, resource: res.gBufferNormalView },
       { binding: 15, resource: res.depthTextureView },
-      { binding: 16, resource: { buffer: res.reservoirsBuffer } },
     ];
 
-    this.initialBindGroup = this.ctx.device.createBindGroup({
-      layout: this.initialBindGroupLayout,
-      entries: commonEntries,
-    });
+    for (let i = 0; i < 2; i++) {
+      // i=0: curr=A, prev=B (Odd frame)
+      // i=1: curr=B, prev=A (Even frame)
+      const currBuffer = i === 0 ? res.reservoirsBufferA : res.reservoirsBufferB;
+      const prevBuffer = i === 0 ? res.reservoirsBufferB : res.reservoirsBufferA;
 
-    this.temporalBindGroup = this.ctx.device.createBindGroup({
-      layout: this.temporalBindGroupLayout,
-      entries: commonEntries.filter(e => e.binding === 2 || e.binding === 16),
-    });
+      const entries = [
+        ...commonEntries,
+        { binding: 16, resource: { buffer: currBuffer } },
+        { binding: 17, resource: { buffer: prevBuffer } },
+      ];
 
-    this.finalBindGroup = this.ctx.device.createBindGroup({
-      layout: this.finalBindGroupLayout,
-      entries: [
-        { binding: 1, resource: { buffer: res.accumulateBuffer } },
-        ...commonEntries.filter(e => e.binding !== 11), // final_shading doesn't use geometry_norm
-      ],
-    });
+      this.initialBindGroups[i] = this.ctx.device.createBindGroup({
+        layout: this.initialBindGroupLayout,
+        entries: entries.filter(e => e.binding !== 17),
+      });
+
+      this.temporalBindGroups[i] = this.ctx.device.createBindGroup({
+        layout: this.temporalBindGroupLayout,
+        entries: entries.filter(e => e.binding === 2 || e.binding === 16 || e.binding === 17),
+      });
+
+      this.finalBindGroups[i] = this.ctx.device.createBindGroup({
+        layout: this.finalBindGroupLayout,
+        entries: [
+          { binding: 1, resource: { buffer: res.accumulateBuffer } },
+          ...entries.filter(e => e.binding !== 11 && e.binding !== 17),
+        ],
+      });
+    }
   }
 
-  execute(commandEncoder: GPUCommandEncoder) {
-    if (!this.initialBindGroup || !this.temporalBindGroup || !this.finalBindGroup) return;
+  execute(commandEncoder: GPUCommandEncoder, frameCount: number) {
+    // 偶数フレーム (frame_count % 2 == 0) -> i=1 (Buffer B)
+    // 奇数フレーム (frame_count % 2 == 1) -> i=0 (Buffer A)
+    const i = frameCount % 2 === 0 ? 1 : 0;
+    
+    if (!this.initialBindGroups[i] || !this.temporalBindGroups[i] || !this.finalBindGroups[i]) return;
 
     const dispatchX = Math.ceil(this.ctx.canvas.width / 8);
     const dispatchY = Math.ceil(this.ctx.canvas.height / 8);
@@ -152,21 +169,21 @@ export class RaytracePass {
     // Initial Sampling Pass
     const initialPass = commandEncoder.beginComputePass();
     initialPass.setPipeline(this.initialSamplingPipeline);
-    initialPass.setBindGroup(0, this.initialBindGroup);
+    initialPass.setBindGroup(0, this.initialBindGroups[i]);
     initialPass.dispatchWorkgroups(dispatchX, dispatchY);
     initialPass.end();
 
     // Temporal Reuse Pass
     const temporalPass = commandEncoder.beginComputePass();
     temporalPass.setPipeline(this.temporalReusePipeline);
-    temporalPass.setBindGroup(0, this.temporalBindGroup);
+    temporalPass.setBindGroup(0, this.temporalBindGroups[i]);
     temporalPass.dispatchWorkgroups(dispatchX, dispatchY);
     temporalPass.end();
 
     // Final Shading Pass
     const finalPass = commandEncoder.beginComputePass();
     finalPass.setPipeline(this.finalShadingPipeline);
-    finalPass.setBindGroup(0, this.finalBindGroup);
+    finalPass.setBindGroup(0, this.finalBindGroups[i]);
     finalPass.dispatchWorkgroups(dispatchX, dispatchY);
     finalPass.end();
   }

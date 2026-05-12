@@ -9,8 +9,8 @@ export class ResourceManager {
   depthTexture!: GPUTexture; // Added for G-Buffer depth
   depthTextureView!: GPUTextureView; // Added for G-Buffer depth
   accumulateBuffer!: GPUBuffer;
-  samplesBuffer!: GPUBuffer;
-  reservoirsBuffer!: GPUBuffer;
+  reservoirsBufferA!: GPUBuffer;
+  reservoirsBufferB!: GPUBuffer;
 
   // Consolidated Uniforms
   sceneUniformBuffer!: GPUBuffer;
@@ -136,8 +136,13 @@ export class ResourceManager {
     });
 
     const reservoirsBufferSize = width * height * 64; // Reservoir struct is 64 bytes
-    if (this.reservoirsBuffer) this.reservoirsBuffer.destroy();
-    this.reservoirsBuffer = this.ctx.device.createBuffer({
+    if (this.reservoirsBufferA) this.reservoirsBufferA.destroy();
+    this.reservoirsBufferA = this.ctx.device.createBuffer({
+      size: reservoirsBufferSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    if (this.reservoirsBufferB) this.reservoirsBufferB.destroy();
+    this.reservoirsBufferB = this.ctx.device.createBuffer({
       size: reservoirsBufferSize,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });

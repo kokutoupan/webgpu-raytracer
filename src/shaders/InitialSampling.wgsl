@@ -159,6 +159,7 @@ fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
 @group(0) @binding(14) var g_normal: texture_2d<f32>;
 @group(0) @binding(15) var g_depth: texture_depth_2d;
 @group(0) @binding(16) var<storage, read_write> reservoirsBuffer: array<Reservoir>;
+@group(0) @binding(17) var<storage, read> prevReservoirsBuffer: array<Reservoir>;
 
 // =========================================================
 //   Buffer Accessors
@@ -652,6 +653,12 @@ fn eval_brdf_cos(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u3
     }
 }
 
+fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: ptr<function, u32>) {
+    r.w_sum += weight;
+    if rand_pcg(rng) < (weight / r.w_sum) {
+        r.sample = s;
+    }
+}
 
 
 @compute @workgroup_size(8, 8)

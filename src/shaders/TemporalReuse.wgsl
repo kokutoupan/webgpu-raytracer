@@ -159,6 +159,7 @@ fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
 @group(0) @binding(14) var g_normal: texture_2d<f32>;
 @group(0) @binding(15) var g_depth: texture_depth_2d;
 @group(0) @binding(16) var<storage, read_write> reservoirsBuffer: array<Reservoir>;
+@group(0) @binding(17) var<storage, read> prevReservoirsBuffer: array<Reservoir>;
 
 // =========================================================
 //   Buffer Accessors
@@ -652,22 +653,44 @@ fn eval_brdf_cos(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u3
     }
 }
 
-
+fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: ptr<function, u32>) {
+    r.w_sum += weight;
+    if rand_pcg(rng) < (weight / r.w_sum) {
+        r.sample = s;
+    }
+}
 
 @compute @workgroup_size(8, 8)
 fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
     let p_idx = id.y * scene.width + id.x;
+    var rng = init_rng(p_idx, scene.frame_count);
 
-    var r = reservoirsBuffer[p_idx];
-
-    let p_hat = length(r.sample.radiance.xyz);
+    // Current candidate from InitialSampling (already has M=1, w_sum=p_hat/q)
+    var r_curr = reservoirsBuffer[p_idx];
     
-    if p_hat > 1e-4 {
-        r.W = r.w_sum / (f32(r.M) * p_hat);
-    } else {
-        r.W = 0.0;
+    // Previous frame reservoir
+    var r_prev = prevReservoirsBuffer[p_idx];
+
+    // Limit history M to prevent excessive ghosting and bias
+    if r_prev.M > 20u {
+        let scale = 20.0 / f32(r_prev.M);
+        r_prev.w_sum *= scale;
+        r_prev.M = 20u;
     }
 
-    reservoirsBuffer[p_idx] = r;
+    // Combine current with previous
+    // Since we assume no reprojection, we just combine with the same pixel
+    update_reservoir(&r_curr, r_prev.sample, r_prev.w_sum, &rng);
+    r_curr.M += r_prev.M;
+
+    // Resolve final W weight
+    let p_hat = length(r_curr.sample.radiance.xyz);
+    if p_hat > 1e-4 {
+        r_curr.W = r_curr.w_sum / (f32(r_curr.M) * p_hat);
+    } else {
+        r_curr.W = 0.0;
+    }
+
+    reservoirsBuffer[p_idx] = r_curr;
 }
