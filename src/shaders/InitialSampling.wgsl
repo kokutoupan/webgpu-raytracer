@@ -394,7 +394,7 @@ fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample
     let unit_l = l_dir / dist;
 
     let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
-    if cos_theta_l < 1e-6 {
+    if cos_theta_l < 1e-6 || area < 1e-6 {
         return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
     }
 
@@ -439,7 +439,7 @@ fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: 
 fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
     let a2 = pdf_a * pdf_a;
     let b2 = pdf_b * pdf_b;
-    return a2 / (a2 + b2);
+    return a2 / (a2 + b2 + 1e-6);
 }
 
 // =========================================================
@@ -940,8 +940,18 @@ fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
     var r: Reservoir;
     r.sample = out_sample;
     r.M = 1u;
-    let p_hat = length(radiance);
-    r.w_sum = p_hat / scatter.pdf;
+
+    var p_hat = 0.0;
+    if is_delta {
+        p_hat = length(radiance);
+    } else {
+        let w_o = normalize(-r_in.direction);
+        let w_i = scatter.dir;
+        let brdf_cos = eval_brdf_cos(w_o, w_i, normal, mat_type, roughness, f0, albedo);
+        p_hat = length(radiance * brdf_cos);
+    }
+
+    r.w_sum = p_hat / max(scatter.pdf, 1e-6);
     r.W = 0.0;
     reservoirsBuffer[p_idx] = r;
 }

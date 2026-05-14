@@ -394,7 +394,7 @@ fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample
     let unit_l = l_dir / dist;
 
     let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
-    if cos_theta_l < 1e-6 {
+    if cos_theta_l < 1e-6 || area < 1e-6 {
         return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
     }
 
@@ -429,7 +429,7 @@ fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: 
     let normal = normalize(cross(edge1, edge2));
 
     let cos_theta_l = max(dot(normal, -l_dir), 0.0);
-    if cos_theta_l < 1e-4 { return 0.0; }
+    if cos_theta_l < 1e-4 || area < 1e-6 { return 0.0; }
 
     let light_count = scene.light_count;
     let dist_sq = t * t;
@@ -439,7 +439,7 @@ fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: 
 fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
     let a2 = pdf_a * pdf_a;
     let b2 = pdf_b * pdf_b;
-    return a2 / (a2 + b2);
+    return a2 / (a2 + b2 + 1e-6);
 }
 
 // =========================================================

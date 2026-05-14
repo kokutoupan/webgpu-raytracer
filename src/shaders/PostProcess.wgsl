@@ -167,9 +167,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(historyOutput, vec2<i32>(i32(id.x), i32(id.y)), vec4<f32>(final_hdr, 1.0));
 
     // 4. Output
-    let mapped = aces_tone_mapping(final_hdr);
-    let edge_detect = center_color - denoised_hdr;
-    let sharpened = mapped + aces_tone_mapping(edge_detect) * 0.3;
+    let mapped_center = aces_tone_mapping(center_color);
+    let mapped_denoised = aces_tone_mapping(denoised_hdr);
+
+    let ldr_edge = mapped_center - mapped_denoised; 
+
+    let sharpened = mapped_center + ldr_edge * 0.3;
 
     let ldr_out = pow(clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
     textureStore(outputTex, vec2<i32>(i32(id.x), i32(id.y)), vec4<f32>(ldr_out, 1.0));

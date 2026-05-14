@@ -143,7 +143,15 @@ export class RaytracePass {
 
       this.temporalBindGroups[i] = this.ctx.device.createBindGroup({
         layout: this.temporalBindGroupLayout,
-        entries: entries.filter(e => e.binding === 2 || e.binding === 16 || e.binding === 17),
+        entries: entries.filter(e => 
+          e.binding === 2 || 
+          e.binding === 16 || 
+          e.binding === 17 || 
+          e.binding === 4 || 
+          e.binding === 13 || 
+          e.binding === 14 || 
+          e.binding === 15
+        ),
       });
 
       this.finalBindGroups[i] = this.ctx.device.createBindGroup({
@@ -160,7 +168,7 @@ export class RaytracePass {
     // 偶数フレーム (frame_count % 2 == 0) -> i=1 (Buffer B)
     // 奇数フレーム (frame_count % 2 == 1) -> i=0 (Buffer A)
     const i = frameCount % 2 === 0 ? 1 : 0;
-    
+
     if (!this.initialBindGroups[i] || !this.temporalBindGroups[i] || !this.finalBindGroups[i]) return;
 
     const dispatchX = Math.ceil(this.ctx.canvas.width / 8);

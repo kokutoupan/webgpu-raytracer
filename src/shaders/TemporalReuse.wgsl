@@ -394,7 +394,7 @@ fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample
     let unit_l = l_dir / dist;
 
     let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
-    if cos_theta_l < 1e-6 {
+    if cos_theta_l < 1e-6 || area < 1e-6 {
         return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
     }
 
@@ -429,7 +429,7 @@ fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: 
     let normal = normalize(cross(edge1, edge2));
 
     let cos_theta_l = max(dot(normal, -l_dir), 0.0);
-    if cos_theta_l < 1e-4 { return 0.0; }
+    if cos_theta_l < 1e-4 || area < 1e-6 { return 0.0; }
 
     let light_count = scene.light_count;
     let dist_sq = t * t;
@@ -439,7 +439,7 @@ fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: 
 fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
     let a2 = pdf_a * pdf_a;
     let b2 = pdf_b * pdf_b;
-    return a2 / (a2 + b2);
+    return a2 / (a2 + b2 + 1e-6);
 }
 
 // =========================================================
@@ -666,9 +666,37 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_idx = id.y * scene.width + id.x;
     var rng = init_rng(p_idx, scene.frame_count);
 
+    let g_normal_val = textureLoad(g_normal, id.xy, 0);
+    let depth_val = textureLoad(g_depth, id.xy, 0);
+
     // Current candidate from InitialSampling (already has M=1, w_sum=p_hat/q)
     var r_curr = reservoirsBuffer[p_idx];
     
+    if depth_val >= 1.0 {
+        r_curr.W = 0.0;
+        reservoirsBuffer[p_idx] = r_curr;
+        return;
+    }
+
+    var tri_idx = bitcast<u32>(g_normal_val.z);
+    var tri = topology[tri_idx];
+    let mat_type = u32(tri.data0.w + 0.5);
+    var normal = unpack_normal(g_normal_val.xy);
+    
+    let u_cam = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+    let dir = normalize(scene.camera.lower_left_corner.xyz + u_cam * scene.camera.horizontal.xyz + v_cam * scene.camera.vertical.xyz - scene.camera.origin.xyz);
+    let w_o = -dir;
+
+    normal = select(-normal, normal, dot(w_o, normal) > 0.0);
+    
+    let albedo = textureLoad(g_albedo, id.xy, 0).rgb;
+    let metallic = tri.data1.x;
+    let roughness = max(tri.data1.y, 0.005);
+    let f0 = mix(vec3(0.04), albedo, metallic);
+
+    let is_delta = (mat_type == 2u) || (mat_type == 1u && metallic > 0.9 && roughness < 0.01);
+
     // Previous frame reservoir
     var r_prev = prevReservoirsBuffer[p_idx];
 
@@ -679,18 +707,41 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         r_prev.M = 20u;
     }
 
-    // Combine current with previous
-    // Since we assume no reprojection, we just combine with the same pixel
-    update_reservoir(&r_curr, r_prev.sample, r_prev.w_sum, &rng);
+    
+    // Re-evaluate previous sample's p_hat at current pixel
+    var p_hat_prev = 0.0;
+    let w_i_prev = vec3(r_prev.sample.hit_p.w, r_prev.sample.normal.w, r_prev.sample.radiance.w);
+    if is_delta {
+        p_hat_prev = length(r_prev.sample.radiance.xyz);
+    } else {
+        let brdf_cos_prev = eval_brdf_cos(w_o, w_i_prev, normal, mat_type, roughness, f0, albedo);
+        p_hat_prev = length(r_prev.sample.radiance.xyz * brdf_cos_prev);
+    }
+
+    if p_hat_prev > 1e-6 {
+        let weight_prev = p_hat_prev * r_prev.W * f32(r_prev.M);
+        update_reservoir(&r_curr, r_prev.sample, weight_prev, &rng);
+    }
     r_curr.M += r_prev.M;
 
     // Resolve final W weight
-    let p_hat = length(r_curr.sample.radiance.xyz);
-    if p_hat > 1e-4 {
-        r_curr.W = r_curr.w_sum / (f32(r_curr.M) * p_hat);
+    var p_hat_final = 0.0;
+    let w_i_final = vec3(r_curr.sample.hit_p.w, r_curr.sample.normal.w, r_curr.sample.radiance.w);
+    if is_delta {
+        p_hat_final = length(r_curr.sample.radiance.xyz);
+    } else {
+        let brdf_cos_final = eval_brdf_cos(w_o, w_i_final, normal, mat_type, roughness, f0, albedo);
+        p_hat_final = length(r_curr.sample.radiance.xyz * brdf_cos_final);
+    }
+
+    if p_hat_final > 1e-4 {
+        r_curr.W = r_curr.w_sum / (f32(r_curr.M) * p_hat_final);
     } else {
         r_curr.W = 0.0;
     }
+    
+    // Hard clamp W to suppress fireflies
+    r_curr.W = min(r_curr.W, 10.0);
 
     reservoirsBuffer[p_idx] = r_curr;
 }
