@@ -189,8 +189,12 @@ fn get_inv_transform(inst: Instance) -> mat4x4<f32> {
 //   Math & RNG Helpers
 // =========================================================
 
-fn init_rng(pixel_idx: u32, frame: u32) -> u32 {
-    var seed = pixel_idx + frame * 719393u;
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+fn init_rng(pixel_idx: u32, frame_count: u32) -> u32 {
+    var seed = pixel_idx + frame_count * 719393u;
     seed ^= 2747636419u; seed *= 2654435769u; seed ^= (seed >> 16u);
     seed *= 2654435769u; seed ^= (seed >> 16u); seed *= 2654435769u;
     return seed;
@@ -664,7 +668,7 @@ fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: pt
 fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
     let p_idx = id.y * scene.width + id.x;
-    var rng = init_rng(p_idx, scene.frame_count);
+    var rng = init_rng(p_idx, scene.frame_count + 1000u);
 
     let g_normal_val = textureLoad(g_normal, id.xy, 0);
     let depth_val = textureLoad(g_depth, id.xy, 0);
@@ -712,10 +716,9 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     var p_hat_prev = 0.0;
     let w_i_prev = vec3(r_prev.sample.hit_p.w, r_prev.sample.normal.w, r_prev.sample.radiance.w);
     if is_delta {
-        p_hat_prev = length(r_prev.sample.radiance.xyz);
+        p_hat_prev = luminance(r_prev.sample.radiance.xyz);
     } else {
-        let brdf_cos_prev = eval_brdf_cos(w_o, w_i_prev, normal, mat_type, roughness, f0, albedo);
-        p_hat_prev = length(r_prev.sample.radiance.xyz * brdf_cos_prev);
+        p_hat_prev = luminance(r_prev.sample.radiance.xyz) * max(dot(normal, w_i_prev), 0.0);
     }
 
     if p_hat_prev > 1e-6 {
@@ -728,10 +731,9 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     var p_hat_final = 0.0;
     let w_i_final = vec3(r_curr.sample.hit_p.w, r_curr.sample.normal.w, r_curr.sample.radiance.w);
     if is_delta {
-        p_hat_final = length(r_curr.sample.radiance.xyz);
+        p_hat_final = luminance(r_curr.sample.radiance.xyz);
     } else {
-        let brdf_cos_final = eval_brdf_cos(w_o, w_i_final, normal, mat_type, roughness, f0, albedo);
-        p_hat_final = length(r_curr.sample.radiance.xyz * brdf_cos_final);
+        p_hat_final = luminance(r_curr.sample.radiance.xyz) * max(dot(normal, w_i_final), 0.0);
     }
 
     if p_hat_final > 1e-4 {

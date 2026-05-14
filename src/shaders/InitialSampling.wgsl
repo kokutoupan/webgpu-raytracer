@@ -189,8 +189,12 @@ fn get_inv_transform(inst: Instance) -> mat4x4<f32> {
 //   Math & RNG Helpers
 // =========================================================
 
-fn init_rng(pixel_idx: u32, frame: u32) -> u32 {
-    var seed = pixel_idx + frame * 719393u;
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+fn init_rng(pixel_idx: u32, frame_count: u32) -> u32 {
+    var seed = pixel_idx + frame_count * 719393u;
     seed ^= 2747636419u; seed *= 2654435769u; seed ^= (seed >> 16u);
     seed *= 2654435769u; seed ^= (seed >> 16u); seed *= 2654435769u;
     return seed;
@@ -653,6 +657,21 @@ fn eval_brdf_cos(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u3
     }
 }
 
+fn get_pdf(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u32, roughness: f32) -> f32 {
+    if mat_type == 0u {
+        return max(dot(normal, w_i), 0.0) / PI;
+    } else if mat_type == 1u {
+        let h = normalize(w_o + w_i);
+        let n_dot_h = max(dot(normal, h), 1e-4);
+        let v_dot_h = max(dot(w_o, h), 1e-4);
+        let a2 = roughness * roughness;
+        let d = ggx_d(n_dot_h, a2);
+        return (d * n_dot_h) / (4.0 * v_dot_h);
+    } else {
+        return 0.0;
+    }
+}
+
 fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: ptr<function, u32>) {
     r.w_sum += weight;
     if rand_pcg(rng) < (weight / r.w_sum) {
@@ -881,22 +900,14 @@ fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
             if curr_mat_type == 3u { break; }
         }
 
-        if curr_mat_type != 2u {
+        if curr_mat_type != 2u && curr_mat_type != 3u {
             let light_s = sample_light_source(curr_hit_p, &rng);
-            if light_s.pdf > 0.0 {
+            if light_s.pdf > 1e-6 {
                 if !intersect_tlas_shadow(make_ray(curr_hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
-                    var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
-                    if curr_mat_type == 0u { 
-                        bsdf_val = eval_diffuse(albedo); 
-                        bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; 
-                    } else if curr_mat_type == 1u {
-                        bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, curr_f0);
-                        let H = normalize(-ray.direction + light_s.dir);
-                        bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-ray.direction, H), 0.0));
-                    }
-                    if bsdf_pdf_val > 0.0 { 
-                        radiance += throughput * bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; 
-                    }
+                    let w_o = -ray.direction;
+                    let tp = eval_brdf_cos(w_o, light_s.dir, normal, curr_mat_type, roughness, curr_f0, albedo);
+                    let bsdf_pdf_val = get_pdf(w_o, light_s.dir, normal, curr_mat_type, roughness);
+                    radiance += throughput * tp * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) / light_s.pdf;
                 }
             }
         }
@@ -943,15 +954,17 @@ fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var p_hat = 0.0;
     if is_delta {
-        p_hat = length(radiance);
+        p_hat = luminance(radiance);
     } else {
-        let w_o = normalize(-r_in.direction);
         let w_i = scatter.dir;
-        let brdf_cos = eval_brdf_cos(w_o, w_i, normal, mat_type, roughness, f0, albedo);
-        p_hat = length(radiance * brdf_cos);
+        p_hat = luminance(radiance) * max(dot(normal, w_i), 0.0);
     }
 
     r.w_sum = p_hat / max(scatter.pdf, 1e-6);
-    r.W = 0.0;
+    if p_hat > 1e-6 {
+        r.W = r.w_sum / (f32(r.M) * p_hat);
+    } else {
+        r.W = 0.0;
+    }
     reservoirsBuffer[p_idx] = r;
 }

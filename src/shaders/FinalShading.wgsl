@@ -653,6 +653,21 @@ fn eval_brdf_cos(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u3
     }
 }
 
+fn get_pdf(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u32, roughness: f32) -> f32 {
+    if mat_type == 0u {
+        return max(dot(normal, w_i), 0.0) / PI;
+    } else if mat_type == 1u {
+        let h = normalize(w_o + w_i);
+        let n_dot_h = max(dot(normal, h), 1e-4);
+        let v_dot_h = max(dot(w_o, h), 1e-4);
+        let a2 = roughness * roughness;
+        let d = ggx_d(n_dot_h, a2);
+        return (d * n_dot_h) / (4.0 * v_dot_h);
+    } else {
+        return 0.0;
+    }
+}
+
 fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: ptr<function, u32>) {
     r.w_sum += weight;
     if rand_pcg(rng) < (weight / r.w_sum) {
@@ -754,20 +769,12 @@ fn final_shading(@builtin(global_invocation_id) id: vec3<u32>) {
     // 2. Direct Lighting (NEE)
     if mat_type != 2u && mat_type != 3u {
         let light_s = sample_light_source(primary_hit_p, &rng);
-        if light_s.pdf > 0.0 {
+        if light_s.pdf > 1e-6 {
             if !intersect_tlas_shadow(make_ray(primary_hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
-                var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
-                if mat_type == 0u { 
-                    bsdf_val = eval_diffuse(albedo); 
-                    bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; 
-                } else if mat_type == 1u {
-                    bsdf_val = eval_ggx(normal, -r_in.direction, light_s.dir, roughness, f0);
-                    let H = normalize(-r_in.direction + light_s.dir);
-                    bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-r_in.direction, H), 0.0));
-                }
-                if bsdf_pdf_val > 0.0 { 
-                    final_radiance += bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; 
-                }
+                let w_o = -r_in.direction;
+                let tp = eval_brdf_cos(w_o, light_s.dir, normal, mat_type, roughness, f0, albedo);
+                let bsdf_pdf_val = get_pdf(w_o, light_s.dir, normal, mat_type, roughness);
+                final_radiance += tp * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) / light_s.pdf;
             }
         }
     }
