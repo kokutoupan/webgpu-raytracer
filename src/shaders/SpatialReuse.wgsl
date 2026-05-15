@@ -47,15 +47,117 @@ struct MeshTopology {
     data3: vec4<f32>, // rgb: Emissive, w: 0.0
 }
 
+struct BVHNode {
+    min_b: vec4<f32>, // w: skip_pointer
+    max_b: vec4<f32>, // w: data (internal: 0, leaf: (left_first << 3) | tri_count)
+}
+
+struct Instance {
+    transform_0: vec4<f32>,
+    transform_1: vec4<f32>,
+    transform_2: vec4<f32>,
+    transform_3: vec4<f32>,
+    inv_0: vec4<f32>,
+    inv_1: vec4<f32>,
+    inv_2: vec4<f32>,
+    inv_3: vec4<f32>,
+    blas_node_offset: u32,
+    attr_offset: u32,
+    instance_id: u32,
+    padding: u32,
+}
+
+struct Ray {
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+    inv_d: vec3<f32>,
+    origin_inv_d: vec3<f32>
+}
+
+fn make_ray(origin: vec3<f32>, direction: vec3<f32>) -> Ray {
+    let inv_d = 1.0 / direction;
+    return Ray(origin, direction, inv_d, origin * inv_d);
+}
+
 @group(0) @binding(2) var<uniform> scene : SceneUniforms;
-@group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
+@group(0) @binding(3) var<storage, read> geometry_pos : array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read> topology : array<MeshTopology>;
+@group(0) @binding(5) var<storage, read> nodes : array<BVHNode>; 
+@group(0) @binding(6) var<storage, read> instances : array<Instance>;
 @group(0) @binding(14) var g_normal : texture_2d<f32>;
 @group(0) @binding(15) var g_depth : texture_depth_2d;
-
-// Input buffer from temporal pass
 @group(0) @binding(16) var<storage, read_write> reservoirsBuffer : array<Reservoir>;
-// Output buffer for spatial reuse
 @group(0) @binding(17) var<storage, read_write> spatialReservoirsBuffer : array<Reservoir>;
+
+fn get_pos(idx: u32) -> vec3<f32> {
+    return geometry_pos[idx].xyz;
+}
+
+fn get_inv_transform(inst: Instance) -> mat4x4<f32> {
+    return mat4x4<f32>(inst.inv_0, inst.inv_1, inst.inv_2, inst.inv_3);
+}
+
+fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let t1 = min_b * r.inv_d - r.origin_inv_d;
+    let t2 = max_b * r.inv_d - r.origin_inv_d;
+    let t_near = min(t1, t2);
+    let t_far = max(t1, t2);
+    let tm_near = max(t_min, max(t_near.x, max(t_near.y, t_near.z)));
+    let tm_far = min(t_max, min(t_far.x, min(t_far.y, t_far.z)));
+    return select(1e30, tm_near, tm_near <= tm_far);
+}
+
+fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let e1 = v1 - v0; let e2 = v2 - v0;
+    let h = cross(r.direction, e2); let a = dot(e1, h);
+    if abs(a) < 1e-6 { return -1.0; } 
+    let f = 1.0 / a; let s = r.origin - v0; let u = f * dot(s, h);
+    if u < 0.0 || u > 1.0 { return -1.0; }
+    let q = cross(s, e1); let v = f * dot(r.direction, q);
+    if v < 0.0 || u + v > 1.0 { return -1.0; }
+    let t = f * dot(e2, q);
+    return select(-1.0, t, t > t_min && t < t_max);
+}
+
+fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> bool {
+    let end_node = node_start_idx + bitcast<u32>(nodes[node_start_idx].min_b.w);
+    var curr = node_start_idx;
+    while curr < end_node {
+        let node = nodes[curr];
+        if intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, t_max) < 1e30 {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                let first = data >> 3u;
+                let count = data & 7u;
+                for (var i = 0u; i < count; i++) {
+                    let tr = topology[first + i];
+                    if hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, t_max) > 0.0 { return true; }
+                }
+                curr = node_start_idx + bitcast<u32>(node.min_b.w);
+            } else { curr = curr + 1u; }
+        } else { curr = node_start_idx + bitcast<u32>(node.min_b.w); }
+    }
+    return false;
+}
+
+fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
+    if scene.blas_base_idx == 0u { return false; }
+    var curr = 0u;
+    let end_node = bitcast<u32>(nodes[0].min_b.w);
+    while curr < end_node {
+        let node = nodes[curr];
+        if intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, t_max) < 1e30 {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                let inst = instances[data >> 3u];
+                let r_local = make_ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
+                if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) { return true; }
+                curr = bitcast<u32>(node.min_b.w);
+            } else { curr = curr + 1u; }
+        } else { curr = bitcast<u32>(node.min_b.w); }
+    }
+    return false;
+}
 
 const PI: f32 = 3.14159265359;
 
@@ -263,6 +365,12 @@ fn spatial_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         jacobian = clamp(jacobian, 0.1, 10.0);
 
+        // Visibility Check: Shadow ray from current hit point to neighbor's light position
+        let shadow_ray = make_ray(curr_hit_p + normal * 1e-4, w_i_new);
+        if intersect_tlas_shadow(shadow_ray, 0.001, dist_curr - 2e-4) {
+            continue;
+        }
+
         var p_hat_new = 0.0;
         if is_delta {
             p_hat_new = luminance(r_neighbor.sample.radiance.xyz);
@@ -281,11 +389,6 @@ fn spatial_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
             update_reservoir(&r_curr, shifted_sample, weight, &rng);
             r_curr.M += r_neighbor.M;
         }
-    }
-
-    if r_curr.M > 100u {
-        r_curr.w_sum *= 100.0 / f32(r_curr.M);
-        r_curr.M = 100u;
     }
 
     let w_i_final = vec3(r_curr.sample.hit_p.w, r_curr.sample.normal.w, r_curr.sample.radiance.w);

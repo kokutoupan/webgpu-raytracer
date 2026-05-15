@@ -185,7 +185,10 @@ export class RaytracePass {
           e.binding === 17 || 
           e.binding === 14 || 
           e.binding === 15 ||
-          e.binding === 4
+          e.binding === 4 ||
+          e.binding === 3 ||
+          e.binding === 5 ||
+          e.binding === 6
         ),
       });
 
