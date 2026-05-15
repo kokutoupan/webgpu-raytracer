@@ -664,6 +664,25 @@ fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: pt
     }
 }
 
+fn get_world_pos(id: vec2<u32>, depth_val: f32) -> vec3<f32> {
+    let u_cam = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1.0 - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+    let ray_dir = normalize(scene.camera.lower_left_corner.xyz + u_cam * scene.camera.horizontal.xyz + v_cam * scene.camera.vertical.xyz - scene.camera.origin.xyz);
+    
+    // Reverse non-linear Z to view-space Z
+    let z_near = 0.001;
+    let z_far = 10000.0;
+    let z_view = (z_far * z_near) / (z_far - depth_val * (z_far - z_near));
+    
+    // View-space Z to ray distance t
+    let eye = scene.camera.origin.xyz;
+    let center = scene.camera.lower_left_corner.xyz + scene.camera.horizontal.xyz * 0.5 + scene.camera.vertical.xyz * 0.5;
+    let forward = normalize(center - eye);
+    let t = z_view / dot(ray_dir, forward);
+    
+    return eye + ray_dir * t;
+}
+
 @compute @workgroup_size(8, 8)
 fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
@@ -701,6 +720,17 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let is_delta = (mat_type == 2u) || (mat_type == 1u && metallic > 0.9 && roughness < 0.01);
 
+    // Re-evaluate current reservoir p_hat using BRDF
+    let w_i_curr = vec3(r_curr.sample.hit_p.w, r_curr.sample.normal.w, r_curr.sample.radiance.w);
+    var p_hat_curr = 0.0;
+    if is_delta {
+        p_hat_curr = luminance(r_curr.sample.radiance.xyz);
+    } else {
+        let brdf_curr = eval_brdf_cos(w_o, w_i_curr, normal, mat_type, roughness, f0, albedo);
+        p_hat_curr = luminance(r_curr.sample.radiance.xyz * brdf_curr);
+    }
+    r_curr.w_sum = r_curr.W * f32(r_curr.M) * p_hat_curr;
+
     // Previous frame reservoir
     var r_prev = prevReservoirsBuffer[p_idx];
 
@@ -711,14 +741,14 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         r_prev.M = 20u;
     }
 
-    
     // Re-evaluate previous sample's p_hat at current pixel
     var p_hat_prev = 0.0;
     let w_i_prev = vec3(r_prev.sample.hit_p.w, r_prev.sample.normal.w, r_prev.sample.radiance.w);
     if is_delta {
         p_hat_prev = luminance(r_prev.sample.radiance.xyz);
     } else {
-        p_hat_prev = luminance(r_prev.sample.radiance.xyz) * max(dot(normal, w_i_prev), 0.0);
+        let brdf_prev = eval_brdf_cos(w_o, w_i_prev, normal, mat_type, roughness, f0, albedo);
+        p_hat_prev = luminance(r_prev.sample.radiance.xyz * brdf_prev);
     }
 
     if p_hat_prev > 1e-6 {
@@ -733,7 +763,8 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     if is_delta {
         p_hat_final = luminance(r_curr.sample.radiance.xyz);
     } else {
-        p_hat_final = luminance(r_curr.sample.radiance.xyz) * max(dot(normal, w_i_final), 0.0);
+        let brdf_final = eval_brdf_cos(w_o, w_i_final, normal, mat_type, roughness, f0, albedo);
+        p_hat_final = luminance(r_curr.sample.radiance.xyz * brdf_final);
     }
 
     if p_hat_final > 1e-4 {
@@ -743,7 +774,7 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     
     // Hard clamp W to suppress fireflies
-    r_curr.W = min(r_curr.W, 10.0);
+    r_curr.W = min(r_curr.W, 1000.0);
 
     reservoirsBuffer[p_idx] = r_curr;
 }

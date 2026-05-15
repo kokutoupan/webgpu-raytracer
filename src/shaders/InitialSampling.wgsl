@@ -957,12 +957,14 @@ fn initial_sampling(@builtin(global_invocation_id) id: vec3<u32>) {
         p_hat = luminance(radiance);
     } else {
         let w_i = scatter.dir;
-        p_hat = luminance(radiance) * max(dot(normal, w_i), 0.0);
+        let w_o = -r_in.direction;
+        let tp = eval_brdf_cos(w_o, w_i, normal, mat_type, roughness, f0, albedo);
+        p_hat = luminance(radiance * tp);
     }
 
     r.w_sum = p_hat / max(scatter.pdf, 1e-6);
     if p_hat > 1e-6 {
-        r.W = r.w_sum / (f32(r.M) * p_hat);
+        r.W = min(r.w_sum / (f32(r.M) * p_hat), 1000.0);
     } else {
         r.W = 0.0;
     }

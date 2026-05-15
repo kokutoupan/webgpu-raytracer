@@ -11,6 +11,7 @@ export class ResourceManager {
   accumulateBuffer!: GPUBuffer;
   reservoirsBufferA!: GPUBuffer;
   reservoirsBufferB!: GPUBuffer;
+  spatialReservoirsBuffer!: GPUBuffer;
 
   // Consolidated Uniforms
   sceneUniformBuffer!: GPUBuffer;
@@ -143,6 +144,11 @@ export class ResourceManager {
     });
     if (this.reservoirsBufferB) this.reservoirsBufferB.destroy();
     this.reservoirsBufferB = this.ctx.device.createBuffer({
+      size: reservoirsBufferSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    if (this.spatialReservoirsBuffer) this.spatialReservoirsBuffer.destroy();
+    this.spatialReservoirsBuffer = this.ctx.device.createBuffer({
       size: reservoirsBufferSize,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });

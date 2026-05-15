@@ -18,7 +18,7 @@ pub fn create_cornell_box(loaded_mesh: Option<&Mesh>) -> SceneData {
     let white = vec3(0.73, 0.73, 0.73);
     let red = vec3(0.65, 0.05, 0.05);
     let green = vec3(0.12, 0.45, 0.15);
-    let light = vec3(15.0, 15.0, 15.0);
+    let light = vec3(20.0, 20.0, 20.0);
 
     let s = 555.0;
     let v = |x: f32, y: f32, z: f32| vec3(x / s * 2. - 1., y / s * 2., z / s * 2. - 1.);

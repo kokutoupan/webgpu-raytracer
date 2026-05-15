@@ -676,6 +676,25 @@ fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: pt
 }
 
 
+fn get_world_pos(id: vec2<u32>, depth_val: f32) -> vec3<f32> {
+    let u_cam = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1.0 - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+    let ray_dir = normalize(scene.camera.lower_left_corner.xyz + u_cam * scene.camera.horizontal.xyz + v_cam * scene.camera.vertical.xyz - scene.camera.origin.xyz);
+    
+    // Reverse non-linear Z to view-space Z
+    let z_near = 0.001;
+    let z_far = 10000.0;
+    let z_view = (z_far * z_near) / (z_far - depth_val * (z_far - z_near));
+    
+    // View-space Z to ray distance t
+    let eye = scene.camera.origin.xyz;
+    let center = scene.camera.lower_left_corner.xyz + scene.camera.horizontal.xyz * 0.5 + scene.camera.vertical.xyz * 0.5;
+    let forward = normalize(center - eye);
+    let t = z_view / dot(ray_dir, forward);
+    
+    return eye + ray_dir * t;
+}
+
 @compute @workgroup_size(8, 8)
 fn final_shading(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }

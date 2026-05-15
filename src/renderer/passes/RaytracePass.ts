@@ -2,17 +2,21 @@ import { WebGPUContext } from "../WebGPUContext";
 import { ResourceManager } from "../ResourceManager";
 import initialSamplingCodeRaw from "../../shaders/InitialSampling.wgsl?raw";
 import temporalReuseCodeRaw from "../../shaders/TemporalReuse.wgsl?raw";
+import spatialReuseCodeRaw from "../../shaders/SpatialReuse.wgsl?raw";
 import finalShadingCodeRaw from "../../shaders/FinalShading.wgsl?raw";
 
 export class RaytracePass {
   initialSamplingPipeline!: GPUComputePipeline;
   temporalReusePipeline!: GPUComputePipeline;
+  spatialReusePipeline!: GPUComputePipeline;
   finalShadingPipeline!: GPUComputePipeline;
   initialBindGroupLayout!: GPUBindGroupLayout;
   temporalBindGroupLayout!: GPUBindGroupLayout;
+  spatialBindGroupLayout!: GPUBindGroupLayout;
   finalBindGroupLayout!: GPUBindGroupLayout;
   initialBindGroups: GPUBindGroup[] = [];
   temporalBindGroups: GPUBindGroup[] = [];
+  spatialBindGroups: GPUBindGroup[] = [];
   finalBindGroups: GPUBindGroup[] = [];
 
   ctx: WebGPUContext;
@@ -30,6 +34,11 @@ export class RaytracePass {
     const temporalModule = this.ctx.device.createShaderModule({
       label: "Temporal Reuse Shader",
       code: temporalReuseCodeRaw,
+    });
+
+    const spatialModule = this.ctx.device.createShaderModule({
+      label: "Spatial Reuse Shader",
+      code: spatialReuseCodeRaw,
     });
 
     const finalModule = this.ctx.device.createShaderModule({
@@ -57,6 +66,15 @@ export class RaytracePass {
       },
     });
 
+    this.spatialReusePipeline = this.ctx.device.createComputePipeline({
+      label: "Spatial Reuse Pipeline",
+      layout: "auto",
+      compute: {
+        module: spatialModule,
+        entryPoint: "spatial_reuse",
+      },
+    });
+
     this.finalShadingPipeline = this.ctx.device.createComputePipeline({
       label: "Final Shading Pipeline",
       layout: "auto",
@@ -68,6 +86,7 @@ export class RaytracePass {
     });
     this.initialBindGroupLayout = this.initialSamplingPipeline.getBindGroupLayout(0);
     this.temporalBindGroupLayout = this.temporalReusePipeline.getBindGroupLayout(0);
+    this.spatialBindGroupLayout = this.spatialReusePipeline.getBindGroupLayout(0);
     this.finalBindGroupLayout = this.finalShadingPipeline.getBindGroupLayout(0);
   }
 
@@ -154,12 +173,29 @@ export class RaytracePass {
         ),
       });
 
+      this.spatialBindGroups[i] = this.ctx.device.createBindGroup({
+        layout: this.spatialBindGroupLayout,
+        entries: [
+          ...commonEntries,
+          { binding: 16, resource: { buffer: currBuffer } }, // Input from Temporal
+          { binding: 17, resource: { buffer: res.spatialReservoirsBuffer } }, // Output
+        ].filter(e => 
+          e.binding === 2 || 
+          e.binding === 16 || 
+          e.binding === 17 || 
+          e.binding === 14 || 
+          e.binding === 15 ||
+          e.binding === 4
+        ),
+      });
+
       this.finalBindGroups[i] = this.ctx.device.createBindGroup({
         layout: this.finalBindGroupLayout,
         entries: [
           { binding: 1, resource: { buffer: res.accumulateBuffer } },
-          ...entries.filter(e => e.binding !== 11 && e.binding !== 17),
-        ],
+          ...commonEntries,
+          { binding: 16, resource: { buffer: res.spatialReservoirsBuffer } }, // Read from Spatial
+        ].filter(e => e.binding !== 11 && e.binding !== 17),
       });
     }
   }
@@ -169,7 +205,7 @@ export class RaytracePass {
     // 奇数フレーム (frame_count % 2 == 1) -> i=0 (Buffer A)
     const i = frameCount % 2 === 0 ? 1 : 0;
 
-    if (!this.initialBindGroups[i] || !this.temporalBindGroups[i] || !this.finalBindGroups[i]) return;
+    if (!this.initialBindGroups[i] || !this.temporalBindGroups[i] || !this.spatialBindGroups[i] || !this.finalBindGroups[i]) return;
 
     const dispatchX = Math.ceil(this.ctx.canvas.width / 8);
     const dispatchY = Math.ceil(this.ctx.canvas.height / 8);
@@ -180,14 +216,21 @@ export class RaytracePass {
     initialPass.setBindGroup(0, this.initialBindGroups[i]);
     initialPass.dispatchWorkgroups(dispatchX, dispatchY);
     initialPass.end();
-
+ 
     // Temporal Reuse Pass
     const temporalPass = commandEncoder.beginComputePass();
     temporalPass.setPipeline(this.temporalReusePipeline);
     temporalPass.setBindGroup(0, this.temporalBindGroups[i]);
     temporalPass.dispatchWorkgroups(dispatchX, dispatchY);
     temporalPass.end();
-
+ 
+    // Spatial Reuse Pass
+    const spatialPass = commandEncoder.beginComputePass();
+    spatialPass.setPipeline(this.spatialReusePipeline);
+    spatialPass.setBindGroup(0, this.spatialBindGroups[i]);
+    spatialPass.dispatchWorkgroups(dispatchX, dispatchY);
+    spatialPass.end();
+ 
     // Final Shading Pass
     const finalPass = commandEncoder.beginComputePass();
     finalPass.setPipeline(this.finalShadingPipeline);
