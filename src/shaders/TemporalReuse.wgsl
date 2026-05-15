@@ -731,14 +731,40 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     r_curr.w_sum = r_curr.W * f32(r_curr.M) * p_hat_curr;
 
-    // Previous frame reservoir
-    var r_prev = prevReservoirsBuffer[p_idx];
+    // Reconstruct world position of current pixel
+    let world_pos = get_world_pos(id.xy, depth_val);
 
-    // Limit history M to prevent excessive ghosting and bias
-    if r_prev.M > 20u {
-        let scale = 20.0 / f32(r_prev.M);
+    // Project world position to previous frame screen
+    let W_vec = world_pos - scene.prev_camera.origin.xyz;
+    let H_vec = scene.prev_camera.horizontal.xyz;
+    let V_vec = scene.prev_camera.vertical.xyz;
+    let L_vec = scene.prev_camera.lower_left_corner.xyz - scene.prev_camera.origin.xyz;
+    let w_vec = cross(H_vec, V_vec);
+    
+    let T_val = dot(W_vec, w_vec) / dot(L_vec, w_vec);
+    let u_prev = dot(W_vec - T_val * L_vec, H_vec) / (T_val * dot(H_vec, H_vec));
+    let v_prev = dot(W_vec - T_val * L_vec, V_vec) / (T_val * dot(V_vec, V_vec));
+
+    let prev_x = i32(u_prev * f32(scene.width) - 0.5);
+    let prev_y = i32((1.0 - v_prev) * f32(scene.height) - 0.5);
+
+    // Previous frame reservoir
+    var r_prev: Reservoir;
+    if prev_x >= 0 && prev_x < i32(scene.width) && prev_y >= 0 && prev_y < i32(scene.height) {
+        let prev_p_idx = u32(prev_y) * scene.width + u32(prev_x);
+        r_prev = prevReservoirsBuffer[prev_p_idx];
+    } else {
+        r_prev.M = 0u;
+        r_prev.w_sum = 0.0;
+    }
+
+    // Limit history M to prevent excessive ghosting and bias.
+    // Use a smaller cap for metals to keep them responsive.
+    let max_M = select(20u, 20u, metallic > 0.5);
+    if r_prev.M > max_M {
+        let scale = f32(max_M) / f32(r_prev.M);
         r_prev.w_sum *= scale;
-        r_prev.M = 20u;
+        r_prev.M = max_M;
     }
 
     // Re-evaluate previous sample's p_hat at current pixel
@@ -767,14 +793,14 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         p_hat_final = luminance(r_curr.sample.radiance.xyz * brdf_final);
     }
 
-    if p_hat_final > 1e-4 {
+    if p_hat_final > 1e-6 {
         r_curr.W = r_curr.w_sum / (f32(r_curr.M) * p_hat_final);
     } else {
         r_curr.W = 0.0;
     }
     
     // Hard clamp W to suppress fireflies
-    r_curr.W = min(r_curr.W, 1000.0);
+    // r_curr.W = min(r_curr.W, 1000.0);
 
     reservoirsBuffer[p_idx] = r_curr;
 }

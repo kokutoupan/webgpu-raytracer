@@ -638,6 +638,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
     let red = vec3(0.65, 0.05, 0.05);
     let green = vec3(0.12, 0.45, 0.15);
     let light = vec3(10.0, 10.0, 10.0);
+    let metal_color = vec3(0.73, 0.73, 0.73);
 
     let s = 555.0;
     // Map 0..555 to -1..1 (XZ) and 0..2 (Y)
@@ -651,7 +652,7 @@ pub fn create_model_viewer_scene(mesh: Option<&Mesh>, has_glb: bool) -> SceneDat
         v(555., 0., 0.),
         v(555., 0., 555.),
         v(0., 0., 555.),
-        white,
+        metal_color,
         mat_type::METAL,
         0.15,
         -1.0,

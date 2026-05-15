@@ -306,21 +306,20 @@ fn spatial_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     // Initialize w_sum for the merge
     let w_i_curr = vec3(r_curr.sample.hit_p.w, r_curr.sample.normal.w, r_curr.sample.radiance.w);
     var p_hat_curr = 0.0;
-    if is_delta {
-        p_hat_curr = luminance(r_curr.sample.radiance.xyz);
-    } else {
-        let brdf_curr = eval_brdf_cos(w_o, w_i_curr, normal, mat_type, roughness, f0, albedo);
-        p_hat_curr = luminance(r_curr.sample.radiance.xyz * brdf_curr);
-    }
+    let brdf_curr = eval_brdf_cos(w_o, w_i_curr, normal, mat_type, roughness, f0, albedo);
+    p_hat_curr = luminance(r_curr.sample.radiance.xyz * brdf_curr);
     r_curr.w_sum = r_curr.W * f32(r_curr.M) * p_hat_curr;
 
     // Spatial Reuse Parameters
     const num_neighbors: u32 = 4u;
-    const base_radius: f32 = 20.0;
+    let base_radius = 20.0;
+    var dynamic_radius = mix(1.0, 10.0, roughness);
+    dynamic_radius = select(base_radius, dynamic_radius,  mat_type == 1u);
+
 
     for (var i = 0u; i < num_neighbors; i++) {
         let angle = rand_pcg(&rng) * 2.0 * PI;
-        let dist = rand_pcg(&rng) * base_radius;
+        let dist = rand_pcg(&rng) * dynamic_radius;
         let offset = vec2<i32>(i32(cos(angle) * dist), i32(sin(angle) * dist));
         let neighbor_coord = vec2<i32>(id.xy) + offset;
 
@@ -363,7 +362,7 @@ fn spatial_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         if cos_L_old > 1e-6 {
             jacobian = (cos_L_curr * dist_neighbor2) / (cos_L_old * dist_curr2);
         }
-        jacobian = clamp(jacobian, 0.1, 10.0);
+        // jacobian = clamp(jacobian, 0.1, 10.0);
 
         // Visibility Check: Shadow ray from current hit point to neighbor's light position
         let shadow_ray = make_ray(curr_hit_p + normal * 1e-4, w_i_new);
@@ -372,12 +371,8 @@ fn spatial_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         }
 
         var p_hat_new = 0.0;
-        if is_delta {
-            p_hat_new = luminance(r_neighbor.sample.radiance.xyz);
-        } else {
-            let brdf_new = eval_brdf_cos(w_o, w_i_new, normal, mat_type, roughness, f0, albedo);
-            p_hat_new = luminance(r_neighbor.sample.radiance.xyz * brdf_new);
-        }
+        let brdf_new = eval_brdf_cos(w_o, w_i_new, normal, mat_type, roughness, f0, albedo);
+        p_hat_new = luminance(r_neighbor.sample.radiance.xyz * brdf_new);
 
         if p_hat_new > 1e-6 {
             let weight = p_hat_new * r_neighbor.W * f32(r_neighbor.M) * jacobian;
@@ -393,12 +388,8 @@ fn spatial_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let w_i_final = vec3(r_curr.sample.hit_p.w, r_curr.sample.normal.w, r_curr.sample.radiance.w);
     var p_hat_final = 0.0;
-    if is_delta {
-        p_hat_final = luminance(r_curr.sample.radiance.xyz);
-    } else {
-        let brdf_final = eval_brdf_cos(w_o, w_i_final, normal, mat_type, roughness, f0, albedo);
-        p_hat_final = luminance(r_curr.sample.radiance.xyz * brdf_final);
-    }
+    let brdf_final = eval_brdf_cos(w_o, w_i_final, normal, mat_type, roughness, f0, albedo);
+    p_hat_final = luminance(r_curr.sample.radiance.xyz * brdf_final);
 
     if p_hat_final > 1e-6 {
         r_curr.W = r_curr.w_sum / (f32(r_curr.M) * p_hat_final);
@@ -406,6 +397,6 @@ fn spatial_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         r_curr.W = 0.0;
     }
 
-    r_curr.W = min(r_curr.W, 1000.0);
+    // r_curr.W = min(r_curr.W, 1000.0);
     spatialReservoirsBuffer[p_idx] = r_curr;
 }
