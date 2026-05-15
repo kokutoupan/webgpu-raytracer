@@ -745,8 +745,8 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     let u_prev = dot(W_vec - T_val * L_vec, H_vec) / (T_val * dot(H_vec, H_vec));
     let v_prev = dot(W_vec - T_val * L_vec, V_vec) / (T_val * dot(V_vec, V_vec));
 
-    let prev_x = i32(u_prev * f32(scene.width) - 0.5);
-    let prev_y = i32((1.0 - v_prev) * f32(scene.height) - 0.5);
+    let prev_x = i32(u_prev * f32(scene.width));
+    let prev_y = i32((1.0 - v_prev) * f32(scene.height));
 
     // Previous frame reservoir
     var r_prev: Reservoir;
