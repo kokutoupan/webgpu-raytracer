@@ -140,7 +140,7 @@ export class RaytracePass {
       },
       { binding: 13, resource: res.renderTargetView },
       { binding: 14, resource: res.gBufferNormalView },
-      { binding: 15, resource: res.depthTextureView },
+      { binding: 15, resource: res.depthTextureViews[res.historyIndex] },
     ];
 
     for (let i = 0; i < 2; i++) {
@@ -153,11 +153,12 @@ export class RaytracePass {
         ...commonEntries,
         { binding: 16, resource: { buffer: currBuffer } },
         { binding: 17, resource: { buffer: prevBuffer } },
+        { binding: 18, resource: res.depthTextureViews[1 - res.historyIndex] },
       ];
 
       this.initialBindGroups[i] = this.ctx.device.createBindGroup({
         layout: this.initialBindGroupLayout,
-        entries: entries.filter(e => e.binding !== 17),
+        entries: entries.filter(e => e.binding !== 17 && e.binding !== 18),
       });
 
       this.temporalBindGroups[i] = this.ctx.device.createBindGroup({
@@ -169,7 +170,8 @@ export class RaytracePass {
           e.binding === 4 || 
           e.binding === 13 || 
           e.binding === 14 || 
-          e.binding === 15
+          e.binding === 15 ||
+          e.binding === 18
         ),
       });
 

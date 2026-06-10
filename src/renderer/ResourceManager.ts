@@ -6,9 +6,10 @@ export class ResourceManager {
   renderTargetView!: GPUTextureView;
   gBufferNormal!: GPUTexture; // Added for G-Buffer
   gBufferNormalView!: GPUTextureView; // Added for G-Buffer
-  depthTexture!: GPUTexture; // Added for G-Buffer depth
-  depthTextureView!: GPUTextureView; // Added for G-Buffer depth
+  depthTextures: GPUTexture[] = []; // Double-buffered G-Buffer depth
+  depthTextureViews: GPUTextureView[] = [];
   accumulateBuffer!: GPUBuffer;
+  samplesBuffer!: GPUBuffer;
   reservoirsBufferA!: GPUBuffer;
   reservoirsBufferB!: GPUBuffer;
   spatialReservoirsBuffer!: GPUBuffer;
@@ -39,6 +40,7 @@ export class ResourceManager {
   prevCameraData: Float32Array = new Float32Array(24);
   accumulatedJitter = { x: 0, y: 0 };
   jitter = { x: 0, y: 0 };
+  prevJitter = { x: 0, y: 0 };
   averageJitter = { x: 0, y: 0 };
 
   private bufferSize = 0;
@@ -54,7 +56,7 @@ export class ResourceManager {
   seed = Math.floor(Math.random() * 0xffffff);
 
   // Reuse to avoid allocation
-  private uniformMixedData = new Uint32Array(12);
+  private uniformMixedData = new Uint32Array(16);
 
   ctx: WebGPUContext;
 
@@ -114,13 +116,15 @@ export class ResourceManager {
     });
     this.gBufferNormalView = this.gBufferNormal.createView();
 
-    if (this.depthTexture) this.depthTexture.destroy();
-    this.depthTexture = this.ctx.device.createTexture({
-      size: [width, height],
-      format: "depth32float",
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    this.depthTextureView = this.depthTexture.createView();
+    for (let i = 0; i < 2; i++) {
+      if (this.depthTextures[i]) this.depthTextures[i].destroy();
+      this.depthTextures[i] = this.ctx.device.createTexture({
+        size: [width, height],
+        format: "depth32float",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      this.depthTextureViews[i] = this.depthTextures[i].createView();
+    }
 
     this.bufferSize = width * height * 16;
     if (this.accumulateBuffer) this.accumulateBuffer.destroy();
@@ -391,6 +395,9 @@ export class ResourceManager {
     this.lightCount = lightCount;
     if (!this.sceneUniformBuffer) return;
 
+    this.prevJitter.x = this.jitter.x;
+    this.prevJitter.y = this.jitter.y;
+
     const jitterX = this.getHalton((frameCount % 16) + 1, 2) - 0.5;
     const jitterY = this.getHalton((frameCount % 16) + 1, 3) - 0.5;
     this.jitter = {
@@ -426,12 +433,17 @@ export class ResourceManager {
     floatView[9] = this.jitter.y;
     floatView[10] = this.averageJitter.x;
     floatView[11] = this.averageJitter.y;
+    floatView[12] = this.prevJitter.x;
+    floatView[13] = this.prevJitter.y;
 
     this.ctx.device.queue.writeBuffer(this.sceneUniformBuffer, 192, this.uniformMixedData as any);
     this.prevCameraData.set(cameraData);
   }
 
   updateFrameUniforms(frameCount: number, totalFrames: number) {
+    this.prevJitter.x = this.jitter.x;
+    this.prevJitter.y = this.jitter.y;
+
     const jitterX = this.getHalton((totalFrames % 16) + 1, 2) - 0.5;
     const jitterY = this.getHalton((totalFrames % 16) + 1, 3) - 0.5;
 
@@ -465,6 +477,8 @@ export class ResourceManager {
     floatView[9] = this.jitter.y;
     floatView[10] = this.averageJitter.x;
     floatView[11] = this.averageJitter.y;
+    floatView[12] = this.prevJitter.x;
+    floatView[13] = this.prevJitter.y;
 
     this.ctx.device.queue.writeBuffer(
       this.sceneUniformBuffer,

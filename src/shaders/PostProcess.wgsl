@@ -23,7 +23,9 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    average_jitter: vec2<f32>
+    average_jitter: vec2<f32>,
+    prev_jitter: vec2<f32>,
+    pad2: vec2<f32>
 }
 
 @group(0) @binding(0) var outputTex: texture_storage_2d<rgba8unorm, write>;

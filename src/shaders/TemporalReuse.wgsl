@@ -47,7 +47,9 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    average_jitter: vec2<f32>
+    average_jitter: vec2<f32>,
+    prev_jitter: vec2<f32>,
+    pad2: vec2<f32>
 }
 
 struct MeshTopology {
@@ -160,6 +162,7 @@ fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
 @group(0) @binding(15) var g_depth: texture_depth_2d;
 @group(0) @binding(16) var<storage, read_write> reservoirsBuffer: array<Reservoir>;
 @group(0) @binding(17) var<storage, read> prevReservoirsBuffer: array<Reservoir>;
+@group(0) @binding(18) var g_prev_depth: texture_depth_2d;
 
 // =========================================================
 //   Buffer Accessors
@@ -683,6 +686,25 @@ fn get_world_pos(id: vec2<u32>, depth_val: f32) -> vec3<f32> {
     return eye + ray_dir * t;
 }
 
+fn get_prev_world_pos(id: vec2<u32>, depth_val: f32) -> vec3<f32> {
+    let u_cam = (f32(id.x) + 0.5 + scene.prev_jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1.0 - (f32(id.y) + 0.5 + scene.prev_jitter.y * f32(scene.height)) / f32(scene.height);
+    let ray_dir = normalize(scene.prev_camera.lower_left_corner.xyz + u_cam * scene.prev_camera.horizontal.xyz + v_cam * scene.prev_camera.vertical.xyz - scene.prev_camera.origin.xyz);
+    
+    // Reverse non-linear Z to view-space Z
+    let z_near = 0.001;
+    let z_far = 10000.0;
+    let z_view = (z_far * z_near) / (z_far - depth_val * (z_far - z_near));
+    
+    // View-space Z to ray distance t
+    let eye = scene.prev_camera.origin.xyz;
+    let center = scene.prev_camera.lower_left_corner.xyz + scene.prev_camera.horizontal.xyz * 0.5 + scene.prev_camera.vertical.xyz * 0.5;
+    let forward = normalize(center - eye);
+    let t = z_view / dot(ray_dir, forward);
+    
+    return eye + ray_dir * t;
+}
+
 @compute @workgroup_size(8, 8)
 fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= scene.width || id.y >= scene.height { return; }
@@ -750,10 +772,25 @@ fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Previous frame reservoir
     var r_prev: Reservoir;
+    var disoccluded = false;
     if prev_x >= 0 && prev_x < i32(scene.width) && prev_y >= 0 && prev_y < i32(scene.height) {
         let prev_p_idx = u32(prev_y) * scene.width + u32(prev_x);
         r_prev = prevReservoirsBuffer[prev_p_idx];
+        
+        let prev_depth_val = textureLoad(g_prev_depth, vec2<i32>(prev_x, prev_y), 0);
+        if prev_depth_val >= 1.0 {
+            disoccluded = true;
+        } else {
+            let prev_world_pos = get_prev_world_pos(vec2<u32>(u32(prev_x), u32(prev_y)), prev_depth_val);
+            if distance(world_pos, prev_world_pos) > 0.1 {
+                disoccluded = true;
+            }
+        }
     } else {
+        disoccluded = true;
+    }
+
+    if disoccluded {
         r_prev.M = 0u;
         r_prev.w_sum = 0.0;
     }
