@@ -5,13 +5,26 @@
 const PI = 3.141592653589793;
 const T_MIN = 0.001;
 const T_MAX = 1e30;
-// These are replaced by Pipeline Overrides
 override MAX_DEPTH: u32;
-override SPP: u32;
 
 // =========================================================
 //   Structs
 // =========================================================
+
+struct Sample {
+    hit_p: vec4<f32>,    // xyz: Position(secondary ray hit point), w: scatter.dir.x
+    normal: vec4<f32>,   // xyz: Normal, w: scatter.dir.y
+    radiance: vec4<f32>, // xyz: L_i, w: scatter.dir.z
+}
+
+struct Reservoir {
+    sample: Sample,
+    w_sum: f32,
+    W: f32,
+    M: u32,
+    padding: f32,
+}
+
 
 struct Camera {
     origin: vec4<f32>, // w: lens_radius
@@ -34,7 +47,9 @@ struct SceneUniforms {
     height: u32,
     pad: u32,
     jitter: vec2<f32>,
-    average_jitter: vec2<f32>
+    average_jitter: vec2<f32>,
+    prev_jitter: vec2<f32>,
+    pad2: vec2<f32>
 }
 
 struct MeshTopology {
@@ -133,20 +148,21 @@ fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
 
 @group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> scene: SceneUniforms;
-
 @group(0) @binding(3) var<storage, read> geometry_pos: array<vec4<f32>>;
-@group(0) @binding(11) var<storage, read> geometry_norm: array<vec4<f32>>;
-@group(0) @binding(12) var<storage, read> geometry_uv: array<vec2<f32>>;
 @group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
 @group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; 
 @group(0) @binding(6) var<storage, read> instances: array<Instance>;
-@group(0) @binding(9) var<storage, read> lights: array<LightRef>;
-
 @group(0) @binding(7) var tex: texture_2d_array<f32>;
 @group(0) @binding(8) var smp: sampler;
+@group(0) @binding(9) var<storage, read> lights: array<LightRef>;
+@group(0) @binding(11) var<storage, read> geometry_norm: array<vec4<f32>>;
+@group(0) @binding(12) var<storage, read> geometry_uv: array<vec2<f32>>;
 @group(0) @binding(13) var g_albedo: texture_2d<f32>;
 @group(0) @binding(14) var g_normal: texture_2d<f32>;
 @group(0) @binding(15) var g_depth: texture_depth_2d;
+@group(0) @binding(16) var<storage, read_write> reservoirsBuffer: array<Reservoir>;
+@group(0) @binding(17) var<storage, read> prevReservoirsBuffer: array<Reservoir>;
+
 // =========================================================
 //   Buffer Accessors
 // =========================================================
@@ -310,6 +326,8 @@ fn bsdf_to_throughput(d: f32, g: f32, f: vec3<f32>, n_dot_v: f32, n_dot_l: f32, 
     return (d * g * f) / (4.0 * n_dot_v * n_dot_l) * n_dot_l / pdf;
 }
 
+
+
 // Dielectric
 fn reflectance_dielectric(cosine: f32, ref_idx: f32) -> f32 {
     var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
@@ -378,7 +396,7 @@ fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample
     let unit_l = l_dir / dist;
 
     let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
-    if cos_theta_l < 1e-6 {
+    if cos_theta_l < 1e-6 || area < 1e-6 {
         return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
     }
 
@@ -413,7 +431,7 @@ fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: 
     let normal = normalize(cross(edge1, edge2));
 
     let cos_theta_l = max(dot(normal, -l_dir), 0.0);
-    if cos_theta_l < 1e-4 { return 0.0; }
+    if cos_theta_l < 1e-4 || area < 1e-6 { return 0.0; }
 
     let light_count = scene.light_count;
     let dist_sq = t * t;
@@ -423,7 +441,7 @@ fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: 
 fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
     let a2 = pdf_a * pdf_a;
     let b2 = pdf_b * pdf_b;
-    return a2 / (a2 + b2);
+    return a2 / (a2 + b2 + 1e-6);
 }
 
 // =========================================================
@@ -599,26 +617,111 @@ fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
     return false;
 }
 
+fn get_throughput(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u32, roughness: f32, f0: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
+    if mat_type == 0u {
+        return albedo;
+    } else if mat_type == 1u {
+        let h = normalize(w_o + w_i);
+        let n_dot_v = max(dot(normal, w_o), 1e-4);
+        let n_dot_l = max(dot(normal, w_i), 1e-4);
+        let n_dot_h = max(dot(normal, h), 1e-4);
+        let v_dot_h = max(dot(w_o, h), 1e-4);
+        let a2 = roughness * roughness;
+        let g = ggx_g(n_dot_v, n_dot_l, a2);
+        let f = fresnel_schlick(v_dot_h, f0);
+        return (g * f * v_dot_h) / (n_dot_v * n_dot_h);
+    } else { // mat_type == 2u
+        return albedo;
+    }
+}
 
-// =========================================================
-//   Main Path Tracer Loop
-// =========================================================
+fn eval_brdf_cos(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u32, roughness: f32, f0: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
+    let n_dot_l = max(dot(normal, w_i), 1e-4);
 
-fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> {
-    var ray = r_in;
-    var throughput = vec3(1.0);
-    var radiance = vec3(0.0);
+    if mat_type == 0u {
+        return (albedo / PI) * n_dot_l;
+    } else if mat_type == 1u {
+        let h = normalize(w_o + w_i);
+        let n_dot_v = max(dot(normal, w_o), 1e-4);
+        let n_dot_h = max(dot(normal, h), 1e-4);
+        let v_dot_h = max(dot(w_o, h), 1e-4);
+        let a2 = roughness * roughness;
+        let d = ggx_d(n_dot_h, a2);
+        let g = ggx_g(n_dot_v, n_dot_l, a2);
+        let f = fresnel_schlick(v_dot_h, f0);
+        return (d * g * f) / (4.0 * n_dot_v);
+    } else { 
+        return vec3<f32>(0.0);
+    }
+}
 
-    let pixel_idx = coord.y * scene.width + coord.x;
+fn get_pdf(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u32, roughness: f32) -> f32 {
+    if mat_type == 0u {
+        return max(dot(normal, w_i), 0.0) / PI;
+    } else if mat_type == 1u {
+        let h = normalize(w_o + w_i);
+        let n_dot_h = max(dot(normal, h), 1e-4);
+        let v_dot_h = max(dot(w_o, h), 1e-4);
+        let a2 = roughness * roughness;
+        let d = ggx_d(n_dot_h, a2);
+        return (d * n_dot_h) / (4.0 * v_dot_h);
+    } else {
+        return 0.0;
+    }
+}
 
-    var prev_bsdf_pdf = 0.0;
-    var specular_bounce = true;
+fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: ptr<function, u32>) {
+    r.w_sum += weight;
+    if rand_pcg(rng) < (weight / r.w_sum) {
+        r.sample = s;
+    }
+}
 
-    // --- Depth 0: G-Buffer Read ---
-    let depth_val = textureLoad(g_depth, coord, 0);
-    if depth_val >= 1.0 { return radiance; }
 
-    let g_normal_val = textureLoad(g_normal, coord, 0);
+fn get_world_pos(id: vec2<u32>, depth_val: f32) -> vec3<f32> {
+    let u_cam = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1.0 - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+    let ray_dir = normalize(scene.camera.lower_left_corner.xyz + u_cam * scene.camera.horizontal.xyz + v_cam * scene.camera.vertical.xyz - scene.camera.origin.xyz);
+    
+    // Reverse non-linear Z to view-space Z
+    let z_near = 0.001;
+    let z_far = 10000.0;
+    let z_view = (z_far * z_near) / (z_far - depth_val * (z_far - z_near));
+    
+    // View-space Z to ray distance t
+    let eye = scene.camera.origin.xyz;
+    let center = scene.camera.lower_left_corner.xyz + scene.camera.horizontal.xyz * 0.5 + scene.camera.vertical.xyz * 0.5;
+    let forward = normalize(center - eye);
+    let t = z_view / dot(ray_dir, forward);
+    
+    return eye + ray_dir * t;
+}
+
+@compute @workgroup_size(8, 8)
+fn final_shading(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= scene.width || id.y >= scene.height { return; }
+    let p_idx = id.y * scene.width + id.x;
+    var rng = init_rng(p_idx, scene.frame_count);
+
+    var off = vec3(0.);
+    if scene.camera.origin.w > 0. {
+        let rd = scene.camera.origin.w * random_in_unit_disk(&rng);
+        off = scene.camera.u.xyz * rd.x + scene.camera.v.xyz * rd.y;
+    }
+
+    let depth_val = textureLoad(g_depth, id.xy, 0);
+    if depth_val >= 1.0 { 
+        var acc_val = vec4(0.0, 0.0, 0.0, 1.0);
+        if scene.frame_count > 1u { acc_val = accumulateBuffer[p_idx]; }
+        accumulateBuffer[p_idx] = acc_val;
+        return; 
+    }
+
+    let r = reservoirsBuffer[p_idx];
+    let sample = r.sample;
+    let W = r.W;
+
+    let g_normal_val = textureLoad(g_normal, id.xy, 0);
     var tri_idx: u32 = bitcast<u32>(g_normal_val.z);
     var inst_idx: i32 = i32(bitcast<u32>(g_normal_val.w));
 
@@ -629,7 +732,12 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
     var v1_pos = get_pos(tri.v1);
     var v2_pos = get_pos(tri.v2);
 
-    var r_local = make_ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
+    let u_cam = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+    let dir = scene.camera.lower_left_corner.xyz + u_cam * scene.camera.horizontal.xyz + v_cam * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
+    var r_in = make_ray(scene.camera.origin.xyz + off, dir);
+
+    var r_local = make_ray((inv * vec4(r_in.origin, 1.)).xyz, (inv * vec4(r_in.direction, 0.)).xyz);
     var s = r_local.origin - v0_pos;
     var e1 = v1_pos - v0_pos;
     var e2 = v2_pos - v0_pos;
@@ -639,181 +747,75 @@ fn ray_color(r_in: Ray, rng: ptr<function, u32>, coord: vec2<u32>) -> vec3<f32> 
     var q = cross(s, e1);
     var v_bar = f_val * dot(r_local.direction, q);
     var w_bar = 1.0 - u_bar - v_bar;
-
     var hit_t = f_val * dot(e2, q);
-
+    
     var uv0 = get_uv(tri.v0);
     var uv1 = get_uv(tri.v1);
     var uv2 = get_uv(tri.v2);
     var tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
 
     var normal = unpack_normal(g_normal_val.xy);
-    var albedo = textureLoad(g_albedo, coord, 0).rgb;
+    var albedo = textureLoad(g_albedo, id.xy, 0).rgb;
 
     var local_geom_n = normalize(cross(e1, e2));
     var world_geom_n = normalize((vec4(local_geom_n, 0.0) * inv).xyz);
 
-    for (var depth = 0u; depth < MAX_DEPTH; depth++) {
-        let mat_type = u32(tri.data0.w + 0.5);
-        let hit_p = ray.origin + ray.direction * hit_t;
+    let mat_type = u32(tri.data0.w + 0.5);
+    let primary_hit_p = r_in.origin + r_in.direction * hit_t;
 
-        normal = select(-normal, normal, dot(ray.direction, normal) < 0.0);
-        world_geom_n = select(-world_geom_n, world_geom_n, dot(ray.direction, world_geom_n) < 0.0);
+    normal = select(-normal, normal, dot(r_in.direction, normal) < 0.0);
+    world_geom_n = select(-world_geom_n, world_geom_n, dot(r_in.direction, world_geom_n) < 0.0);
 
-        var metallic = tri.data1.x;
-        var roughness = tri.data1.y;
-        if tri.data2.y > -0.5 {
-            let mr = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.y), 0.0).rgb;
-            metallic *= mr.b; roughness *= mr.g;
-        }
-        roughness = max(roughness, 0.005);
+    var metallic = tri.data1.x;
+    var roughness = tri.data1.y;
+    if tri.data2.y > -0.5 {
+        let mr = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.y), 0.0).rgb;
+        metallic *= mr.b; roughness *= mr.g;
+    }
+    roughness = max(roughness, 0.005);
 
-        var emissive = tri.data3.rgb;
-        if tri.data2.w > -0.5 { emissive *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.w), 0.0).rgb; }
+    var emissive = tri.data3.rgb;
+    if tri.data2.w > -0.5 { emissive *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.w), 0.0).rgb; }
 
-        let f0 = mix(vec3(0.04), albedo, metallic);
-        let is_specular = (mat_type == 2u) || (metallic > 0.9 && roughness < 0.01);
+    let f0 = mix(vec3(0.04), albedo, metallic);
 
-        // --- Emissive / Light ---
-        if mat_type == 3u || length(emissive) > 1e-4 {
-            let em_val = select(emissive, albedo, mat_type == 3u);
-            if specular_bounce { radiance += throughput * em_val; } else { radiance += throughput * em_val * power_heuristic(prev_bsdf_pdf, get_light_pdf(ray.origin, tri_idx, u32(inst_idx), hit_t, ray.direction)); }
-            if mat_type == 3u { break; }
-        }
+    var final_radiance = vec3(0.0);
 
-        // Direct Light (NEE)
-        if mat_type != 2u {
-            let light_s = sample_light_source(hit_p, rng);
-            if light_s.pdf > 0.0 {
-                if !intersect_tlas_shadow(make_ray(hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
-                    var bsdf_val = vec3(0.0); var bsdf_pdf_val = 0.0;
-                    if mat_type == 0u { bsdf_val = eval_diffuse(albedo); bsdf_pdf_val = max(dot(normal, light_s.dir), 0.0) / PI; } else if mat_type == 1u {
-                        bsdf_val = eval_ggx(normal, -ray.direction, light_s.dir, roughness, f0);
-                        let H = normalize(-ray.direction + light_s.dir);
-                        bsdf_pdf_val = (ggx_d(dot(normal, H), roughness * roughness) * max(dot(normal, H), 0.0)) / (4.0 * max(dot(-ray.direction, H), 0.0));
-                    }
-                    if bsdf_pdf_val > 0.0 { radiance += throughput * bsdf_val * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) * max(dot(normal, light_s.dir), 0.0) / light_s.pdf; }
-                }
+    // 1. Emissive contribution
+    if mat_type == 3u || length(emissive) > 1e-4 {
+        let em_val = select(emissive, albedo, mat_type == 3u);
+        final_radiance += em_val;
+    }
+
+    // 2. Direct Lighting (NEE)
+    if mat_type != 2u && mat_type != 3u {
+        let light_s = sample_light_source(primary_hit_p, &rng);
+        if light_s.pdf > 1e-6 {
+            if !intersect_tlas_shadow(make_ray(primary_hit_p + world_geom_n * 1e-4, light_s.dir), T_MIN, light_s.dist - 2e-4) {
+                let w_o = -r_in.direction;
+                let tp = eval_brdf_cos(w_o, light_s.dir, normal, mat_type, roughness, f0, albedo);
+                let bsdf_pdf_val = get_pdf(w_o, light_s.dir, normal, mat_type, roughness);
+                final_radiance += tp * light_s.L * power_heuristic(light_s.pdf, bsdf_pdf_val) / light_s.pdf;
             }
         }
+    }
 
-        var scatter: ScatterResult;
-        if mat_type == 0u { 
-            scatter = sample_diffuse(normal, albedo, rng); 
-        } else if mat_type == 1u { 
-            scatter = sample_ggx(normal, -ray.direction, roughness, f0, rng); 
-        } else { 
-            scatter = sample_dielectric(ray.direction, normal, tri.data1.z, albedo, rng); 
-        }
-
-        if mat_type != 2u && dot(scatter.dir, world_geom_n) <= 0.0 {
-            scatter.pdf = 0.0;
-            scatter.throughput = vec3(0.0);
-        }
-        
-        if scatter.pdf <= 0.0 || length(scatter.throughput) <= 0.0 { break; }
-        
-        throughput *= scatter.throughput;
-        
-        let ray_offset_normal = select(-world_geom_n, world_geom_n, dot(scatter.dir, world_geom_n) > 0.0);
-        ray = make_ray(hit_p + ray_offset_normal * 1e-4, scatter.dir);
-        
-        prev_bsdf_pdf = scatter.pdf;
-        specular_bounce = scatter.is_specular;
-
-        if depth > 3u {
-            let p = max(throughput.r, max(throughput.g, throughput.b));
-            if rand_pcg(rng) > p { break; }
-            throughput /= p;
-        }
-
-        // --- Next Intersection ---
-        if depth < MAX_DEPTH - 1u {
-            let hit = intersect_tlas(ray, T_MIN, T_MAX);
-            if hit.inst_idx < 0 { break; }
-            hit_t = hit.t;
-            tri_idx = u32(hit.tri_idx);
-            inst_idx = hit.inst_idx;
-
-            tri = topology[tri_idx];
-            inst = instances[inst_idx];
-            inv = get_inv_transform(inst);
-            v0_pos = get_pos(tri.v0);
-            v1_pos = get_pos(tri.v1);
-            v2_pos = get_pos(tri.v2);
-
-            r_local = make_ray((inv * vec4(ray.origin, 1.)).xyz, (inv * vec4(ray.direction, 0.)).xyz);
-            s = r_local.origin - v0_pos;
-            e1 = v1_pos - v0_pos;
-            e2 = v2_pos - v0_pos;
-            h_val = cross(r_local.direction, e2);
-            f_val = 1.0 / dot(e1, h_val);
-            u_bar = f_val * dot(s, h_val);
-            q = cross(s, e1);
-            v_bar = f_val * dot(r_local.direction, q);
-            w_bar = 1.0 - u_bar - v_bar;
-
-            uv0 = get_uv(tri.v0);
-            uv1 = get_uv(tri.v1);
-            uv2 = get_uv(tri.v2);
-            tex_uv = uv0 * w_bar + uv1 * u_bar + uv2 * v_bar;
-
-            let n0 = get_normal(tri.v0);
-            let n1 = get_normal(tri.v1);
-            let n2 = get_normal(tri.v2);
-            let ln = normalize(n0 * w_bar + n1 * u_bar + n2 * v_bar);
-            normal = normalize((vec4(ln, 0.0) * inv).xyz);
-
-            albedo = tri.data0.rgb;
-            if tri.data2.x > -0.5 { albedo *= textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.x), 0.0).rgb; }
-
-            if tri.data2.z > -0.5 {
-                let n_map = textureSampleLevel(tex, smp, tex_uv, i32(tri.data2.z), 0.0).rgb * 2.0 - 1.0;
-                let T = normalize(e1);
-                let B = normalize(cross(ln, T));
-                let ln_mapped = normalize(T * n_map.x + B * n_map.y + ln * n_map.z);
-                normal = normalize((vec4(ln_mapped, 0.0) * inv).xyz);
-            }
-
-            local_geom_n = normalize(cross(e1, e2));
-            world_geom_n = normalize((vec4(local_geom_n, 0.0) * inv).xyz);
+    // 3. Indirect Lighting (from sample)
+    if length(sample.radiance.xyz) > 0.0 && mat_type != 3u {
+        let is_delta = (mat_type == 2u) || (mat_type == 1u && metallic > 0.9 && roughness < 0.01);
+        if is_delta {
+            final_radiance += sample.radiance.xyz * W;
+        } else {
+            let w_i = vec3(sample.hit_p.w, sample.normal.w, sample.radiance.w);
+            let w_o = -r_in.direction;
+            let tp = eval_brdf_cos(w_o, w_i, normal, mat_type, roughness, f0, albedo);
+            final_radiance += tp * sample.radiance.xyz * W;
         }
     }
-    return radiance;
-}
 
-
-
-// =========================================================
-//   Compute Main
-// =========================================================
-
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= scene.width || id.y >= scene.height { return; }
-    let p_idx = id.y * scene.width + id.x;
-
-    var col = vec3(0.);
-    for (var i = 0u; i < SPP; i++) {
-        var rng = init_rng(p_idx, scene.frame_count * SPP + i);
-
-        var off = vec3(0.);
-        if scene.camera.origin.w > 0. {
-            let rd = scene.camera.origin.w * random_in_unit_disk(&rng);
-            off = scene.camera.u.xyz * rd.x + scene.camera.v.xyz * rd.y;
-        }
-
-        let u = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
-        let v = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
-        let d = scene.camera.lower_left_corner.xyz + u * scene.camera.horizontal.xyz + v * scene.camera.vertical.xyz - scene.camera.origin.xyz - off;
-        col += ray_color(make_ray(scene.camera.origin.xyz + off, d), &rng, id.xy);
-    }
-    col /= f32(SPP);
-    
-    // Proper accumulation
-    var acc_val = vec4<f32>(col, 1.0);
+    var acc_val = vec4<f32>(final_radiance, 1.0);
     if scene.frame_count > 1u {
-        acc_val = accumulateBuffer[p_idx] + vec4<f32>(col, 1.0);
+        acc_val = accumulateBuffer[p_idx] + vec4<f32>(final_radiance, 1.0);
     }
     accumulateBuffer[p_idx] = acc_val;
 }

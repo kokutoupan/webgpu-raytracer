@@ -44,8 +44,7 @@ let lastTime = performance.now();
 // --- Functions ---
 const rebuildPipeline = () => {
   const depth = parseInt(ui.inputDepth.value, 10) || Config.defaultDepth;
-  const spp = parseInt(ui.inputSPP.value, 10) || Config.defaultSPP;
-  renderer.buildPipeline(depth, spp);
+  renderer.buildPipeline(depth);
 };
 
 const updateResolution = () => {
@@ -234,9 +233,9 @@ const bindEvents = () => {
   ui.onSceneSelect = (name) => loadScene(name, false);
   ui.onResolutionChange = updateResolution;
 
-  ui.onRecompile = (depth, spp) => {
+  ui.onRecompile = (depth, _spp) => {
     isRendering = false;
-    renderer.buildPipeline(depth, spp);
+    renderer.buildPipeline(depth);
     renderer.recreateBindGroup();
     renderer.resetAccumulation();
     frameCount = 0;

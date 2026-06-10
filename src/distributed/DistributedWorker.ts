@@ -90,7 +90,7 @@ export class DistributedWorker {
       console.log(
         `[Worker] Updating Shader Pipeline: Depth=${config.maxDepth}, SPP=${config.shaderSpp}`
       );
-      this.renderer.buildPipeline(config.maxDepth, config.shaderSpp);
+      this.renderer.buildPipeline(config.maxDepth);
     }
 
     const workerConfig = {
@@ -196,7 +196,7 @@ export class DistributedWorker {
       console.log(
         `[Worker] Syncing Shader settings: Depth=${config.maxDepth}, SPP=${config.shaderSpp}`
       );
-      this.renderer.buildPipeline(config.maxDepth, config.shaderSpp);
+      this.renderer.buildPipeline(config.maxDepth);
     }
 
     // Call main loader logic

@@ -1,0 +1,843 @@
+// =========================================================
+//   WebGPU Ray Tracer (Raytracer.wgsl)
+// =========================================================
+
+const PI = 3.141592653589793;
+const T_MIN = 0.001;
+const T_MAX = 1e30;
+override MAX_DEPTH: u32;
+
+// =========================================================
+//   Structs
+// =========================================================
+
+struct Sample {
+    hit_p: vec4<f32>,    // xyz: Position(secondary ray hit point), w: scatter.dir.x
+    normal: vec4<f32>,   // xyz: Normal, w: scatter.dir.y
+    radiance: vec4<f32>, // xyz: L_i, w: scatter.dir.z
+}
+
+struct Reservoir {
+    sample: Sample,
+    w_sum: f32,
+    W: f32,
+    M: u32,
+    padding: f32,
+}
+
+
+struct Camera {
+    origin: vec4<f32>, // w: lens_radius
+    lower_left_corner: vec4<f32>,
+    horizontal: vec4<f32>,
+    vertical: vec4<f32>,
+    u: vec4<f32>,
+    v: vec4<f32>
+}
+
+struct SceneUniforms {
+    camera: Camera,
+    prev_camera: Camera,
+    frame_count: u32,
+    blas_base_idx: u32,
+    vertex_count: u32,
+    rand_seed: u32,
+    light_count: u32,
+    width: u32,
+    height: u32,
+    pad: u32,
+    jitter: vec2<f32>,
+    average_jitter: vec2<f32>,
+    prev_jitter: vec2<f32>,
+    pad2: vec2<f32>
+}
+
+struct MeshTopology {
+    v0: u32,
+    v1: u32,
+    v2: u32,
+    pad: u32,
+    data0: vec4<f32>, // rgb: BaseColor, w: MaterialType (cast)
+    data1: vec4<f32>, // x: Metallic, y: Roughness, z: IOR, w: 0.0
+    data2: vec4<f32>, // x: BaseTex, y: MetRoughTex, z: NormalTex, w: EmissiveTex
+    data3: vec4<f32>  // rgb: EmissiveColor, w: OcclusionTex
+}
+
+struct LightRef {
+    inst_idx: u32,
+    tri_idx: u32
+}
+
+struct BVHNode {
+    min_b: vec4<f32>, // w: skip_pointer
+    max_b: vec4<f32>, // w: data (internal: 0, leaf: (left_first << 3) | tri_count)
+}
+
+struct Instance {
+    transform_0: vec4<f32>,
+    transform_1: vec4<f32>,
+    transform_2: vec4<f32>,
+    transform_3: vec4<f32>,
+    inv_0: vec4<f32>,
+    inv_1: vec4<f32>,
+    inv_2: vec4<f32>,
+    inv_3: vec4<f32>,
+    blas_node_offset: u32,
+    attr_offset: u32,
+    instance_id: u32,
+    padding: u32,
+}
+
+struct Ray {
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+    inv_d: vec3<f32>,
+    origin_inv_d: vec3<f32>
+}
+
+fn make_ray(origin: vec3<f32>, direction: vec3<f32>) -> Ray {
+    let inv_d = 1.0 / direction;
+    return Ray(origin, direction, inv_d, origin * inv_d);
+}
+
+struct HitResult {
+    t: f32,
+    tri_idx: f32,
+    inst_idx: i32
+}
+
+struct ONB {
+    u: vec3<f32>,
+    v: vec3<f32>,
+    w: vec3<f32>,
+}
+
+struct LightSample {
+    L: vec3<f32>,       // Radiance
+    dir: vec3<f32>,     // Direction to light
+    dist: f32,          // Distance to light
+    pdf: f32,           // PDF of sampling this point
+}
+
+struct ScatterResult {
+    dir: vec3<f32>,
+    pdf: f32,
+    throughput: vec3<f32>,
+    is_specular: bool
+}
+
+
+// 八面体エンコーディングによる法線圧縮 (vec3 -> vec2)
+fn pack_normal(n: vec3<f32>) -> vec2<f32> {
+    let p = n.xy * (1.0 / (abs(n.x) + abs(n.y) + abs(n.z)));
+    return select(p, (1.0 - abs(p.yx)) * select(vec2(-1.0), vec2(1.0), p.xy >= vec2(0.0)), n.z < 0.0);
+}
+
+fn unpack_normal(p: vec2<f32>) -> vec3<f32> {
+    var n = vec3(p, 1.0 - abs(p.x) - abs(p.y));
+    let t = saturate(-n.z);
+    n.x += select(t, -t, n.x >= 0.0);
+    n.y += select(t, -t, n.y >= 0.0);
+    return normalize(n);
+}
+
+
+// =========================================================
+//   Bindings
+// =========================================================
+
+@group(0) @binding(1) var<storage, read_write> accumulateBuffer: array<vec4<f32>>;
+@group(0) @binding(2) var<uniform> scene: SceneUniforms;
+@group(0) @binding(3) var<storage, read> geometry_pos: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read> topology: array<MeshTopology>;
+@group(0) @binding(5) var<storage, read> nodes: array<BVHNode>; 
+@group(0) @binding(6) var<storage, read> instances: array<Instance>;
+@group(0) @binding(7) var tex: texture_2d_array<f32>;
+@group(0) @binding(8) var smp: sampler;
+@group(0) @binding(9) var<storage, read> lights: array<LightRef>;
+@group(0) @binding(11) var<storage, read> geometry_norm: array<vec4<f32>>;
+@group(0) @binding(12) var<storage, read> geometry_uv: array<vec2<f32>>;
+@group(0) @binding(13) var g_albedo: texture_2d<f32>;
+@group(0) @binding(14) var g_normal: texture_2d<f32>;
+@group(0) @binding(15) var g_depth: texture_depth_2d;
+@group(0) @binding(16) var<storage, read_write> reservoirsBuffer: array<Reservoir>;
+@group(0) @binding(17) var<storage, read> prevReservoirsBuffer: array<Reservoir>;
+@group(0) @binding(18) var g_prev_depth: texture_depth_2d;
+
+// =========================================================
+//   Buffer Accessors
+// =========================================================
+
+fn get_pos(idx: u32) -> vec3<f32> {
+    return geometry_pos[idx].xyz;
+}
+
+fn get_normal(idx: u32) -> vec3<f32> {
+    return geometry_norm[idx].xyz;
+}
+
+fn get_uv(idx: u32) -> vec2<f32> {
+    return geometry_uv[idx];
+}
+
+fn get_transform(inst: Instance) -> mat4x4<f32> {
+    return mat4x4<f32>(inst.transform_0, inst.transform_1, inst.transform_2, inst.transform_3);
+}
+
+fn get_inv_transform(inst: Instance) -> mat4x4<f32> {
+    return mat4x4<f32>(inst.inv_0, inst.inv_1, inst.inv_2, inst.inv_3);
+}
+
+// =========================================================
+//   Math & RNG Helpers
+// =========================================================
+
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+fn init_rng(pixel_idx: u32, frame_count: u32) -> u32 {
+    var seed = pixel_idx + frame_count * 719393u;
+    seed ^= 2747636419u; seed *= 2654435769u; seed ^= (seed >> 16u);
+    seed *= 2654435769u; seed ^= (seed >> 16u); seed *= 2654435769u;
+    return seed;
+}
+
+fn rand_pcg(state: ptr<function, u32>) -> f32 {
+    let old = *state; *state = old * 747796405u + 2891336453u;
+    let word = ((*state) >> ((old >> 28u) + 4u)) ^ (*state);
+    return f32((word >> 22u) ^ word) / 4294967295.0;
+}
+
+fn random_unit_vector(onb: ONB, rng: ptr<function, u32>) -> vec3<f32> {
+    let r1 = rand_pcg(rng);
+    let r2 = rand_pcg(rng);
+    let phi = 2.0 * PI * r1;
+    let cos_theta = sqrt(1.0 - r2);
+    let sin_theta = sqrt(r2);
+    let local_dir = vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+    return local_to_world(onb, local_dir);
+}
+
+fn random_in_unit_disk(rng: ptr<function, u32>) -> vec3<f32> {
+    let r = sqrt(rand_pcg(rng));
+    let theta = 2.0 * PI * rand_pcg(rng);
+    return vec3<f32>(r * cos(theta), r * sin(theta), 0.0);
+}
+
+fn build_onb(n: vec3<f32>) -> ONB {
+    let sign = select(-1.0, 1.0, n.z >= 0.0);
+    let a = -1.0 / (sign + n.z);
+    let b = n.x * n.y * a;
+    let u = vec3(1.0 + sign * n.x * n.x * a, sign * b, -sign * n.x);
+    let v = vec3(b, sign + n.y * n.y * a, -n.y);
+    return ONB(u, v, n);
+}
+
+fn local_to_world(onb: ONB, a: vec3<f32>) -> vec3<f32> {
+    return a.x * onb.u + a.y * onb.v + a.z * onb.w;
+}
+
+// =========================================================
+//   BSDF Functions
+// =========================================================
+
+fn eval_diffuse(albedo: vec3<f32>) -> vec3<f32> {
+    return albedo / PI;
+}
+
+fn sample_diffuse(normal: vec3<f32>, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
+    let onb = build_onb(normal);
+    let dir = random_unit_vector(onb, rng);
+    let cos_theta = max(dot(normal, dir), 0.0);
+    return ScatterResult(dir, cos_theta / PI, albedo, false);
+}
+
+// GGX
+fn ggx_d(n_dot_h: f32, a2: f32) -> f32 {
+    let d = (n_dot_h * a2 - n_dot_h) * n_dot_h + 1.0;
+    return a2 / (PI * d * d);
+}
+
+fn ggx_g(n_dot_v: f32, n_dot_l: f32, a2: f32) -> f32 {
+    let g1_v = 2.0 * n_dot_v / (n_dot_v + sqrt(a2 + (1.0 - a2) * n_dot_v * n_dot_v));
+    let g1_l = 2.0 * n_dot_l / (n_dot_l + sqrt(a2 + (1.0 - a2) * n_dot_l * n_dot_l));
+    return g1_v * g1_l;
+}
+
+fn pow5(x: f32) -> f32 {
+    let x2 = x * x;
+    return x2 * x2 * x;
+}
+
+fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
+    return f0 + (1.0 - f0) * pow5(clamp(1.0 - cos_theta, 0.0, 1.0));
+}
+
+fn eval_ggx(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
+    let h = normalize(v + l);
+    let n_dot_v = max(dot(n, v), 1e-4);
+    let n_dot_l = max(dot(n, l), 1e-4);
+    let n_dot_h = max(dot(n, h), 1e-4);
+    let v_dot_h = max(dot(v, h), 1e-4);
+
+    let a2 = roughness * roughness;
+    let d = ggx_d(n_dot_h, a2);
+    let g = ggx_g(n_dot_v, n_dot_l, a2);
+    let f = fresnel_schlick(v_dot_h, f0);
+
+    return (d * g * f) / (4.0 * n_dot_v * n_dot_l);
+}
+
+fn sample_ggx(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
+    let a = roughness;
+    let u = vec2(rand_pcg(rng), rand_pcg(rng));
+
+    let phi = 2.0 * PI * u.x;
+    let cos_theta = sqrt(max(0.0, (1.0 - u.y) / (1.0 + (a * a - 1.0) * u.y)));
+    let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
+
+    let h_local = vec3(sin_theta * cos(phi), sin_theta * sin(phi), cos_theta);
+    let onb = build_onb(n);
+    let h = local_to_world(onb, h_local);
+    let l = reflect(-v, h);
+
+    if dot(n, l) <= 0.0 {
+        return ScatterResult(vec3(0.0), 0.0, vec3(0.0), false);
+    }
+
+    let n_dot_v = max(dot(n, v), 1e-4);
+    let n_dot_l = max(dot(n, l), 1e-4);
+    let n_dot_h = max(dot(n, h), 1e-4);
+    let v_dot_h = max(dot(v, h), 1e-4);
+
+    let a2 = a * a;
+    let d = ggx_d(n_dot_h, a2);
+    let g = ggx_g(n_dot_v, n_dot_l, a2);
+    let f = fresnel_schlick(v_dot_h, f0);
+
+    let pdf = (d * n_dot_h) / (4.0 * v_dot_h);
+    var throughput = vec3(0.0);
+    if pdf > 1e-6 {
+        throughput = (g * f * v_dot_h) / (n_dot_v * n_dot_h);
+    }
+    let treat_as_specular = roughness < 0.01;
+
+    return ScatterResult(l, pdf, throughput, treat_as_specular);
+}
+
+fn bsdf_to_throughput(d: f32, g: f32, f: vec3<f32>, n_dot_v: f32, n_dot_l: f32, n_dot_h: f32, v_dot_h: f32, pdf: f32) -> vec3<f32> {
+    if pdf <= 0.0 { return vec3(0.0); }
+    return (d * g * f) / (4.0 * n_dot_v * n_dot_l) * n_dot_l / pdf;
+}
+
+
+
+// Dielectric
+fn reflectance_dielectric(cosine: f32, ref_idx: f32) -> f32 {
+    var r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
+    return r0 + (1.0 - r0) * pow5(1.0 - cosine);
+}
+
+fn sample_dielectric(dir: vec3<f32>, normal: vec3<f32>, ior: f32, albedo: vec3<f32>, rng: ptr<function, u32>) -> ScatterResult {
+    let front_face = dot(dir, normal) < 0.0;
+    let refraction_ratio = select(ior, 1.0 / ior, front_face);
+    let n = select(-normal, normal, front_face);
+
+    let unit_dir = normalize(dir);
+    let cos_theta = min(dot(-unit_dir, n), 1.0);
+    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+
+    let cannot_refract = refraction_ratio * sin_theta > 1.0;
+    var direction: vec3<f32>;
+
+    if cannot_refract || reflectance_dielectric(cos_theta, refraction_ratio) > rand_pcg(rng) {
+        direction = reflect(unit_dir, n);
+    } else {
+        direction = refract(unit_dir, n, refraction_ratio);
+    }
+
+    return ScatterResult(direction, 1.0, albedo, true);
+}
+
+// =========================================================
+//   Direct Light Sampling
+// =========================================================
+
+fn sample_light_source(hit_p: vec3<f32>, rng: ptr<function, u32>) -> LightSample {
+    let light_count = scene.light_count;
+    if light_count == 0u {
+        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+    }
+
+    let light_pick_idx = u32(rand_pcg(rng) * f32(light_count));
+    let l_ref = lights[light_pick_idx];
+
+    let tri = topology[l_ref.tri_idx];
+    let inst = instances[l_ref.inst_idx];
+    let m = get_transform(inst);
+
+    let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
+    let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
+    let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
+
+    let r1 = rand_pcg(rng);
+    let r2 = rand_pcg(rng);
+    let sqrt_r1 = sqrt(r1);
+    let u = 1.0 - sqrt_r1;
+    let v = r2 * sqrt_r1;
+    let w = 1.0 - u - v;
+
+    let p = v0 * u + v1 * v + v2 * w;
+    let edge1 = v1 - v0;
+    let edge2 = v2 - v0;
+    let n_raw = normalize(cross(edge1, edge2));
+    let area = length(cross(edge1, edge2)) * 0.5;
+
+    let l_dir = p - hit_p;
+    let dist_sq = dot(l_dir, l_dir);
+    let dist = sqrt(dist_sq);
+    let unit_l = l_dir / dist;
+
+    let cos_theta_l = max(dot(n_raw, -unit_l), 0.0);
+    if cos_theta_l < 1e-6 || area < 1e-6 {
+        return LightSample(vec3(0.0), vec3(0.0), 0.0, 0.0);
+    }
+
+    // Albedo if light
+    let uv0 = get_uv(tri.v0);
+    let uv1 = get_uv(tri.v1);
+    let uv2 = get_uv(tri.v2);
+    let tex_uv = uv0 * u + uv1 * v + uv2 * w;
+    var L = tri.data0.rgb;
+    let base_tex = tri.data2.x;
+    if base_tex > -0.5 {
+        L *= textureSampleLevel(tex, smp, tex_uv, i32(base_tex), 0.0).rgb;
+    }
+
+    let pdf = (dist_sq / (cos_theta_l * area)) / f32(light_count);
+
+    return LightSample(L, unit_l, dist, pdf);
+}
+
+fn get_light_pdf(origin: vec3<f32>, tri_idx: u32, inst_idx: u32, t: f32, l_dir: vec3<f32>) -> f32 {
+    let tri = topology[tri_idx];
+    let inst = instances[inst_idx];
+    let m = get_transform(inst);
+
+    let v0 = (m * vec4(get_pos(tri.v0), 1.0)).xyz;
+    let v1 = (m * vec4(get_pos(tri.v1), 1.0)).xyz;
+    let v2 = (m * vec4(get_pos(tri.v2), 1.0)).xyz;
+
+    let edge1 = v1 - v0;
+    let edge2 = v2 - v0;
+    let area = length(cross(edge1, edge2)) * 0.5;
+    let normal = normalize(cross(edge1, edge2));
+
+    let cos_theta_l = max(dot(normal, -l_dir), 0.0);
+    if cos_theta_l < 1e-4 || area < 1e-6 { return 0.0; }
+
+    let light_count = scene.light_count;
+    let dist_sq = t * t;
+    return (dist_sq / (cos_theta_l * area)) / f32(light_count);
+}
+
+fn power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
+    let a2 = pdf_a * pdf_a;
+    let b2 = pdf_b * pdf_b;
+    return a2 / (a2 + b2 + 1e-6);
+}
+
+// =========================================================
+//   Intersection Functions
+// =========================================================
+
+fn intersect_aabb(min_b: vec3<f32>, max_b: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let t1 = min_b * r.inv_d - r.origin_inv_d;
+    let t2 = max_b * r.inv_d - r.origin_inv_d;
+    let t_near = min(t1, t2);
+    let t_far = max(t1, t2);
+    let tm_near = max(t_min, max(t_near.x, max(t_near.y, t_near.z)));
+    let tm_far = min(t_max, min(t_far.x, min(t_far.y, t_far.z)));
+    return select(T_MAX, tm_near, tm_near <= tm_far);
+}
+
+fn hit_triangle_raw(v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>, r: Ray, t_min: f32, t_max: f32) -> f32 {
+    let e1 = v1 - v0; let e2 = v2 - v0;
+    let h = cross(r.direction, e2); let a = dot(e1, h);
+    if abs(a) < 1e-6 { return -1.0; } // Increased epsilon
+    let f = 1.0 / a; let s = r.origin - v0; let u = f * dot(s, h);
+    if u < 0.0 || u > 1.0 { return -1.0; }
+    let q = cross(s, e1); let v = f * dot(r.direction, q);
+    if v < 0.0 || u + v > 1.0 { return -1.0; }
+    let t = f * dot(e2, q);
+    return select(-1.0, t, t > t_min && t < t_max);
+}
+
+fn intersect_blas(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> vec2<f32> {
+    var closest_t = t_max;
+    var hit_idx = -1.0;
+    
+    let end_node = node_start_idx + bitcast<u32>(nodes[node_start_idx].min_b.w);
+    var curr = node_start_idx;
+    
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        var hit_t = closest_t;
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, closest_t);
+        
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf node
+                let first = data >> 3u;
+                let count = data & 7u;
+                for (var i = 0u; i < count; i++) {
+                    let tri_id = first + i;
+                    let tr = topology[tri_id];
+                    let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, closest_t);
+                    if t > 0.0 { 
+                        closest_t = t; 
+                        hit_idx = f32(tri_id); 
+                    }
+                }
+                curr = node_start_idx + bitcast<u32>(node.min_b.w);
+            } else {
+                // Internal node
+                curr = curr + 1u;
+            }
+        } else {
+            // Missed AABB
+            curr = node_start_idx + bitcast<u32>(node.min_b.w);
+        }
+    }
+    return vec2<f32>(closest_t, hit_idx);
+}
+
+fn intersect_tlas(r: Ray, t_min: f32, t_max: f32) -> HitResult {
+    var res: HitResult; res.t = t_max; res.tri_idx = -1.0; res.inst_idx = -1;
+    if scene.blas_base_idx == 0u { return res; }
+
+    var curr = 0u;
+    let end_node = bitcast<u32>(nodes[0].min_b.w);
+
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        if intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, res.t) < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf
+                let inst_idx = data >> 3u;
+                let inst = instances[inst_idx];
+                let r_local = make_ray((get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz);
+                let blas = intersect_blas(r_local, t_min, res.t, scene.blas_base_idx + inst.blas_node_offset);
+                if blas.y > -0.5 { 
+                    res.t = blas.x; 
+                    res.tri_idx = blas.y; 
+                    res.inst_idx = i32(inst_idx); 
+                }
+                curr = bitcast<u32>(node.min_b.w);
+            } else {
+                curr = curr + 1u;
+            }
+        } else {
+            curr = bitcast<u32>(node.min_b.w);
+        }
+    }
+    return res;
+}
+
+// shadow ray版
+// シャドウレイ用のBLAS交差判定（ヒットしたら即trueを返す）
+fn intersect_blas_shadow(r: Ray, t_min: f32, t_max: f32, node_start_idx: u32) -> bool {
+    let end_node = node_start_idx + bitcast<u32>(nodes[node_start_idx].min_b.w);
+    var curr = node_start_idx;
+    
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, t_max);
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf node
+                let first = data >> 3u;
+                let count = data & 7u;
+                for (var i = 0u; i < count; i++) {
+                    let tri_id = first + i;
+                    let tr = topology[tri_id];
+                    let t = hit_triangle_raw(get_pos(tr.v0), get_pos(tr.v1), get_pos(tr.v2), r, t_min, t_max);
+                    if t > 0.0 { return true; }
+                }
+                curr = node_start_idx + bitcast<u32>(node.min_b.w);
+            } else {
+                // Internal node
+                curr = curr + 1u;
+            }
+        } else {
+            // Missed AABB
+            curr = node_start_idx + bitcast<u32>(node.min_b.w);
+        }
+    }
+    return false;
+}
+
+// シャドウレイ用のTLAS交差判定
+fn intersect_tlas_shadow(r: Ray, t_min: f32, t_max: f32) -> bool {
+    if scene.blas_base_idx == 0u { return false; }
+
+    var curr = 0u;
+    let end_node = bitcast<u32>(nodes[0].min_b.w);
+
+    while curr < end_node {
+        let node = nodes[curr];
+        
+        let t_aabb = intersect_aabb(node.min_b.xyz, node.max_b.xyz, r, t_min, t_max);
+        if t_aabb < T_MAX {
+            let data = bitcast<u32>(node.max_b.w);
+            if data != 0u {
+                // Leaf
+                let inst_idx = data >> 3u;
+                let inst = instances[inst_idx];
+                
+                let r_local = make_ray(
+                    (get_inv_transform(inst) * vec4(r.origin, 1.0)).xyz, 
+                    (get_inv_transform(inst) * vec4(r.direction, 0.0)).xyz
+                );
+                
+                if intersect_blas_shadow(r_local, t_min, t_max, scene.blas_base_idx + inst.blas_node_offset) {
+                    return true;
+                }
+                curr = bitcast<u32>(node.min_b.w);
+            } else {
+                curr = curr + 1u;
+            }
+        } else {
+            curr = bitcast<u32>(node.min_b.w);
+        }
+    }
+    return false;
+}
+
+fn get_throughput(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u32, roughness: f32, f0: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
+    if mat_type == 0u {
+        return albedo;
+    } else if mat_type == 1u {
+        let h = normalize(w_o + w_i);
+        let n_dot_v = max(dot(normal, w_o), 1e-4);
+        let n_dot_l = max(dot(normal, w_i), 1e-4);
+        let n_dot_h = max(dot(normal, h), 1e-4);
+        let v_dot_h = max(dot(w_o, h), 1e-4);
+        let a2 = roughness * roughness;
+        let g = ggx_g(n_dot_v, n_dot_l, a2);
+        let f = fresnel_schlick(v_dot_h, f0);
+        return (g * f * v_dot_h) / (n_dot_v * n_dot_h);
+    } else { // mat_type == 2u
+        return albedo;
+    }
+}
+
+fn eval_brdf_cos(w_o: vec3<f32>, w_i: vec3<f32>, normal: vec3<f32>, mat_type: u32, roughness: f32, f0: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
+    let n_dot_l = max(dot(normal, w_i), 1e-4);
+
+    if mat_type == 0u {
+        return (albedo / PI) * n_dot_l;
+    } else if mat_type == 1u {
+        let h = normalize(w_o + w_i);
+        let n_dot_v = max(dot(normal, w_o), 1e-4);
+        let n_dot_h = max(dot(normal, h), 1e-4);
+        let v_dot_h = max(dot(w_o, h), 1e-4);
+        let a2 = roughness * roughness;
+        let d = ggx_d(n_dot_h, a2);
+        let g = ggx_g(n_dot_v, n_dot_l, a2);
+        let f = fresnel_schlick(v_dot_h, f0);
+        return (d * g * f) / (4.0 * n_dot_v);
+    } else { 
+        return vec3<f32>(0.0);
+    }
+}
+
+fn update_reservoir(r: ptr<function, Reservoir>, s: Sample, weight: f32, rng: ptr<function, u32>) {
+    r.w_sum += weight;
+    if rand_pcg(rng) < (weight / r.w_sum) {
+        r.sample = s;
+    }
+}
+
+fn get_world_pos(id: vec2<u32>, depth_val: f32) -> vec3<f32> {
+    let u_cam = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1.0 - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+    let ray_dir = normalize(scene.camera.lower_left_corner.xyz + u_cam * scene.camera.horizontal.xyz + v_cam * scene.camera.vertical.xyz - scene.camera.origin.xyz);
+    
+    // Reverse non-linear Z to view-space Z
+    let z_near = 0.001;
+    let z_far = 10000.0;
+    let z_view = (z_far * z_near) / (z_far - depth_val * (z_far - z_near));
+    
+    // View-space Z to ray distance t
+    let eye = scene.camera.origin.xyz;
+    let center = scene.camera.lower_left_corner.xyz + scene.camera.horizontal.xyz * 0.5 + scene.camera.vertical.xyz * 0.5;
+    let forward = normalize(center - eye);
+    let t = z_view / dot(ray_dir, forward);
+    
+    return eye + ray_dir * t;
+}
+
+fn get_prev_world_pos(id: vec2<u32>, depth_val: f32) -> vec3<f32> {
+    let u_cam = (f32(id.x) + 0.5 + scene.prev_jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1.0 - (f32(id.y) + 0.5 + scene.prev_jitter.y * f32(scene.height)) / f32(scene.height);
+    let ray_dir = normalize(scene.prev_camera.lower_left_corner.xyz + u_cam * scene.prev_camera.horizontal.xyz + v_cam * scene.prev_camera.vertical.xyz - scene.prev_camera.origin.xyz);
+    
+    // Reverse non-linear Z to view-space Z
+    let z_near = 0.001;
+    let z_far = 10000.0;
+    let z_view = (z_far * z_near) / (z_far - depth_val * (z_far - z_near));
+    
+    // View-space Z to ray distance t
+    let eye = scene.prev_camera.origin.xyz;
+    let center = scene.prev_camera.lower_left_corner.xyz + scene.prev_camera.horizontal.xyz * 0.5 + scene.prev_camera.vertical.xyz * 0.5;
+    let forward = normalize(center - eye);
+    let t = z_view / dot(ray_dir, forward);
+    
+    return eye + ray_dir * t;
+}
+
+@compute @workgroup_size(8, 8)
+fn temporal_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= scene.width || id.y >= scene.height { return; }
+    let p_idx = id.y * scene.width + id.x;
+    var rng = init_rng(p_idx, scene.frame_count + 1000u);
+
+    let g_normal_val = textureLoad(g_normal, id.xy, 0);
+    let depth_val = textureLoad(g_depth, id.xy, 0);
+
+    // Current candidate from InitialSampling (already has M=1, w_sum=p_hat/q)
+    var r_curr = reservoirsBuffer[p_idx];
+    
+    if depth_val >= 1.0 {
+        r_curr.W = 0.0;
+        reservoirsBuffer[p_idx] = r_curr;
+        return;
+    }
+
+    var tri_idx = bitcast<u32>(g_normal_val.z);
+    var tri = topology[tri_idx];
+    let mat_type = u32(tri.data0.w + 0.5);
+    var normal = unpack_normal(g_normal_val.xy);
+    
+    let u_cam = (f32(id.x) + 0.5 + scene.jitter.x * f32(scene.width)) / f32(scene.width);
+    let v_cam = 1. - (f32(id.y) + 0.5 + scene.jitter.y * f32(scene.height)) / f32(scene.height);
+    let dir = normalize(scene.camera.lower_left_corner.xyz + u_cam * scene.camera.horizontal.xyz + v_cam * scene.camera.vertical.xyz - scene.camera.origin.xyz);
+    let w_o = -dir;
+
+    normal = select(-normal, normal, dot(w_o, normal) > 0.0);
+    
+    let albedo = textureLoad(g_albedo, id.xy, 0).rgb;
+    let metallic = tri.data1.x;
+    let roughness = max(tri.data1.y, 0.005);
+    let f0 = mix(vec3(0.04), albedo, metallic);
+
+    let is_delta = (mat_type == 2u) || (mat_type == 1u && metallic > 0.9 && roughness < 0.01);
+
+    // Re-evaluate current reservoir p_hat using BRDF
+    let w_i_curr = vec3(r_curr.sample.hit_p.w, r_curr.sample.normal.w, r_curr.sample.radiance.w);
+    var p_hat_curr = 0.0;
+    if is_delta {
+        p_hat_curr = luminance(r_curr.sample.radiance.xyz);
+    } else {
+        let brdf_curr = eval_brdf_cos(w_o, w_i_curr, normal, mat_type, roughness, f0, albedo);
+        p_hat_curr = luminance(r_curr.sample.radiance.xyz * brdf_curr);
+    }
+    r_curr.w_sum = r_curr.W * f32(r_curr.M) * p_hat_curr;
+
+    // Reconstruct world position of current pixel
+    let world_pos = get_world_pos(id.xy, depth_val);
+
+    // Project world position to previous frame screen
+    let W_vec = world_pos - scene.prev_camera.origin.xyz;
+    let H_vec = scene.prev_camera.horizontal.xyz;
+    let V_vec = scene.prev_camera.vertical.xyz;
+    let L_vec = scene.prev_camera.lower_left_corner.xyz - scene.prev_camera.origin.xyz;
+    let w_vec = cross(H_vec, V_vec);
+    
+    let T_val = dot(W_vec, w_vec) / dot(L_vec, w_vec);
+    let u_prev = dot(W_vec - T_val * L_vec, H_vec) / (T_val * dot(H_vec, H_vec));
+    let v_prev = dot(W_vec - T_val * L_vec, V_vec) / (T_val * dot(V_vec, V_vec));
+
+    let prev_x = i32(u_prev * f32(scene.width));
+    let prev_y = i32((1.0 - v_prev) * f32(scene.height));
+
+    // Previous frame reservoir
+    var r_prev: Reservoir;
+    var disoccluded = false;
+    if prev_x >= 0 && prev_x < i32(scene.width) && prev_y >= 0 && prev_y < i32(scene.height) {
+        let prev_p_idx = u32(prev_y) * scene.width + u32(prev_x);
+        r_prev = prevReservoirsBuffer[prev_p_idx];
+        
+        let prev_depth_val = textureLoad(g_prev_depth, vec2<i32>(prev_x, prev_y), 0);
+        if prev_depth_val >= 1.0 {
+            disoccluded = true;
+        } else {
+            let prev_world_pos = get_prev_world_pos(vec2<u32>(u32(prev_x), u32(prev_y)), prev_depth_val);
+            if distance(world_pos, prev_world_pos) > 0.1 {
+                disoccluded = true;
+            }
+        }
+    } else {
+        disoccluded = true;
+    }
+
+    if disoccluded {
+        r_prev.M = 0u;
+        r_prev.w_sum = 0.0;
+    }
+
+    // Limit history M to prevent excessive ghosting and bias.
+    // Use a smaller cap for metals to keep them responsive.
+    let max_M = select(20u, 20u, metallic > 0.5);
+    if r_prev.M > max_M {
+        let scale = f32(max_M) / f32(r_prev.M);
+        r_prev.w_sum *= scale;
+        r_prev.M = max_M;
+    }
+
+    // Re-evaluate previous sample's p_hat at current pixel
+    var p_hat_prev = 0.0;
+    let w_i_prev = vec3(r_prev.sample.hit_p.w, r_prev.sample.normal.w, r_prev.sample.radiance.w);
+    if is_delta {
+        p_hat_prev = luminance(r_prev.sample.radiance.xyz);
+    } else {
+        let brdf_prev = eval_brdf_cos(w_o, w_i_prev, normal, mat_type, roughness, f0, albedo);
+        p_hat_prev = luminance(r_prev.sample.radiance.xyz * brdf_prev);
+    }
+
+    if p_hat_prev > 1e-6 {
+        let weight_prev = p_hat_prev * r_prev.W * f32(r_prev.M);
+        update_reservoir(&r_curr, r_prev.sample, weight_prev, &rng);
+    }
+    r_curr.M += r_prev.M;
+
+    // Resolve final W weight
+    var p_hat_final = 0.0;
+    let w_i_final = vec3(r_curr.sample.hit_p.w, r_curr.sample.normal.w, r_curr.sample.radiance.w);
+    if is_delta {
+        p_hat_final = luminance(r_curr.sample.radiance.xyz);
+    } else {
+        let brdf_final = eval_brdf_cos(w_o, w_i_final, normal, mat_type, roughness, f0, albedo);
+        p_hat_final = luminance(r_curr.sample.radiance.xyz * brdf_final);
+    }
+
+    if p_hat_final > 1e-6 {
+        r_curr.W = r_curr.w_sum / (f32(r_curr.M) * p_hat_final);
+    } else {
+        r_curr.W = 0.0;
+    }
+    
+    // Hard clamp W to suppress fireflies
+    // r_curr.W = min(r_curr.W, 1000.0);
+
+    reservoirsBuffer[p_idx] = r_curr;
+}

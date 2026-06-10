@@ -94,7 +94,7 @@ export class RasterizerPass {
   }
 
   execute(commandEncoder: GPUCommandEncoder, res: ResourceManager) {
-    if (!this.bindGroup || !res.drawCommandBuffer || !res.depthTextureView) return;
+    if (!this.bindGroup || !res.drawCommandBuffer || !res.depthTextureViews[res.historyIndex]) return;
 
     const renderPassDescriptor: GPURenderPassDescriptor = {
       colorAttachments: [
@@ -112,7 +112,7 @@ export class RasterizerPass {
         },
       ],
       depthStencilAttachment: {
-        view: res.depthTextureView,
+        view: res.depthTextureViews[res.historyIndex],
         depthClearValue: 1.0,
         depthLoadOp: "clear",
         depthStoreOp: "store",
